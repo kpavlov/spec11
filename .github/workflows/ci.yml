@@ -13,16 +13,19 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4 # the version comes from `packageManager` in web/package.json
+        with:
+          package_json_file: web/package.json
       - uses: actions/setup-node@v4
         with:
           node-version: 26
-          cache: npm
-          cache-dependency-path: web/package-lock.json
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cd web && npm ci && npx svelte-check
+      - run: cd web && pnpm install --frozen-lockfile && pnpm exec svelte-check
       - run: cargo test --workspace --locked
-      # release build embeds web/dist (build.rs runs npm); the release-only embedded-UI test runs here too
+      # release build embeds web/dist (build.rs runs pnpm); the release-only embedded-UI test runs here too
       - run: cargo test --release --workspace --locked
       - run: make dist
       - uses: actions/upload-artifact@v4

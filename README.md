@@ -35,7 +35,7 @@ make parity                   # Rust output == the old Python scripts' output (n
 make dev ROOT=/path/to/repo PORT=7500 OPEN=0
 ```
 
-`ROOT` defaults to this repo (spec11 scans itself: see `specs/` and `spec11.json`); point it at another repo with `ROOT=...`. Needs Rust and Node/npm; the release binary needs neither at runtime.
+`ROOT` defaults to this repo (spec11 scans itself: see `specs/` and `spec11.json`); point it at another repo with `ROOT=...`. Needs Rust, Node and pnpm; the release binary needs neither at runtime.
 
 `spec11` with no command runs `serve` for the repo that holds the current directory (nearest ancestor with `specs/`, or `--root`) and opens the dashboard; `--no-open` skips the browser. At startup it checks whether the skill and MCP entry are installed for this repo or globally and prints what to run if not; the dashboard shows the same in a banner and a Setup tab with Install/Uninstall buttons.
 

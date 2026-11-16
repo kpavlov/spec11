@@ -29,7 +29,7 @@ pub async fn handler(uri: Uri) -> Response {
     match Dist::get("index.html") {
         // unknown path: the app's own client-side view
         Some(f) => ([(header::CONTENT_TYPE, "text/html; charset=utf-8"), (header::CACHE_CONTROL, "no-cache")], f.data).into_response(),
-        None => (StatusCode::INTERNAL_SERVER_ERROR, "web/dist is not built: run `npm run build` in web/").into_response(),
+        None => (StatusCode::INTERNAL_SERVER_ERROR, "web/dist is not built: run `pnpm run build` in web/").into_response(),
     }
 }
 
@@ -50,6 +50,6 @@ pub async fn handler(axum::extract::State(s): axum::extract::State<crate::AppSta
             }
             out
         }
-        Err(_) => (StatusCode::BAD_GATEWAY, "Vite is not running: `make dev` (cd web && npm run dev)").into_response(),
+        Err(_) => (StatusCode::BAD_GATEWAY, "Vite is not running: `make dev` (cd web && pnpm run dev)").into_response(),
     }
 }

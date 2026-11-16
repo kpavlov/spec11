@@ -14,7 +14,7 @@ VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
 
 help:
 	@echo "make dev      Vite (HMR, :5173) + Rust server on :$(PORT) proxying to it, scanning $(ROOT)"
-	@echo "make serve    Rust server only (debug), scanning $(ROOT); run 'cd web && npm run dev' yourself"
+	@echo "make serve    Rust server only (debug), scanning $(ROOT); run 'cd web && pnpm run dev' yourself"
 	@echo "make build    release binary with the UI embedded: $(BIN)"
 	@echo "make run      build, then serve the release binary on :$(PORT) for $(ROOT)"
 	@echo "make install   build + install spec11 for your user into ~/.cargo/bin; make uninstall removes it"
@@ -24,29 +24,29 @@ help:
 	@echo "override: make dev ROOT=/path/to/repo PORT=7500 OPEN=0   (OPEN=0: don't open the browser)"
 
 web/node_modules: web/package.json
-	cd web && npm install
+	cd web && pnpm install
 	@touch $@
 
 web: web/node_modules
-	cd web && npm run build
+	cd web && pnpm run build
 
 dev: web/node_modules
 	@trap 'kill 0' INT TERM EXIT; \
-	(cd web && npm run dev) & \
+	(cd web && pnpm run dev) & \
 	if [ "$(OPEN)" = 1 ]; then (until curl -sf -o /dev/null http://127.0.0.1:$(PORT)/api/info; do sleep 0.5; done; $(OPENER) http://127.0.0.1:$(PORT)/) & fi; \
 	cargo run -p spec11 -- --root "$(ROOT)" serve --port $(PORT) --no-open
 
 serve:
 	cargo run -p spec11 -- --root "$(ROOT)" serve --port $(PORT) --no-open
 
-# build.rs runs `npm run build` for release builds (SKIP_WEB_BUILD=1 to skip when web/dist is already built)
+# build.rs runs `pnpm run build` for release builds (SKIP_WEB_BUILD=1 to skip when web/dist is already built)
 build: web/node_modules
 	cargo build --release -p spec11
 
 run: build
 	$(BIN) --root "$(ROOT)" serve --port $(PORT)
 
-# the release build embeds the web UI (build.rs runs npm); needs ~/.cargo/bin on PATH
+# the release build embeds the web UI (build.rs runs pnpm); needs ~/.cargo/bin on PATH
 install: web/node_modules
 	cargo install --path server --locked --force
 	@echo "installed: $$(command -v spec11 || echo 'add ~/.cargo/bin to PATH')   then: spec11 doctor"

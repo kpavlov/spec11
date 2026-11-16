@@ -5,7 +5,7 @@ fn main() {
     println!("cargo:rerun-if-changed=../web/package.json");
     println!("cargo:rerun-if-env-changed=SKIP_WEB_BUILD");
     if std::env::var("PROFILE").is_ok_and(|p| p == "release") && std::env::var("SKIP_WEB_BUILD").is_err() {
-        let ok = std::process::Command::new("npm").args(["run", "build"]).current_dir("../web").status().expect("npm not found: install Node or set SKIP_WEB_BUILD=1").success();
+        let ok = std::process::Command::new("pnpm").args(["run", "build"]).current_dir("../web").status().expect("pnpm not found: install Node and pnpm or set SKIP_WEB_BUILD=1").success();
         assert!(ok, "web build failed");
     }
 }
