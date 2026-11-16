@@ -63,6 +63,7 @@ fn write_config(f: &Path, m: Map<String, Value>) -> Result<(), String> {
     std::fs::write(f, text).map_err(|e| format!("{}: {e}", f.display()))
 }
 
+// (SETUP-01, SETUP-02)
 /// Adds `mcpServers.spec11` to `<base>/.mcp.json`, creating the file if needed. Other servers and keys are kept as they are.
 pub fn add_mcp(base: &Path, port: u16) -> Result<(PathBuf, McpChange), String> {
     let f = base.join(".mcp.json");
@@ -85,6 +86,7 @@ pub fn add_mcp(base: &Path, port: u16) -> Result<(PathBuf, McpChange), String> {
     Ok((f, change))
 }
 
+// (SETUP-03)
 /// Removes `mcpServers.spec11`; an `mcpServers` left empty goes with it, and a file left with no keys is deleted.
 pub fn remove_mcp(base: &Path) -> Result<(PathBuf, McpChange), String> {
     let f = base.join(".mcp.json");
@@ -215,6 +217,7 @@ mod tests {
         assert!(!SKILL.contains("python3") && !SKILL.contains(".py"), "no Python left in the skill");
     }
 
+    #[doc = "[SETUP-01, SETUP-03]"]
     #[test]
     fn install_is_idempotent_and_uninstall_keeps_foreign_files() {
         let dir = tmp("a").join(".agents/skills");
@@ -227,6 +230,7 @@ mod tests {
         assert_eq!(uninstall(&dir).unwrap(), None);
     }
 
+    #[doc = "[SETUP-03]"]
     #[test]
     fn uninstall_removes_the_empty_folder() {
         let dir = tmp("b");
@@ -235,6 +239,7 @@ mod tests {
         assert!(!dir.join("spec11").exists());
     }
 
+    #[doc = "[SETUP-01]"]
     #[test]
     fn mcp_config_is_merged_never_clobbered() {
         let d = tmp("m");
@@ -255,6 +260,7 @@ mod tests {
         assert!(matches!(remove_mcp(&d).unwrap().1, McpChange::Absent));
     }
 
+    #[doc = "[SETUP-02, SETUP-03]"]
     #[test]
     fn mcp_file_we_created_is_deleted_on_uninstall_and_bad_json_is_untouched() {
         let d = tmp("n");

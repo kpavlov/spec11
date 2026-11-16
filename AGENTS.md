@@ -22,7 +22,9 @@ spec11: Rust workspace (`core`, `server`) + Svelte dashboard (`web`) + the agent
 
 - `spec11 install/uninstall` (`server/src/skill.rs`): `.mcp.json` is merged, never rewritten wholesale (keep `serde_json` `preserve_order`; other servers stay; invalid JSON is left alone). Only `SKILL.md` and, if it ends up empty, its folder are removed. Edit `skills/spec11/SKILL.md` to change the skill: it is `include_str!`-ed. The same install logic backs the CLI, the `spec_install*` tools and the dashboard Setup tab (`skill::apply`/`status`); global MCP config (`~/.claude.json`) is only read, never written. The server's workspace is resolved once at startup (`Project::open`), not per request.
 
-- `spec11 doctor` (`server/src/doctor.rs`) only reads: it must never run `codegraph init/sync` or write files. Add new checks there; the CLI, `spec_doctor` and the Setup tab share it.
+- `spec11 doctor` (`server/src/doctor.rs`) `run` only reads. The one writer is `doctor::index` (`codegraph init`/`sync`), reached only by an explicit user action: `doctor --fix`, `spec_codegraph`, the Setup tab button (with a confirm). Never call it from a check, a startup path or a scan. Add new checks to `run`; the CLI, `spec_doctor` and the Setup tab share it.
+
+- **Dogfooding.** `specs/*.md` are this repo's requirements (`SCAN-`, `GRAPH-`, `API-`, `SETUP-`, `WEB-`), configured by `spec11.json` for Rust. A Rust test is tagged with `#[doc = "[API-02]"]` above its `#[test]` (a `// [ID]` comment would count as comment-only); code cites with `// (API-02)`. Fixture tags in tests must not look real: write `[DEM\x2D01]`. Run `make report`; new behaviour gets a spec bullet first.
 
 ## Sandbox notes
 

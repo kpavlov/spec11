@@ -3,11 +3,18 @@
     "codegraph": {
       "type": "stdio",
       "command": "codegraph",
-      "args": ["serve", "--mcp"],
+      "args": [
+        "serve",
+        "--mcp"
+      ],
       "env": {
         "CODEGRAPH_TOOLS": "explore,node,search,callers"
       },
       "alwaysLoad": true
+    },
+    "spec11": {
+      "type": "http",
+      "url": "http://127.0.0.1:7411/mcp"
     }
   }
 }

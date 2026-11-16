@@ -33,7 +33,7 @@ make parity                   # Rust output == the old Python scripts' output (n
 make dev ROOT=/path/to/repo PORT=7500 OPEN=0
 ```
 
-`ROOT` defaults to `/Users/maestro/code/github/itstaffhq/run-solo`. Needs Rust and Node/npm; the release binary needs neither at runtime.
+`ROOT` defaults to this repo (spec11 scans itself: see `specs/` and `spec11.json`); point it at another repo with `ROOT=...`. Needs Rust and Node/npm; the release binary needs neither at runtime.
 
 `spec11` with no command runs `serve` for the repo that holds the current directory (nearest ancestor with `specs/`, or `--root`) and opens the dashboard; `--no-open` skips the browser. At startup it checks whether the skill and MCP entry are installed for this repo or globally and prints what to run if not; the dashboard shows the same in a banner and a Setup tab with Install/Uninstall buttons.
 
@@ -45,11 +45,15 @@ MCP client config:
 {"mcpServers": {"spec11": {"type": "http", "url": "http://127.0.0.1:7411/mcp"}}}
 ```
 
-Tools: `spec_report`, `spec_status`, `spec_trace`, `spec_overlap`, `spec_uncovered`, `spec_file`, `spec_dashboard`, and `spec_install_status` / `spec_install` / `spec_uninstall` (the last two write files). The dashboard is also an MCP Apps resource (`ui://spec11/dashboard`) for hosts that render it; elsewhere use the URL from `spec_dashboard`.
+Tools: `spec_report`, `spec_status`, `spec_trace`, `spec_overlap`, `spec_uncovered`, `spec_file`, `spec_source`, `spec_dashboard`, and `spec_install_status` / `spec_install` / `spec_uninstall` / `spec_codegraph` (the last three write files). The dashboard is also an MCP Apps resource (`ui://spec11/dashboard`) for hosts that render it; elsewhere use the URL from `spec_dashboard`.
+
+## Dashboard URLs
+
+The URL is the view, so back/forward, reload and shared links work: `/report`, `/requirements/DOC-25?state=none&q=text`, `/specs?file=04-documents.md&id=DOC-25`, `/code?path=RunSolo/RunSolo/A.swift&line=12`, `/overlap`, `/uncovered`, `/setup`. Tests, citations and spec locations link to the file viewer or spec; IDs inside code and markdown link to the requirement.
 
 ## Doctor
 
-`spec11 doctor` checks the repo: specs found, test and source folders, git, whether the `codegraph` binary is on PATH and its index is initialized, readable and not older than the sources, and whether the skill and MCP entry are installed. It prints a hint per problem and exits 1 only when spec11 cannot work (no `specs/`). It never indexes or installs anything. The same list is the MCP tool `spec_doctor` and the Setup tab.
+`spec11 doctor` checks the repo: specs found, test and source folders, git, whether the `codegraph` binary is on PATH and its index is initialized, readable and not older than the sources, and whether the skill and MCP entry are installed. It prints a hint per problem and exits 1 only when spec11 cannot work (no `specs/`). It never indexes or installs anything on its own. When the index is missing or stale, `spec11 doctor --fix` runs `codegraph init` / `codegraph sync` for you, and the Setup tab has the same button (asks to confirm); both are your call, nothing indexes automatically. The same list is the MCP tool `spec_doctor` and the Setup tab.
 
 ## Install the skill
 

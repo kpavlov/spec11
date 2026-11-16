@@ -68,7 +68,11 @@ enum Cmd {
         global: bool,
     },
     /// Check the repo setup: specs, tests, sources, git, the codegraph binary and index, skill and MCP entry.
-    Doctor,
+    Doctor {
+        /// Also build or refresh the CodeGraph index when the checks call for it (runs `codegraph init` / `sync`). Without this flag doctor only reads.
+        #[arg(long)]
+        fix: bool,
+    },
     /// Serve the dashboard (`/`, `/api`) and the MCP server (`/mcp`) on 127.0.0.1.
     Serve {
         #[arg(long, default_value_t = 7411)]
@@ -128,6 +132,7 @@ fn out<T: serde::Serialize>(json: bool, v: &T, text: impl FnOnce() -> String) {
     if json { println!("{}", serde_json::to_string_pretty(v).unwrap()) } else { print!("{}", text()) }
 }
 
+// (API-02)
 /// 403 unless the Host (and Origin, when sent) is one this server bound.
 async fn guard(State(s): State<AppState>, headers: HeaderMap, req: axum::extract::Request, next: Next) -> Response {
     let host = headers.get(header::HOST).and_then(|v| v.to_str().ok()).unwrap_or("");
@@ -203,8 +208,12 @@ fn run(cli: Cli) -> Result<u8, String> {
     let cmd = cli.cmd.unwrap_or(Cmd::Serve { port: 7411, ui_port: None, no_open: false });
     match cmd {
         Cmd::Serve { port, ui_port, no_open } => return serve(cli.root, port, ui_port, no_open),
-        Cmd::Doctor => {
-            let checks = doctor::run(cli.root.as_deref(), 7411);
+        Cmd::Doctor { fix } => {
+            let mut checks = doctor::run(cli.root.as_deref(), 7411);
+            if fix && let Some(action) = doctor::suggested(&checks) {
+                eprint!("{}", doctor::index(cli.root.as_deref(), action)?);
+                checks = doctor::run(cli.root.as_deref(), 7411);
+            }
             out(cli.json, &checks, || doctor::text(&checks));
             return Ok(u8::from(checks.iter().any(|k| k.level == "fail")));
         }
@@ -244,7 +253,7 @@ fn run(cli: Cli) -> Result<u8, String> {
                 return Ok(1);
             }
         },
-        Cmd::Serve { .. } | Cmd::Install { .. } | Cmd::Uninstall { .. } | Cmd::Doctor => unreachable!(),
+        Cmd::Serve { .. } | Cmd::Install { .. } | Cmd::Uninstall { .. } | Cmd::Doctor { .. } => unreachable!(),
         Cmd::Overlap { path, all } => {
             let rows = a.overlap(path.as_deref().unwrap_or(""), all).map_err(|e| e.to_string())?.ok_or_else(no_index)?;
             out(cli.json, &rows, || a.overlap_text(&rows, 25));
@@ -277,6 +286,8 @@ mod tests {
         let d = std::env::temp_dir().join(format!("spec11-srv-{}", std::process::id()));
         std::fs::create_dir_all(d.join("specs")).unwrap();
         std::fs::write(d.join("specs/01-a.md"), "- **AAA-01** MUST — one.\n- **AAA-02** MUST — two.\n").unwrap();
+        std::fs::create_dir_all(d.join("RunSolo/RunSolo")).unwrap();
+        std::fs::write(d.join("RunSolo/RunSolo/A.swift"), "struct A {}\n").unwrap();
         d
     }
 
@@ -290,6 +301,7 @@ mod tests {
         Request::post(uri).header("host", host).header("content-type", "application/json").header("accept", "application/json, text/event-stream").body(Body::from(body.to_string())).unwrap()
     }
 
+    #[doc = "[API-01, API-02, API-03]"]
     #[tokio::test]
     async fn api_and_guard() {
         let (app, ui) = routers(app_state(Some(repo()), &[7411]));
@@ -307,6 +319,12 @@ mod tests {
             let (st, _) = send(&app, post("/api/call/spec_file", "127.0.0.1:7411", &format!(r#"{{"name":"{bad}"}}"#))).await;
             assert_eq!(st, StatusCode::BAD_REQUEST, "{bad}");
         }
+        let (st, body) = send(&app, post("/api/call/spec_source", "127.0.0.1:7411", r#"{"path":"RunSolo/RunSolo/A.swift"}"#)).await;
+        assert!(st == StatusCode::OK && body.contains("struct A"), "{body}");
+        for bad in ["../Cargo.toml", "/etc/passwd", "specs/01-a.md", "RunSolo/RunSolo/../../specs/01-a.md"] {
+            let (st, _) = send(&app, post("/api/call/spec_source", "127.0.0.1:7411", &format!(r#"{{"path":"{bad}"}}"#))).await;
+            assert_eq!(st, StatusCode::BAD_REQUEST, "{bad}");
+        }
         assert_eq!(send(&app, post("/api/call/nope", "127.0.0.1:7411", "{}")).await.0, StatusCode::BAD_REQUEST);
         assert_eq!(send(&app, post("/api/call/spec_report", "evil.test", "{}")).await.0, StatusCode::FORBIDDEN);
         let mut r = post("/api/call/spec_report", "127.0.0.1:7411", "{}");
@@ -314,6 +332,7 @@ mod tests {
         assert_eq!(send(&app, r).await.0, StatusCode::FORBIDDEN);
     }
 
+    #[doc = "[SETUP-01]"]
     #[tokio::test]
     async fn install_tools_write_the_repo_and_report_status() {
         let repo = repo();
@@ -334,6 +353,7 @@ mod tests {
         assert!(std::fs::read_to_string(repo.join(".mcp.json")).unwrap().contains("\"other\""));
     }
 
+    #[doc = "[API-01, API-04]"]
     #[tokio::test]
     async fn mcp_tools_and_ui_resource() {
         let (app, _) = routers(app_state(Some(repo()), &[7411]));
@@ -352,6 +372,7 @@ mod tests {
         assert_eq!(send(&app, bad).await.0, StatusCode::FORBIDDEN);
     }
 
+    #[doc = "[API-05]"]
     #[tokio::test]
     async fn split_ports_separate_mcp_from_ui() {
         let (mcp_app, ui) = routers(app_state(Some(repo()), &[7411, 7412]));
@@ -363,6 +384,7 @@ mod tests {
     }
 
     /// Release builds only: the embedded UI, SPA fallback, 404 for a missing asset.
+    #[doc = "[API-06]"]
     #[cfg(not(debug_assertions))]
     #[tokio::test]
     async fn embedded_ui() {

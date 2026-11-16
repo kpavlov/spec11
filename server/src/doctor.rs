@@ -1,4 +1,4 @@
-//! `spec11 doctor`: is this repo set up for spec11, and is CodeGraph usable here? It only looks and suggests; it never indexes or installs.
+//! `spec11 doctor`: is this repo set up for spec11, and is CodeGraph usable here? `run` only looks and suggests. The one thing that writes is `index`, which runs only when the user asks (`doctor --fix`, the Setup tab button).
 use serde::Serialize;
 use spec11_core::{Analysis, codegraph::{Graph, GraphError}, scan::Project};
 use std::path::Path;
@@ -28,6 +28,34 @@ fn codegraph_version() -> Option<String> {
     Some(text.lines().next().unwrap_or("").to_string())
 }
 
+/// Build or refresh the CodeGraph index by running the `codegraph` binary: `init` when there is no index yet, `sync` when there is.
+/// Never called by `run` or on its own: indexing is the user's decision.
+// (SETUP-07)
+pub fn index(root: Option<&Path>, action: &str) -> Result<String, String> {
+    let p = Project::open(root)?;
+    let exists = p.root.join(&p.cfg.codegraph).exists();
+    let args: [&str; 2] = match (action, exists) {
+        ("init", false) => ["init", "-y"],
+        ("sync", true) => ["sync", ""],
+        ("init", true) => return Err("an index already exists; use sync to refresh it".into()),
+        ("sync", false) => return Err("no index yet; use init first".into()),
+        _ => return Err(format!("unknown action '{action}': use init or sync")),
+    };
+    codegraph_version().ok_or("the codegraph binary is not on PATH: install CodeGraph first")?;
+    let out = std::process::Command::new("codegraph").args(args.iter().filter(|a| !a.is_empty())).arg(&p.root).current_dir(&p.root).output().map_err(|e| e.to_string())?;
+    let text = String::from_utf8_lossy(&[out.stdout, out.stderr].concat()).trim().to_string();
+    let tail = text.lines().rev().take(12).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("\n");
+    if out.status.success() { Ok(format!("codegraph {action} finished\n{tail}\n")) } else { Err(format!("codegraph {action} failed\n{tail}")) }
+}
+
+/// Which index action the checks call for, if any: `init` when missing, `sync` when stale.
+pub fn suggested(checks: &[Check]) -> Option<&'static str> {
+    let k = checks.iter().find(|k| k.name == "codegraph index")?;
+    if checks.iter().any(|b| b.name == "codegraph binary" && b.level != "ok") { return None; }
+    if k.detail.contains("not initialized") { Some("init") } else if k.detail.contains("older than") { Some("sync") } else { None }
+}
+
+// (SETUP-05, SETUP-06)
 pub fn run(root: Option<&Path>, mcp_port: u16) -> Vec<Check> {
     let mut out = vec![];
     let p = match Project::open(root) {
@@ -128,6 +156,7 @@ mod tests {
         cs.iter().find(|k| k.name == name).unwrap_or_else(|| panic!("no check {name}")).level
     }
 
+    #[doc = "[SETUP-05]"]
     #[test]
     fn doctor_reports_each_part_of_the_setup() {
         let d = std::env::temp_dir().join(format!("spec11-doctor-{}", std::process::id()));
@@ -147,6 +176,21 @@ mod tests {
         assert!(t.contains("not initialized") && t.contains("warnings"), "{t}");
     }
 
+    #[doc = "[SETUP-07]"]
+    #[test]
+    fn indexing_runs_only_on_request_and_checks_state_first() {
+        let d = std::env::temp_dir().join(format!("spec11-doctor-idx-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("specs")).unwrap();
+        assert!(index(Some(&d), "sync").unwrap_err().contains("use init first"));
+        assert!(index(Some(&d), "bogus").unwrap_err().contains("unknown action"));
+        std::fs::create_dir_all(d.join(".codegraph")).unwrap();
+        std::fs::write(d.join(".codegraph/codegraph.db"), "").unwrap();
+        assert!(index(Some(&d), "init").unwrap_err().contains("already exists"));
+        assert!(!run(Some(&d), 7411).is_empty() && d.join(".codegraph/codegraph.db").metadata().unwrap().len() == 0, "run() must not touch the index");
+    }
+
+    #[doc = "[SETUP-06]"]
     #[test]
     fn no_specs_folder_is_a_failure() {
         let d = std::env::temp_dir().join(format!("spec11-doctor-bare-{}", std::process::id()));

@@ -138,6 +138,7 @@ impl Project {
         fs
     }
 
+    // (SCAN-01)
     /// {id: Spec} from `- **ABC-12** MUST — text` bullets, wrapped lines joined. A bullet ending in `(manual)`, `(later)` or
     /// `(deferred)` carries mark "manual" or "later"; struck-out bullets (`- ~~**ABC-12**`) are retired.
     /// Spec mistakes found on the way (duplicate ID, no level, marker not at the end) go to `problems`.
@@ -197,6 +198,7 @@ impl Project {
         self.rx.tag.captures_iter(line).flat_map(|g| self.rx.mention.captures_iter(&g[1]).map(|m| m[1].to_string()).collect::<Vec<_>>()).collect()
     }
 
+    // (SCAN-02)
     /// {id: [ref]} for every `[ID]` or `[ID, ID]` tag in the test folders.
     pub fn tests(&self) -> Refs {
         let mut found = Refs::new();
@@ -219,6 +221,7 @@ impl Project {
         self.cfg.comment.iter().any(|c| text.starts_with(c.as_str()))
     }
 
+    // (SCAN-03)
     /// {id: [ref]} for IDs mentioned after a line-comment marker in app sources (block comments are not scanned).
     pub fn sources(&self) -> Refs {
         let mut found = Refs::new();

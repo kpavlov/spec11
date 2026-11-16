@@ -1,7 +1,7 @@
 // One `call(tool, args)` for both hosts: plain fetch to the Rust server, or the MCP Apps bridge when this page runs inside a host iframe.
 export type Result<T = any> = { text: string; data: T };
 
-const embedded = window.parent !== window;
+export const embedded = window.parent !== window;
 
 let seq = 0;
 const pending = new Map<number, { ok: (v: any) => void; fail: (e: Error) => void }>();

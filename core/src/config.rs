@@ -45,6 +45,7 @@ impl Default for Config {
 }
 
 impl Config {
+    // (SCAN-06)
     pub fn load(root: &Path) -> Result<Config, String> {
         let f = root.join("spec11.json");
         if !f.exists() {

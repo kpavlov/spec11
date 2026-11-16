@@ -1,19 +1,11 @@
 <script lang="ts">
   import { render } from "./markdown";
 
-  let { source, onid }: { source: string; onid?: (id: string) => void } = $props();
+  let { source }: { source: string } = $props();
   const html = $derived(render(source));
-
-  function click(e: MouseEvent) {
-    const a = (e.target as HTMLElement).closest<HTMLElement>("a[data-id]");
-    if (!a || !onid) return;
-    e.preventDefault();
-    onid(a.dataset.id!);
-  }
 </script>
 
-<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-<div class="md" onclick={click}>{@html html}</div>
+<div class="md">{@html html}</div>
 
 <style>
   .md { line-height: 1.55; overflow-wrap: anywhere; }

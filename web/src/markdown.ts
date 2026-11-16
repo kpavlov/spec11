@@ -12,7 +12,7 @@ function inline(s: string): string {
     .replace(/~~(.+?)~~/g, "<s>$1</s>")
     .replace(/(^|[^*\w])\*([^*\s][^*]*?)\*(?!\w)/g, "$1<em>$2</em>")
     .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
-    .replace(ID, '<a class="id" href="#$1" data-id="$1">$1</a>');
+    .replace(ID, '<a class="id" href="/requirements/$1" data-id="$1">$1</a>');
   return t.replace(/\u0000(\d+)\u0000/g, (_, i) => `<code>${codes[+i]}</code>`);
 }
 

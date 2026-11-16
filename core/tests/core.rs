@@ -29,19 +29,19 @@ fn fixture(name: &str) -> PathBuf {
 - **DEM-11** MAY — nothing at all.
 ");
     write(&d, "tests/DemoTests.swift", "\
-@Test(\"[DEM-01] works\") func a() {
+@Test(\"[DEM\x2D01] works\") func a() {
     #expect(true)
 }
-@Test(\"[DEM-05] built already\") func b() {
+@Test(\"[DEM\x2D05] built already\") func b() {
     let x = 1
 }
-@Test(\"[DEM-99] unknown\") func c() {
+@Test(\"[DEM\x2D99] unknown\") func c() {
     #expect(true)
 }
-@Test(\"[DEM-10] retired\") func e() {
+@Test(\"[DEM\x2D10] retired\") func e() {
     #expect(true)
 }
-// [DEM-03] only in a comment
+// [DEM\x2D03] only in a comment
 ");
     write(&d, "src/Demo.swift", "\
 /// (DEM-02) the rule
@@ -53,6 +53,7 @@ struct Demo {
     d
 }
 
+#[doc = "[SCAN-01, SCAN-02, SCAN-03, SCAN-04]"]
 #[test]
 fn states_and_issues() {
     let a = Analysis::load(Some(&fixture("states"))).unwrap();
@@ -67,6 +68,49 @@ fn states_and_issues() {
     assert!(a.built("DEM-05"));
 }
 
+#[doc = "[SCAN-05]"]
+#[test]
+fn same_tree_same_text() {
+    let d = fixture("determinism");
+    let text = || {
+        let a = Analysis::load(Some(&d)).unwrap();
+        (a.report().text(&a, 12), a.status(&StatusOpts { all: true, ..Default::default() }).unwrap().text(&StatusOpts { all: true, ..Default::default() }))
+    };
+    let first = text();
+    assert_eq!(first, text());
+    assert_eq!(first, text());
+}
+
+#[doc = "[SCAN-06]"]
+#[test]
+fn config_comes_from_spec11_json_or_defaults() {
+    let a = Analysis::load(Some(&fixture("config"))).unwrap();
+    assert_eq!((a.p.cfg.tests.clone(), a.p.cfg.src.clone(), a.p.cfg.ext.clone()), (vec!["tests".to_string()], vec!["src".to_string()], vec!["swift".to_string()]));
+
+    let bare = std::env::temp_dir().join(format!("spec11-{}-bare", std::process::id()));
+    let _ = fs::remove_dir_all(&bare);
+    write(&bare, "specs/01-a.md", "- **AAA-01** MUST — one.\n");
+    let a = Analysis::load(Some(&bare)).unwrap();
+    assert_eq!(a.p.cfg.specs, "specs");
+    assert_eq!(a.p.cfg.ext, vec!["swift".to_string()]); // the defaults
+
+    write(&bare, "spec11.json", "{not json");
+    let err = Analysis::load(Some(&bare)).err().expect("a broken spec11.json is an error");
+    assert!(err.contains("spec11.json"), "{err}");
+}
+
+#[doc = "[GRAPH-03]"]
+#[test]
+fn a_missing_index_is_not_checked_not_an_error() {
+    let d = fixture("noindex");
+    assert!(Graph::open(&d.join(".codegraph/codegraph.db")).unwrap().is_none());
+    let a = Analysis::load(Some(&d)).unwrap();
+    let r = a.report();
+    assert!(!r.index);
+    assert!(r.text(&a, 12).contains("not checked"), "{}", r.text(&a, 12));
+}
+
+#[doc = "[SCAN-07]"]
 #[test]
 fn report_problems() {
     let a = Analysis::load(Some(&fixture("report"))).unwrap();
@@ -85,6 +129,7 @@ fn report_problems() {
     assert!(r.text(&a, 12).contains("[code with no requirement] not checked"));
 }
 
+#[doc = "[SCAN-08]"]
 #[test]
 fn status_listing_and_trace() {
     let a = Analysis::load(Some(&fixture("status"))).unwrap();
@@ -116,6 +161,7 @@ fn index(d: &Path, with_edges_kind: bool) {
         if with_edges_kind { "insert into edges(source,target,kind) values ('t1','n2','calls'),('n2','n1','references');" } else { "" })).unwrap();
 }
 
+#[doc = "[GRAPH-01, GRAPH-04]"]
 #[test]
 fn codegraph_links_callers_impact_fts() {
     let d = fixture("graph");
@@ -130,6 +176,7 @@ fn codegraph_links_callers_impact_fts() {
     assert_eq!(g.search("Demo", 5).unwrap()[0].name, "Demo"); // FTS5 is compiled in
 }
 
+#[doc = "[GRAPH-02]"]
 #[test]
 fn codegraph_schema_drift_is_an_error_not_a_panic() {
     let d = fixture("drift");

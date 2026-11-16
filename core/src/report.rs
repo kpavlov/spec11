@@ -227,6 +227,7 @@ impl Analysis {
 }
 
 impl Report {
+    // (SCAN-05)
     /// Plain text, identical on every run for the same tree. `limit` lines per problem section.
     pub fn text(&self, a: &Analysis, limit: usize) -> String {
         let mut o = String::new();
@@ -517,6 +518,7 @@ pub struct Trace {
 }
 
 impl Analysis {
+    // (SCAN-08)
     /// `None` when the ID is in no spec, test or source.
     pub fn trace(&self, id: &str) -> Option<Trace> {
         let want = id.to_uppercase();

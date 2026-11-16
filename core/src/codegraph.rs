@@ -60,6 +60,7 @@ const NEEDED: [(&str, &[&str]); 2] = [
 ];
 
 impl Graph {
+    // (GRAPH-01, GRAPH-02, GRAPH-03)
     /// `Ok(None)` when there is no index: indexing is the user's decision, never an error.
     pub fn open(db: &Path) -> R<Option<Graph>> {
         if !db.exists() {
