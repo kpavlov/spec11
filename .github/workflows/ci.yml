@@ -28,7 +28,7 @@ jobs:
       # release build embeds web/dist (build.rs runs pnpm); the release-only embedded-UI test runs here too
       - run: cargo test --release --workspace --locked
       - run: make dist
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: spec11-${{ matrix.os }}
           path: dist/*.tar.gz
