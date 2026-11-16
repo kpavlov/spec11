@@ -51,7 +51,7 @@ Tools: `spec_report`, `spec_status`, `spec_trace`, `spec_overlap`, `spec_uncover
 
 ## Dashboard URLs
 
-The URL is the view, so back/forward, reload and shared links work: `/report`, `/requirements/DOC-25?state=none&q=text`, `/specs?file=04-documents.md&id=DOC-25`, `/code?path=src/main.rs&line=12`, `/overlap`, `/uncovered`, `/setup`. Tests, citations and spec locations link to the file viewer or spec; IDs inside code and markdown link to the requirement.
+The URL is the view, so back/forward, reload and shared links work: `/` (the dashboard; `/report` still works), `/modules`, `/modules?module=core`, `/tests?module=core&state=untagged`, `/requirements/DOC-25?state=none&q=text`, `/specs?file=04-documents.md&id=DOC-25`, `/code?path=src/main.rs&line=12`, `/overlap`, `/uncovered`, `/setup`. Tests, citations and spec locations link to the file viewer or spec; IDs inside code and markdown link to the requirement.
 
 ## Doctor
 

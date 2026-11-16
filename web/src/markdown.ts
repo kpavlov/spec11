@@ -2,9 +2,10 @@
 // Requirement IDs (ABC-12) become <a data-id> so the viewer can open their trace.
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
-const ID = /\b([A-Z]{2,6}-\d{1,3})\b/g;
+const ID = /\b([A-Z]{2,5}-\d{1,4})\b/g; // the core's ID shape
 
-function inline(s: string): string {
+/** One line of markdown as HTML: code spans, bold, italic, strike, links and requirement-ID links. */
+export function inline(s: string): string {
   const codes: string[] = [];
   let t = esc(s).replace(/`([^`]+)`/g, (_, c) => `\u0000${codes.push(c) - 1}\u0000`); // code spans: no further formatting
   t = t
@@ -13,6 +14,8 @@ function inline(s: string): string {
     .replace(/(^|[^*\w])\*([^*\s][^*]*?)\*(?!\w)/g, "$1<em>$2</em>")
     .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
     .replace(ID, '<a class="id" href="/requirements/$1" data-id="$1">$1</a>');
+  // RFC 2119 level as a pill; skips tags so hrefs stay intact
+  t = t.replace(/(<[^>]+>)|\b(MUST|SHOULD|MAY)\b/g, (m, tag, w) => (tag ? m : `<span class="rfc ${w.toLowerCase()}">${w}</span>`));
   return t.replace(/\u0000(\d+)\u0000/g, (_, i) => `<code>${codes[+i]}</code>`);
 }
 

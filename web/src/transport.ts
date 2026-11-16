@@ -1,4 +1,6 @@
-// One `call(tool, args)` for both hosts: plain fetch to the Rust server, or the MCP Apps bridge when this page runs inside a host iframe.
+import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
+
+// `call(tool, args)` and `read(uri)` for both hosts: plain fetch to the Rust server, or the MCP Apps bridge when this page runs inside a host iframe.
 export type Result<T = any> = { text: string; data: T };
 
 export const embedded = window.parent !== window;
@@ -43,4 +45,25 @@ export async function call<T = any>(tool: string, args: Record<string, unknown> 
   const body = await res.json();
   if (!res.ok) throw new Error(body.error ?? res.statusText);
   return body;
+}
+
+// Standalone: the official MCP client, pinned to 2026-07-28 (no `initialize`, no session; it sends `server/discover` once and then the per-request `_meta` headers).
+let mcp: Promise<Client> | undefined;
+const connect = () =>
+  (mcp ??= (async () => {
+    const c = new Client({ name: "spec11-web", version: "0.1.0" }, { versionNegotiation: { mode: { pin: "2026-07-28" } } });
+    await c.connect(new StreamableHTTPClientTransport(new URL("/mcp", location.href)));
+    return c;
+  })().catch((e) => ((mcp = undefined), Promise.reject(e))));
+
+// An MCP resource (JSON): `resources/read` through the host bridge, or straight to `/mcp` with the SDK client.
+export async function read<T = any>(uri: string): Promise<T> {
+  let text: unknown;
+  if (embedded) {
+    await initBridge();
+    text = (await rpc("resources/read", { uri })).contents?.[0]?.text;
+  } else {
+    text = ((await (await connect()).readResource({ uri })).contents[0] as { text?: string } | undefined)?.text;
+  }
+  return JSON.parse(String(text ?? "null"));
 }

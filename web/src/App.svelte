@@ -1,15 +1,16 @@
 <script lang="ts">
   import { untrack } from "svelte";
-  import { call, embedded } from "./transport";
+  import { call, embedded, read } from "./transport";
   import { TABS, format, parse, type Route } from "./router";
   import Markdown from "./Markdown.svelte";
+  import { inline } from "./markdown";
 
   type Ref = { file: string; line: number; text: string };
   type Row = { id: string; state: string; file: string; line: number; level: string; text: string; mark: string; done: boolean; verdict: string; built: boolean; issues: string[]; tests: Ref[]; cites: Ref[]; graph: string[] };
 
   // ---- routing: the URL is the state ----
   const here = (): Route => {
-    try { return parse(new URL(location.href)); } catch { return { tab: "report" }; }
+    try { return parse(new URL(location.href)); } catch { return { tab: "dashboard" }; }
   };
   let route = $state<Route>(here());
   const u = format;
@@ -75,6 +76,8 @@
   let specMd = $state("");
   let code = $state<{ path: string; text: string } | null>(null);
   let report = $state<any>(null);
+  let modules = $state<any>(null);
+  let tests = $state<any>(null);
   let rows = $state<Row[]>([]);
   let overlap = $state<any[] | null>(null);
   let uncovered = $state<any>(null);
@@ -89,7 +92,9 @@
     const [r, s] = await guard(Promise.all([call("spec_report", { limit: 1000 }), call("spec_status", { all: true, limit: 5000 })]));
     report = r.data;
     rows = s.data.rows;
-    overlap = uncovered = null;
+    // resources go straight to /mcp, which a split-port UI cannot reach: the modules views then stay empty instead of failing the load
+    read("spec11://modules").then((m) => (modules = m)).catch(() => (modules = null));
+    overlap = uncovered = tests = null;
     trace = null;
     if (!root) fetch("/api/info").then((x) => x.json()).then((i) => (root = i.root ?? "")).catch(() => {});
   }
@@ -148,6 +153,7 @@
 
   $effect(() => {
     if (route.tab === "overlap" && overlap === null) call("spec_overlap").then((r) => (overlap = r.data.rows)).catch((e) => (error = e.message));
+    if ((route.tab === "tests" || (route.tab === "modules" && route.module)) && tests === null) read("spec11://tests").then((r) => (tests = r)).catch((e) => (error = e.message));
     if (route.tab === "uncovered" && uncovered === null) call("spec_uncovered").then((r) => (uncovered = r.data)).catch((e) => (error = e.message));
   });
 
@@ -171,16 +177,47 @@
   const counts = $derived(rows.reduce<Record<string, number>>((m, r) => ((m[r.state] = (m[r.state] ?? 0) + 1), m), { all: rows.length }));
   const invalidN = $derived(report ? Object.values(report.invalid_tests).reduce((n: number, v: any) => n + v.length, 0) : 0);
   const known = $derived(new Set(rows.map((r) => r.id)));
+  const mods = $derived<any[]>((modules?.modules ?? []).filter((m: any) => !query || m.path.toLowerCase().includes(query.toLowerCase())));
+  const modOf = $derived(modules?.modules.find((m: any) => m.path === route.module));
+  const usedBy = $derived((modules?.modules ?? []).filter((m: any) => modOf && m.depends_on.some((d: any) => d.module === modOf.path)));
+  const testsOf = (path: string) => tests?.modules.find((m: any) => m.module === path);
+  const symbolsOf = (m: any) => Object.values<number>(m.symbols).reduce((a, b) => a + b, 0);
+  // the tests screen: every detected test, narrowed by module, tagged/untagged and text; capped so a monorepo stays responsive
+  const testStates = ["all", "tagged", "untagged"];
+  const allCases = $derived<any[]>((tests?.modules ?? []).filter((m: any) => !route.module || m.module === route.module).flatMap((m: any) => m.files.flatMap((f: any) => f.tests.map((t: any) => ({ module: m.module, file: f.file, t })))));
+  const tcounts = $derived({ all: allCases.length, tagged: allCases.filter((c) => c.t.ids.length).length, untagged: allCases.filter((c) => !c.t.ids.length).length } as Record<string, number>);
+  const matched = $derived(allCases.filter((c) => (stateFilter === "all" || (stateFilter === "tagged") === c.t.ids.length > 0) && (!query || `${c.file} ${c.t.name} ${c.t.ids.join(" ")}`.toLowerCase().includes(query.toLowerCase()))));
+  const TEST_CAP = 500;
+  const groups = $derived.by(() => {
+    const out: { module: string; files: { file: string; tests: any[] }[] }[] = [];
+    for (const c of matched.slice(0, TEST_CAP)) {
+      const g = out.find((x) => x.module === c.module) ?? out[out.push({ module: c.module, files: [] }) - 1];
+      (g.files.find((x) => x.file === c.file) ?? g.files[g.files.push({ file: c.file, tests: [] }) - 1]).tests.push(c.t);
+    }
+    return out;
+  });
+  const taggedN = $derived(tests ? tests.modules.reduce((n: number, m: any) => n + m.files.reduce((k: number, f: any) => k + f.tests.filter((t: any) => t.ids.length).length, 0), 0) : 0);
   const plain = (t: string) => t.replace(/[`*~]/g, "");
   const req = (id: string): Route => ({ tab: "requirements", id });
   const withId = (tab: Route["tab"], id: string): Route => ({ tab, id });
   // typing in the filter replaces the URL instead of stacking a history entry per keystroke
   const filter = (patch: Partial<Route>) => navigate({ ...route, ...patch }, true);
-  const segs = (line: string) => line.split(/(\b[A-Z]{2,6}-\d{1,3}\b)/).map((t, i) => ({ t, id: i % 2 === 1 && known.has(t) }));
+  const segs = (line: string) => line.split(/(\b[A-Z]{2,5}-\d{1,4}\b)/).map((t, i) => ({ t, id: i % 2 === 1 && known.has(t) }));
 </script>
 
 {#snippet idlink(id: string, to: Route)}
   <a class="id" href={u(to)}>{id}</a>
+{/snippet}
+
+{#snippet cases(files: any[])}
+  {#each files as f}
+    <h4 class="mono nowrap"><a href={u({ tab: "code", path: f.file })}>{f.file}</a> <span class="muted">{f.tests.length}</span></h4>
+    <ul class="refs">
+      {#each f.tests as t}
+        <li><a class="mono" href={u({ tab: "code", path: f.file, line: t.line })} title={t.qualified}>{t.name}</a> {#each t.ids as id}{@render idlink(id, known.has(id) ? req(id) : { tab: "requirements", q: id })}{" "}{/each}{#if !t.ids.length}<span class="muted">untagged</span>{/if}</li>
+      {/each}
+    </ul>
+  {/each}
 {/snippet}
 
 {#snippet tracePanel()}
@@ -215,12 +252,12 @@
 {/snippet}
 
 <header>
-  <h1><a href="/report">spec11</a></h1>
-  <a class="root mono muted" href="/report">{root}</a>
+  <h1><a href="/">spec11</a></h1>
+  <a class="root mono muted" href="/">{root}</a>
   <nav aria-label="views">
     {#each TABS as t}
       <a class="tab" class:on={route.tab === t} aria-current={route.tab === t ? "page" : undefined} href={u({ tab: t })}>
-        {t}{#if t === "report" && report?.total_problems}<span class="badge bad" title="{report.total_problems} problems">{report.total_problems}</span>{/if}{#if t === "setup" && setup?.suggestions.length}<span class="badge warn" title="not fully set up">!</span>{/if}
+        {t}{#if t === "dashboard" && report?.total_problems}<span class="badge bad" title="{report.total_problems} problems">{report.total_problems}</span>{/if}{#if t === "setup" && setup?.suggestions.length}<span class="badge warn" title="not fully set up">!</span>{/if}
       </a>
     {/each}
   </nav>
@@ -243,7 +280,7 @@
 <main>
   {#if !report}
     <p class="muted">Scanning…</p>
-  {:else if route.tab === "report"}
+  {:else if route.tab === "dashboard"}
     <section class="hero card">
       <div class="pct"><b>{report.tested_pct}%</b><span>of due requirements have a tagged test <small class="muted">({report.tested}/{report.due})</small></span></div>
       <div class="meter" role="img" aria-label="{report.tested_pct}% tested"><i style="width:{report.tested_pct}%"></i></div>
@@ -256,6 +293,24 @@
       </p>
     </section>
     {#if !report.index}<p class="note-line muted">No CodeGraph index: test-to-code links and uncovered code are not checked.</p>{/if}
+    {#if modules?.modules.length}
+      <details open>
+        <summary><span>Modules</span> <a href="/modules">all {modules.modules.length}</a></summary>
+        <table>
+          <tbody>
+            {#each [...modules.modules].sort((a, b) => b.tests - a.tests || a.path.localeCompare(b.path)).slice(0, 8) as m}
+              <tr>
+                <td class="mono nowrap"><a href={u({ tab: "modules", module: m.path })}>{m.path}</a></td>
+                <td class="muted">{m.languages.join(", ")}</td>
+                <td class="nowrap">{m.tests} tests</td>
+                <td class="muted nowrap">{m.src_files + m.test_files} files</td>
+                <td class="muted">{#if m.depends_on.length}→ {m.depends_on.slice(0, 3).map((d: any) => d.module).join(", ")}{/if}</td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </details>
+    {/if}
 
     {#snippet ids(title: string, list: string[], sev: string)}
       {#if list.length}
@@ -309,7 +364,7 @@
             <tr onclick={() => navigate({ ...route, id: r.id })} class:sel={route.id === r.id} class="st-{r.state}">
               <td class="mono nowrap"><a href={u({ ...route, id: r.id })}>{r.id}</a></td>
               <td><span class="pill {r.state}">{r.state}</span>{#if r.done}<span class="pill done" title="check-marked: {r.verdict}">✓ {r.verdict}</span>{/if}</td>
-              <td class="txt" title={plain(r.text)}>{plain(r.text)}</td>
+              <td class="txt" title={plain(r.text)}>{@html inline(r.text)}</td>
               <td class="mono muted nowrap"><a href={u({ tab: "specs", file: r.file, id: r.id })}>{r.file}:{r.line}</a></td>
             </tr>
           {/each}
@@ -371,6 +426,74 @@
       </table>
       {#if indexLog}<pre class="log">{indexLog}</pre>{/if}
     {/if}
+  {:else if route.tab === "modules" && route.module}
+    <p class="mono nowrap crumb"><a href="/modules">modules</a> / {route.module}</p>
+    {#if !modules}<p class="muted">Loading…</p>
+    {:else if !modOf}<p class="muted empty">No module <code>{route.module}</code>. <a href="/modules">All modules</a></p>
+    {:else}
+      <section class="card block">
+        <h3 class="mono">{modOf.path}</h3>
+        <p>
+          {#if modOf.manifest}<span class="pill">{modOf.manifest}</span>{/if}
+          {#each modOf.languages as l}<span class="pill">{l}</span>{/each}
+          <span class="muted">{modOf.src_files} source files · {modOf.test_files} test files · {symbolsOf(modOf)} symbols</span>
+        </p>
+        {#if Object.keys(modOf.symbols).length}<p class="muted">{Object.entries(modOf.symbols).map(([k, n]) => `${n} ${k}`).join(" · ")}</p>{/if}
+        {#if modOf.depends_on.length}<p>depends on {#each modOf.depends_on as d}<a class="id" href={u({ tab: "modules", module: d.module })} title="{d.edges} edges">{d.module}</a>{" "}{/each}</p>{/if}
+        {#if usedBy.length}<p>used by {#each usedBy as d}<a class="id" href={u({ tab: "modules", module: d.path })}>{d.path}</a>{" "}{/each}</p>{/if}
+      </section>
+      <h3>Tests <span class="muted">{modOf.tests}</span> <a class="more" href={u({ tab: "tests", module: modOf.path })}>filter in Tests</a></h3>
+      {#if tests === null}<p class="muted">Loading tests…</p>
+      {:else if !testsOf(modOf.path)}<p class="muted">No tests detected in this module.</p>
+      {:else}{@render cases(testsOf(modOf.path).files)}{/if}
+      {#if tests}<p class="muted note">{tests.note}</p>{/if}
+    {/if}
+  {:else if route.tab === "modules"}
+    <div class="bar">
+      <input name="filter" aria-label="filter modules" placeholder="Filter modules" value={query} oninput={(e) => filter({ q: e.currentTarget.value })} />
+      <span class="muted">{modules?.modules.length ?? 0} modules</span>
+    </div>
+    {#if modules && !modules.index}<p class="note-line muted">{modules.note}</p>{/if}
+    {#if mods.length}
+      <table>
+        <thead><tr><th>module</th><th>manifest</th><th>languages</th><th class="num">source</th><th class="num">test files</th><th class="num">tests</th><th class="num">symbols</th><th class="num">depends on</th></tr></thead>
+        <tbody>
+          {#each mods as m (m.path)}
+            <tr>
+              <td class="mono nowrap"><a href={u({ tab: "modules", module: m.path })}>{m.path}</a></td>
+              <td class="muted">{m.manifest ?? ""}</td>
+              <td class="muted">{m.languages.join(", ")}</td>
+              <td class="num">{m.src_files}</td>
+              <td class="num">{m.test_files}</td>
+              <td class="num"><a href={u({ tab: "tests", module: m.path })}>{m.tests}</a></td>
+              <td class="num">{symbolsOf(m)}</td>
+              <td class="num">{m.depends_on.length}</td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    {:else if modules}<p class="muted empty">No module matches. <a href="/modules">Clear filter</a></p>{/if}
+  {:else if route.tab === "tests"}
+    <div class="bar">
+      <div class="chips" role="group" aria-label="tagged">
+        {#each testStates as st}<button class="chip" class:on={stateFilter === st} aria-pressed={stateFilter === st} onclick={() => filter({ state: st })}>{st} <b>{tcounts[st]}</b></button>{/each}
+      </div>
+      <select aria-label="module" value={route.module ?? ""} onchange={(e) => filter({ module: e.currentTarget.value || undefined })}>
+        <option value="">all modules</option>
+        {#each modules?.modules ?? [] as m}<option value={m.path}>{m.path}</option>{/each}
+      </select>
+      <input name="filter" aria-label="filter tests" placeholder="Filter test, file, requirement ID   ( / )" value={query} oninput={(e) => filter({ q: e.currentTarget.value })} />
+    </div>
+    {#if tests === null}<p class="muted">Loading…</p>
+    {:else}
+      <p class="muted">{tests.total} tests detected in {tests.modules.length} modules, {taggedN} tagged with a requirement. {tests.note}</p>
+      {#each groups as g (g.module)}
+        <h3 class="mono"><a href={u({ tab: "modules", module: g.module })}>{g.module}</a></h3>
+        {@render cases(g.files)}
+      {/each}
+      {#if !matched.length}<p class="muted empty">No test matches. <a href="/tests">Clear filters</a></p>{/if}
+      {#if matched.length > TEST_CAP}<p class="muted">First {TEST_CAP} of {matched.length} shown; narrow the filter.</p>{/if}
+    {/if}
   {:else if route.tab === "specs"}
     {#if specFiles === null}<p class="muted">Loading…</p>
     {:else}
@@ -402,9 +525,10 @@
         <tbody>
           {#each uncovered.files as f}
             <tr>
-              <td class="mono"><a href={u({ tab: "code", path: f.file })}>{f.file}</a></td>
+              <!-- f.file is shown relative to the app folder; the viewer needs the repo-relative path every unit carries -->
+              <td class="mono"><a href={u({ tab: "code", path: f.units[0].file })}>{f.file}</a></td>
               <td>{f.lines} lines</td>
-              <td class="mono muted">{#each f.units as un}<a href={u({ tab: "code", path: f.file, line: un.lo })}>{un.name}:{un.lo}-{un.hi}</a>{" "}{/each}</td>
+              <td class="mono muted">{#each f.units as un}<a href={u({ tab: "code", path: un.file, line: un.lo })}>{un.name}:{un.lo}-{un.hi}</a>{" "}{/each}</td>
             </tr>
           {/each}
         </tbody>
@@ -463,6 +587,13 @@
   details ul { margin: 0; padding-left: 18px; } details li { margin: 4px 0; }
   .ids { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 0; }
 
+  h4 { margin: 12px 0 4px; font-size: 13px; }
+  th { text-align: left; font-size: 12px; font-weight: 600; color: var(--muted); padding: 7px 10px; border-bottom: 1px solid var(--line); }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+  a.more { font-size: 13px; font-weight: 400; margin-left: 8px; }
+  select { font: inherit; }
+  summary a { font-weight: 400; font-size: 13px; }
+
   /* ids, links, pills */
   a.id { font-family: var(--mono); font-size: 12.5px; padding: 1px 7px; white-space: nowrap; text-decoration: none; border: 1px solid var(--line); border-radius: 6px; background: var(--card); }
   a.id:hover { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--card)); }
@@ -471,6 +602,8 @@
   .pill { font-size: 11.5px; padding: 1px 8px; border-radius: 2px; border: 0; margin-right: 4px; white-space: nowrap; background: color-mix(in srgb, currentColor 10%, transparent); }
   .pill.tested { color: var(--ok); } .pill.none { color: var(--bad); } .pill.src-only { color: var(--warn); } .pill.done { color: var(--accent); }
   .pill.manual, .pill.later, .pill.ref { color: var(--muted); }
+  :global(.rfc) { font-size: 11px; font-weight: 600; letter-spacing: .02em; padding: 0 6px; border-radius: 2px; white-space: nowrap; background: color-mix(in srgb, currentColor 12%, transparent); }
+  :global(.rfc.must) { color: var(--bad); } :global(.rfc.should) { color: var(--warn); } :global(.rfc.may) { color: var(--muted); }
 
   /* requirements */
   .bar { display: flex; gap: 10px; align-items: center; margin-bottom: 14px; flex-wrap: wrap; }
