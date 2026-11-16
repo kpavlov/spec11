@@ -18,6 +18,7 @@ Deterministic evidence only: same tree, same text. No LLM in the core.
 - **SCAN-13** SHOULD — treat a markdown link `[ABC-12](path.md)` to an existing markdown file, and a decision-folder file `0003-title.md` (`adr/`, `decisions/` …), as a reference doc with that ID: state `ref`, never due, with the files that link to it in its trace; report a link to a missing file as a spec issue.
 - **SCAN-14** SHOULD — list the test cases of the test files (a Rust `#[test]`, a JUnit `@Test`, a Python `def test_`, a JS `it(`, a Go `func Test` and the like, or the `case` regex of `spec11.json`) with the requirement IDs tagged on each, grouped by module; a marker inside a string literal is not a case. Detected, not run: it says nothing about passing.
 - **SCAN-10** MUST — follow a symlink only when it resolves inside the repo root or a path listed in the `ALLOWED_PATHS` environment variable.
+- **SCAN-16** SHOULD — list the requirements a git diff touches (`status --changed <ref>`): staged, unstaged and untracked files, mapped from their changed line ranges to the spec lines and cited code they hit. A pure deletion marks the line it sat before.
 
 ## CodeGraph
 

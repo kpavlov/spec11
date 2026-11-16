@@ -559,6 +559,7 @@ pub fn ranges<S: AsRef<str>>(ids: impl IntoIterator<Item = S>) -> String {
     out.join(",")
 }
 
+// (SCAN-16)
 /// {path: [(first, last)]} new-file line ranges from `git diff -U0`; a pure deletion marks the line it sat before.
 pub fn parse_diff(diff: &str) -> Diff {
     let hunk = Regex::new(r"@@ -\S+ \+(\d+)(?:,(\d+))? @@").unwrap();

@@ -422,3 +422,13 @@ fn ignore_files_and_agents_are_left_out() {
     }
     assert!(!p.ignored("src/a.kt") && !p.ignored("src/keep.tmp.kt"));
 }
+
+#[doc = "[SCAN-16]"]
+#[test]
+fn diff_ranges_map_to_changed_lines() {
+    let d = spec11_core::scan::parse_diff("+++ b/specs/a.md\n@@ -1,0 +2,3 @@\n@@ -9 +11 @@\n+++ /dev/null\n@@ -1 +1 @@\n");
+    assert_eq!(d["specs/a.md"], vec![(2, 4), (11, 11)]);
+    assert_eq!(d.len(), 1);
+    let gone = spec11_core::scan::parse_diff("+++ b/x.rs\n@@ -5,2 +4,0 @@\n");
+    assert_eq!(gone["x.rs"], vec![(4, 4)]);
+}

@@ -70,6 +70,7 @@ pub fn case_of(file: &str) -> Option<Case> {
 /// Build manifests that make a folder a module.
 const MANIFESTS: [&str; 12] = ["Cargo.toml", "package.json", "build.gradle.kts", "build.gradle", "pom.xml", "go.mod", "pyproject.toml", "setup.py", "Package.swift", "composer.json", "CMakeLists.txt", "Gemfile"];
 
+// (GRAPH-05)
 /// The module of a repo-relative file and its build manifest: the nearest folder above it that has one, else (also when only
 /// the repo root has one) the folder above its `src`, else its top-level folder, else `.`. `seen` caches per folder.
 pub fn module_of(root: &Path, file: &str, seen: &mut std::collections::HashMap<String, (String, Option<&'static str>)>) -> (String, Option<&'static str>) {
@@ -142,6 +143,7 @@ fn wanted(e: &DirEntry, allow: &[PathBuf]) -> bool {
     !skip && (!e.path_is_symlink() || inside(e.path(), allow))
 }
 
+// (SCAN-10, SCAN-15)
 /// Files under `dir`, sorted. Symlinks are followed only when they resolve inside `allow` (its first entry is the repo root);
 /// junk folders and what the root's `.aiignore` / `.spec11ignore` hide are skipped.
 pub fn walk(dir: &Path, allow: &[PathBuf]) -> Vec<PathBuf> {
@@ -192,6 +194,7 @@ pub fn has_spec_marker(d: &Path, allow: &[PathBuf]) -> bool {
 
 /// Where the requirement lines of `root` are, repo-relative folders or files: the spec folder, single-file specs, and when
 /// none of them holds a requirement line, every markdown file of the repo that does. Empty when the repo has no such place.
+// (SCAN-09, SCAN-12)
 // ponytail: the fallback walks the whole repo's markdown once per load; add a cache if repos get huge.
 pub fn spec_paths(root: &Path, allow: &[PathBuf]) -> Vec<String> {
     let mut v: Vec<String> = spec_dir(root, allow).into_iter().chain(spec_file_names(root)).collect();
