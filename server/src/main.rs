@@ -301,6 +301,28 @@ mod tests {
         Request::post(uri).header("host", host).header("content-type", "application/json").header("accept", "application/json, text/event-stream").body(Body::from(body.to_string())).unwrap()
     }
 
+    #[doc = "[API-07]"]
+    #[tokio::test]
+    async fn mcp_2026_07_28_needs_no_handshake() {
+        let (app, _) = routers(app_state(Some(repo()), &[7411]));
+        let read = |uri: &str| {
+            let meta = r#""_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientInfo":{"name":"t","version":"1"},"io.modelcontextprotocol/clientCapabilities":{}}"#;
+            let body = format!(r#"{{"jsonrpc":"2.0","id":1,"method":"resources/read","params":{{"uri":"{uri}",{meta}}}}}"#);
+            let mut r = post("/mcp", "127.0.0.1:7411", &body);
+            r.headers_mut().insert("mcp-protocol-version", "2026-07-28".parse().unwrap());
+            r.headers_mut().insert("mcp-method", "resources/read".parse().unwrap());
+            r.headers_mut().insert("mcp-name", uri.parse().unwrap());
+            r
+        };
+        let (st, body) = send(&app, read("spec11://tests")).await;
+        assert!(st == StatusCode::OK && body.contains("total"), "{st} {body}");
+        let mut d = post("/mcp", "127.0.0.1:7411", r#"{"jsonrpc":"2.0","id":2,"method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientInfo":{"name":"t","version":"1"},"io.modelcontextprotocol/clientCapabilities":{}}}}"#);
+        d.headers_mut().insert("mcp-protocol-version", "2026-07-28".parse().unwrap());
+        d.headers_mut().insert("mcp-method", "server/discover".parse().unwrap());
+        let (st, body) = send(&app, d).await;
+        assert!(st == StatusCode::OK && body.contains("2026-07-28"), "{st} {body}");
+    }
+
     #[doc = "[API-01, API-02, API-03]"]
     #[tokio::test]
     async fn api_and_guard() {
@@ -353,7 +375,7 @@ mod tests {
         assert!(std::fs::read_to_string(repo.join(".mcp.json")).unwrap().contains("\"other\""));
     }
 
-    #[doc = "[API-01, API-04]"]
+    #[doc = "[API-01, API-04, API-07]"]
     #[tokio::test]
     async fn mcp_tools_and_ui_resource() {
         let (app, _) = routers(app_state(Some(repo()), &[7411]));
@@ -367,6 +389,15 @@ mod tests {
         assert!(body.contains("AAA-02"), "{body}");
         let (_, body) = send(&app, rpc(4, "resources/read", r#"{"uri":"ui://spec11/dashboard"}"#)).await;
         assert!(body.contains("text/html;profile=mcp-app"), "{body}");
+        // (API-07)
+        let (_, body) = send(&app, rpc(6, "resources/list", "{}")).await;
+        assert!(body.contains("spec11://modules") && body.contains("spec11://tests"), "{body}");
+        let (_, body) = send(&app, rpc(7, "resources/read", r#"{"uri":"spec11://modules"}"#)).await;
+        assert!(body.contains("application/json") && body.contains("modules"), "{body}");
+        let (_, body) = send(&app, rpc(8, "resources/read", r#"{"uri":"spec11://tests"}"#)).await;
+        assert!(body.contains("not run") && body.contains("total"), "{body}");
+        let (_, body) = send(&app, rpc(9, "resources/read", r#"{"uri":"spec11://nope"}"#)).await;
+        assert!(body.contains("unknown resource"), "{body}");
         let mut bad = rpc(5, "tools/list", "{}");
         bad.headers_mut().insert("host", "evil.test".parse().unwrap());
         assert_eq!(send(&app, bad).await.0, StatusCode::FORBIDDEN);

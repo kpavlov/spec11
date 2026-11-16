@@ -4,6 +4,7 @@
   "src": ["Sources"],
   "ext": ["swift"],
   "comment": ["//"],
+  "case": "^\\s*@Test\\b|^\\s*func\\s+test",
   "test_files": "(^|/)[^/]*Tests?(/|\\.swift$)",
   "retired_prefixes": [],
   "codegraph": ".codegraph/codegraph.db"

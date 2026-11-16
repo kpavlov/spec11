@@ -9,6 +9,7 @@ use rmcp::{
 use serde_json::{Value, json};
 
 const UI_URI: &str = "ui://spec11/dashboard";
+const JSON_MIME: &str = "application/json";
 const UI_MIME: &str = "text/html;profile=mcp-app";
 
 #[derive(Clone)]
@@ -53,12 +54,19 @@ impl ServerHandler for Mcp {
     }
 
     async fn list_resources(&self, _: Option<PaginatedRequestParams>, _: RequestContext<RoleServer>) -> Result<ListResourcesResult, ErrorData> {
-        Ok(ListResourcesResult::with_all_items(vec![Resource::new(UI_URI, "spec11 dashboard").with_description("Spec-driven status dashboard (MCP Apps)").with_mime_type(UI_MIME)]))
+        let mut all = vec![Resource::new(UI_URI, "spec11 dashboard").with_description("Spec-driven status dashboard (MCP Apps)").with_mime_type(UI_MIME)];
+        all.extend(ops::RESOURCES.iter().map(|(uri, name, about, _)| Resource::new(*uri, *name).with_description(*about).with_mime_type(JSON_MIME)));
+        Ok(ListResourcesResult::with_all_items(all))
     }
 
     async fn read_resource(&self, request: ReadResourceRequestParams, _: RequestContext<RoleServer>) -> Result<ReadResourceResponse, ErrorData> {
         if request.uri != UI_URI {
-            return Err(ErrorData::resource_not_found(format!("unknown resource {}", request.uri), None));
+            let (root, uri) = (self.0.root.clone(), request.uri.to_string());
+            let text = tokio::task::spawn_blocking(move || ops::read_resource(root.as_deref(), &uri)).await.map_err(|e| ErrorData::internal_error(e.to_string(), None))?.map_err(|e| ErrorData::internal_error(e, None))?;
+            return match text {
+                Some(t) => Ok(ReadResourceResult::new(vec![ResourceContents::text(t, request.uri.as_str()).with_mime_type(JSON_MIME)]).into()),
+                None => Err(ErrorData::resource_not_found(format!("unknown resource {}", request.uri), None)),
+            };
         }
         // debug builds without a web build: point at the dev URL instead of failing
         let html = frontend::index_html().unwrap_or_else(|| format!("<!doctype html><meta charset=utf-8><p>Dashboard not built. Open <a href=\"{0}\">{0}</a></p>", self.0.dashboard));

@@ -100,6 +100,8 @@ pub struct Project {
     /// Folders and files (repo-relative) that hold requirement lines, and decision-record folders.
     spec_paths: Vec<String>,
     doc_dirs: Vec<String>,
+    /// Repo-relative files of the repo: the CodeGraph file list, else a walk.
+    pub files: Vec<String>,
     cache: RefCell<HashMap<String, Rc<Vec<String>>>>,
 }
 
@@ -161,7 +163,7 @@ impl Project {
         let files = indexed.unwrap_or_else(|| detect::walk(&root, &allow).iter().filter_map(|f| f.strip_prefix(&root).ok()).map(|f| f.to_string_lossy().replace('\\', "/")).collect());
         cfg.detect(&files);
         let rx = Rx::new(&cfg)?;
-        Ok(Project { root, cfg, rx, allow, spec_paths, doc_dirs, cache: RefCell::default() })
+        Ok(Project { root, cfg, rx, allow, spec_paths, doc_dirs, files, cache: RefCell::default() })
     }
 
     pub fn lines(&self, rel: &str) -> Rc<Vec<String>> {

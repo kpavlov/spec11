@@ -174,6 +174,19 @@ pub fn call(root: Option<&Path>, name: &str, args: &Value, dashboard: &str, mcp_
     Ok(out)
 }
 
+/// Read-only JSON MCP resources: (uri, name, description, JSON text of the analysis). Listed and read through this table only.
+pub const RESOURCES: [(&str, &str, &str, fn(&Analysis) -> serde_json::Result<String>); 2] = [
+    ("spec11://modules", "spec11 modules", "Modules of the repo (nearest build manifest, else the folder above src): files, languages, tests, CodeGraph symbols and the modules each depends on. Evidence, not truth.", |a| serde_json::to_string_pretty(&a.modules_view())),
+    ("spec11://tests", "spec11 tests", "Test cases detected in the test files, grouped by module and file, with the requirement IDs tagged on each. Detected, not run: it does not say a test passes.", |a| serde_json::to_string_pretty(&a.tests_view())),
+];
+
+// (API-07)
+/// The JSON text of a resource, `None` for an unknown URI.
+pub fn read_resource(root: Option<&Path>, uri: &str) -> Result<Option<String>, String> {
+    let Some((.., render)) = RESOURCES.iter().find(|r| r.0 == uri) else { return Ok(None) };
+    render(&Analysis::load(root)?).map(Some).map_err(|e| e.to_string())
+}
+
 pub fn evidence_note() -> &'static str {
     NOTE
 }

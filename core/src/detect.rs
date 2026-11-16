@@ -78,6 +78,66 @@ pub const PROFILES: [Profile; 10] = [
         test: r"(^|/)(tests?|unittests?)/|[_.]?[tT]ests?\.(c|cc|cpp|cxx|h|hpp)$", inline: false },
 ];
 
+/// Per ecosystem, a line that opens a test case (an attribute, annotation, call or declaration), and whether that line is a call
+/// such as `it("name", ...)` (the name is its quoted string) rather than a marker above a declaration. Keyed by `Profile::name`.
+const CASES: [(&str, &str, bool); 10] = [
+    ("swift", r"^\s*@Test\b|^\s*(?:@\w+\s+)*func\s+test\w*", false),
+    ("rust", r"#\[(?:\w+::)*(?:test|rstest|test_case)\b", false),
+    ("typescript", r"^\s*(?:it|test)(?:\.\w+)*\s*\(", true),
+    ("python", r"^\s*(?:async\s+)?def\s+test\w*", false),
+    ("go", r"^func\s+(?:Test|Benchmark|Fuzz|Example)\w*\s*\(", false),
+    ("jvm", r"^\s*@(?:\w+\.)*(?:Test|ParameterizedTest|RepeatedTest|TestFactory)\b", false),
+    ("csharp", r"^\s*\[(?:Test|TestMethod|Fact|Theory|TestCase)\b", false),
+    ("ruby", r"^\s*(?:(?:it|specify|scenario)\s*[(\x22']|def\s+test_)", true),
+    ("php", r"^\s*(?:public\s+)?function\s+test\w*|^\s*#\[Test\]|@test\b", false),
+    ("c/c++", r"^\s*(?:TEST|TEST_F|TEST_P|TYPED_TEST|TEST_CASE|SCENARIO)\s*\(", true),
+];
+
+/// How test cases are found in one file: its ecosystem, the line regex that opens one, and whether that line is a call.
+pub struct Case {
+    pub profile: &'static Profile,
+    pub marker: &'static str,
+    pub call: bool,
+}
+
+/// The test-case rule of a file's ecosystem, by extension.
+pub fn case_of(file: &str) -> Option<Case> {
+    let p = PROFILES.iter().find(|p| p.ext.contains(&ext_of(file)))?;
+    CASES.iter().find(|(n, ..)| *n == p.name).map(|&(_, marker, call)| Case { profile: p, marker, call })
+}
+
+/// Build manifests that make a folder a module.
+const MANIFESTS: [&str; 12] = ["Cargo.toml", "package.json", "build.gradle.kts", "build.gradle", "pom.xml", "go.mod", "pyproject.toml", "setup.py", "Package.swift", "composer.json", "CMakeLists.txt", "Gemfile"];
+
+/// The module of a repo-relative file and its build manifest: the nearest folder above it that has one, else (also when only
+/// the repo root has one) the folder above its `src`, else its top-level folder, else `.`. `seen` caches per folder.
+pub fn module_of(root: &Path, file: &str, seen: &mut std::collections::HashMap<String, (String, Option<&'static str>)>) -> (String, Option<&'static str>) {
+    let dir = file.rsplit_once('/').map_or("", |(d, _)| d);
+    if let Some(v) = seen.get(dir) {
+        return v.clone();
+    }
+    let manifest = |d: &str| MANIFESTS.iter().find(|m| root.join(d).join(m).is_file()).copied();
+    let mut d = dir;
+    let nested = loop {
+        if d.is_empty() {
+            break None;
+        }
+        if let Some(m) = manifest(d) {
+            break Some((d.to_string(), Some(m)));
+        }
+        d = d.rsplit_once('/').map_or("", |(up, _)| up);
+    };
+    let found = nested.unwrap_or_else(|| {
+        let comps: Vec<&str> = dir.split('/').filter(|c| !c.is_empty()).collect();
+        let by_src = comps.iter().position(|c| matches!(*c, "src" | "Sources" | "Source" | "lib" | "app")).filter(|i| *i > 0).map(|i| comps[..i].join("/"));
+        let m = by_src.or_else(|| comps.first().map(|c| c.to_string())).unwrap_or_else(|| ".".into());
+        let own = manifest(if m == "." { "" } else { &m });
+        (m, own)
+    });
+    seen.insert(dir.to_string(), found.clone());
+    found
+}
+
 /// Canonical roots a symlink may point into: the repo root, plus every entry of `ALLOWED_PATHS` (path-list syntax).
 pub fn allow_list(root: &Path) -> Vec<PathBuf> {
     let extra = std::env::var_os("ALLOWED_PATHS").map(|v| std::env::split_paths(&v).collect::<Vec<_>>()).unwrap_or_default();

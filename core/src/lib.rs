@@ -3,6 +3,7 @@ pub mod codegraph;
 pub mod config;
 pub mod coverage;
 pub mod detect;
+pub mod modules;
 pub mod report;
 pub mod scan;
 

@@ -130,6 +130,10 @@ The first line shows how many units each rule skipped. The index follows file ed
 - *Plumbing* — framework glue, layout, styling, wiring with no rule of its own, generic helpers, platform adapters: ignore it. If a whole kind keeps showing up, raise `fanin` or add it to `infra_paths` instead of writing requirements for it.
 - *Belongs to an existing requirement* — add `(ID)` in a comment at the code; the spec already says it.
 
+## Resources — modules and tests
+
+Read the MCP resource `spec11://modules` for the repo's module structure (nearest build manifest; with a CodeGraph index also symbols per kind and which modules each depends on) and `spec11://tests` for the test cases found in the test files, grouped by module and file, each with the `[ID]` tags on it. Tests are detected by marker (`#[test]`, `@Test`, `def test_`, `it(` …), not run: a listed test does not say it passes. Set `case` in `spec11.json` for an unusual marker.
+
 ## spec_overlap — code several requirements cover
 
 Lists declarations (method, function, type, property) that two or more requirements cover, from the CodeGraph index. A requirement covers a declaration when its ID is cited in a comment inside it or in the doc comment right above it. Each pair of IDs is marked:

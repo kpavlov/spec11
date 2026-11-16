@@ -137,6 +137,18 @@ impl Graph {
         Ok(st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<Result<_, _>>()?)
     }
 
+    /// (file, kind, count) of the symbols of every indexed file: what each module holds.
+    pub fn symbols_by_file(&self) -> R<Vec<(String, String, i64)>> {
+        let mut st = self.c.prepare("select file_path, kind, count(*) from nodes where kind not in ('file','import') group by file_path, kind order by file_path, kind")?;
+        Ok(st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?.collect::<Result<_, _>>()?)
+    }
+
+    /// (from file, to file, edges): how many "uses" and import edges run between two different files.
+    pub fn file_deps(&self) -> R<Vec<(String, String, i64)>> {
+        let mut st = self.c.prepare(&format!("select s.file_path, t.file_path, count(*) from edges e join nodes s on s.id=e.source join nodes t on t.id=e.target where e.kind in ({USES},'imports') and s.file_path<>t.file_path group by s.file_path, t.file_path order by 1, 2"))?;
+        Ok(st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?.collect::<Result<_, _>>()?)
+    }
+
     /// Direct callers of a symbol id.
     pub fn callers(&self, id: &str) -> R<Vec<Node>> {
         let mut st = self.c.prepare("select c.id, c.kind, c.name, c.qualified_name, c.file_path, c.start_line, c.end_line, coalesce(c.visibility,'') from edges e join nodes c on c.id=e.source where e.target=?1 and e.kind='calls'")?;

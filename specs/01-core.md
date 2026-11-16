@@ -16,6 +16,7 @@ Deterministic evidence only: same tree, same text. No LLM in the core.
 - **SCAN-11** SHOULD — also accept the common spec spellings: `*`, `+` and numbered lists, a plain, `**bold**` or `` `code` `` ID with an optional colon, the level anywhere in the line (`MUST`, `SHOULD`, `MAY`, `SHALL`), and `| ID | MUST | text |` table rows.
 - **SCAN-12** SHOULD — find specs beyond a specs folder of bullets: IDs of up to four digits (`REQ-0001`), single-file specs (`SPEC.md`, `REQUIREMENTS.md`, also in `docs/`, or a `specs` setting that names a file), and, when nothing else holds a requirement line, any markdown file of the repo that does.
 - **SCAN-13** SHOULD — treat a markdown link `[ABC-12](path.md)` to an existing markdown file, and a decision-folder file `0003-title.md` (`adr/`, `decisions/` …), as a reference doc with that ID: state `ref`, never due, with the files that link to it in its trace; report a link to a missing file as a spec issue.
+- **SCAN-14** SHOULD — list the test cases of the test files (a Rust `#[test]`, a JUnit `@Test`, a Python `def test_`, a JS `it(`, a Go `func Test` and the like, or the `case` regex of `spec11.json`) with the requirement IDs tagged on each, grouped by module. Detected, not run: it says nothing about passing.
 - **SCAN-10** MUST — follow a symlink only when it resolves inside the repo root or a path listed in the `ALLOWED_PATHS` environment variable.
 
 ## CodeGraph
@@ -23,4 +24,5 @@ Deterministic evidence only: same tree, same text. No LLM in the core.
 - **GRAPH-01** MUST — open the CodeGraph index read-only, with all SQL in `core/src/codegraph.rs`.
 - **GRAPH-02** MUST — turn a schema the code does not know into a typed error shown as "not checked", never a panic.
 - **GRAPH-03** MUST — treat a missing index as "not checked", not as an error: indexing is the user's decision.
+- **GRAPH-05** SHOULD — group the repo's files into modules (the nearest folder with a build manifest, else the folder above `src`), and from the index count each module's symbols and the dependencies between modules.
 - **GRAPH-04** SHOULD — link tests to code through the index, and answer callers, impact and search queries from it.

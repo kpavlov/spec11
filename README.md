@@ -46,7 +46,7 @@ MCP client config:
 {"mcpServers": {"spec11": {"type": "http", "url": "http://127.0.0.1:7411/mcp"}}}
 ```
 
-Tools: `spec_report`, `spec_status`, `spec_trace`, `spec_overlap`, `spec_uncovered`, `spec_file`, `spec_source`, `spec_dashboard`, and `spec_install_status` / `spec_install` / `spec_uninstall` / `spec_codegraph` (the last three write files). The dashboard is also an MCP Apps resource (`ui://spec11/dashboard`) for hosts that render it; elsewhere use the URL from `spec_dashboard`.
+Tools: `spec_report`, `spec_status`, `spec_trace`, `spec_overlap`, `spec_uncovered`, `spec_file`, `spec_source`, `spec_dashboard`, and `spec_install_status` / `spec_install` / `spec_uninstall` / `spec_codegraph` (the last three write files). Read-only JSON resources: `spec11://modules` (modules by build manifest, with CodeGraph symbols and the modules each depends on) and `spec11://tests` (test cases detected by marker, grouped by module, with the requirement IDs tagged on each; detected, not run). The dashboard is also an MCP Apps resource (`ui://spec11/dashboard`) for hosts that render it; elsewhere use the URL from `spec_dashboard`.
 
 ## Dashboard URLs
 

@@ -18,6 +18,8 @@ pub struct Config {
     pub decl: String,
     /// A test body containing a match has a direct assertion.
     pub assert: String,
+    /// A line matching this opens a test case (default: the ecosystem's marker `#[test]`, `@Test`, `it(` …); read by the `spec11://tests` resource.
+    pub case: String,
     /// A test head containing a match is switched off.
     pub off: String,
     /// A file whose repo-relative path matches is a test, also inside a `src` folder (`a_test.go`, `a.test.ts`).
