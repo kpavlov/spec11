@@ -49,21 +49,20 @@ impl Config {
             self.codegraph = ".codegraph/codegraph.db".into();
         }
         let Some(Layout { profile: p, src, tests }) = detect::layout(files) else { return self.never() };
-        let v = |xs: &[&str]| xs.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        let (explicit_src, explicit_tests) = (!self.src.is_empty(), !self.tests.is_empty());
-        for (field, auto) in [(&mut self.src, src), (&mut self.tests, tests), (&mut self.ext, v(p.ext)), (&mut self.comment, v(p.comment))] {
+                let (explicit_src, explicit_tests) = (!self.src.is_empty(), !self.tests.is_empty());
+        for (field, auto) in [(&mut self.src, src), (&mut self.tests, tests), (&mut self.ext, p.ext.clone()), (&mut self.comment, p.comment.clone())] {
             if field.is_empty() {
                 *field = auto;
             }
         }
         // a profile's test regex describes its own layout; a hand-written src/tests list keeps the user's meaning
-        for (field, auto) in [(&mut self.decl, p.decl), (&mut self.assert, p.assert), (&mut self.off, p.off)] {
+        for (field, auto) in [(&mut self.decl, &p.decl), (&mut self.assert, &p.assert), (&mut self.off, &p.off)] {
             if field.is_empty() {
                 *field = auto.into();
             }
         }
         if self.test_files.is_empty() && !(explicit_src && explicit_tests) {
-            self.test_files = p.test.into();
+            self.test_files = p.test.clone();
         }
         self.never();
     }

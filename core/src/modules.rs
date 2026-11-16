@@ -128,7 +128,7 @@ impl Analysis {
             let m = module(f, &mut mods);
             let info = mods.get_mut(&m).unwrap();
             if self.p.is_test_only(f) { info.test_files += 1 } else { info.src_files += 1 }
-            langs.entry(m).or_default().insert(case.profile.name);
+            langs.entry(m).or_default().insert(&case.profile.name);
         }
         for t in self.tests_view().modules {
             mods.entry(t.module.clone()).or_insert_with(|| blank(&t.module, None)).tests = t.tests; // also when its files are not in the list

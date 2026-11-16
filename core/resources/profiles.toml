@@ -1,0 +1,201 @@
+# Ecosystem profiles: how the files, comments, declarations and tests of a language look.
+# To support a new language, append a [[profile]] table; nothing else needs to change.
+# Regexes are TOML literal strings ('...'): write them as-is, no escaping (use \x27 for a single quote).
+#
+#   name     ecosystem name (shown in the UI)
+#   ext      file extensions
+#   comment  line-comment markers; a source citation is an ID after one of them
+#   decl     a declaration line; group 1 is its name
+#   assert   an assertion in a test body
+#   off      a disabled / skipped test
+#   test     repo-relative path of a test file, also when it sits next to the code (a_test.go, a.test.ts)
+#   inline   tests live in the source files too (Rust `mod tests`); default false
+#   case     a line that opens a test case (an attribute, annotation, call or declaration)
+#   call     `case` matches a call such as it("name", ...), so the name is its quoted string; default false
+
+[[profile]]
+name = "swift"
+ext = ["swift"]
+comment = ["//"]
+decl = '^\s*(?:(?:public|internal|private|fileprivate|final|nonisolated|indirect|static)\s+)*(?:struct|class|enum|actor|protocol|extension|func|typealias)\s+([A-Za-z_]\w*)'
+assert = '#expect|#require|XCTAssert|XCTFail|XCTUnwrap|Issue\.record|confirmation\('
+off = '\.disabled\(|\.enabled\(if: false|XCTSkip'
+test = '(^|/)[^/]*Tests?(/|\.swift$)'
+case = '^\s*@Test\b|^\s*(?:@\w+\s+)*func\s+test\w*'
+
+[[profile]]
+name = "rust"
+ext = ["rs"]
+comment = ["//"]
+decl = '^\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?(?:fn|struct|enum|trait|impl|type|mod)\s+([A-Za-z_]\w*)'
+assert = 'assert!|assert_eq!|assert_ne!|panic!|matches!'
+off = '#\[ignore'
+test = '(^|/)(tests|benches)/|_test\.rs$'
+inline = true
+case = '#\[(?:\w+::)*(?:test|rstest|test_case)\b'
+
+[[profile]]
+name = "typescript"
+ext = ["ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs", "ets"]
+comment = ["//"]
+decl = '^\s*(?:export\s+)?(?:default\s+)?(?:declare\s+)?(?:async\s+)?(?:abstract\s+)?(?:function\*?|class|interface|enum|type|const)\s+([A-Za-z_$][\w$]*)'
+assert = 'expect\(|assert[.(]|\.should\b|\bexpect\.'
+off = '\.skip\(|\bxit\(|\bxdescribe\(|\.todo\('
+test = '(^|/)(__tests__|tests?|e2e|cypress)/|\.(test|spec)\.[cm]?[jt]sx?$'
+case = '^\s*(?:it|test)(?:\.\w+)*\s*\('
+call = true
+
+[[profile]]
+name = "python"
+ext = ["py"]
+comment = ["#"]
+decl = '^\s*(?:async\s+)?(?:def|class)\s+([A-Za-z_]\w*)'
+assert = '\bassert\b|pytest\.raises|self\.assert|\.assert_'
+off = '@pytest\.mark\.skip|@unittest\.skip|pytest\.skip|pytest\.xfail'
+test = '(^|/)(tests?|testing)/|(^|/)test_[^/]*\.py$|_test\.py$|(^|/)conftest\.py$'
+case = '^\s*(?:async\s+)?def\s+test\w*'
+
+[[profile]]
+name = "go"
+ext = ["go"]
+comment = ["//"]
+decl = '^\s*(?:func(?:\s*\([^)]*\))?|type)\s+([A-Za-z_]\w*)'
+assert = 't\.(?:Error|Errorf|Fatal|Fatalf|Fail|FailNow)\b|assert\.|require\.'
+off = 't\.Skip'
+test = '_test\.go$'
+case = '^func\s+(?:Test|Benchmark|Fuzz|Example)\w*\s*\('
+
+[[profile]]
+name = "jvm"
+ext = ["java", "kt", "scala"]
+comment = ["//"]
+decl = '^\s*(?:(?:public|private|protected|internal|static|final|abstract|sealed|open|data|suspend|override|inline|case)\s+)*(?:class|interface|enum|record|object|trait|fun|def|void)\s+([A-Za-z_]\w*)'
+assert = '\bassert\w*\(|assertThat|verify\(|\bexpect\w*\(|\bshould'
+off = '@Disabled|@Ignore|@Ignored'
+test = '(^|/)src/[A-Za-z]*[tT]ests?[A-Za-z]*/|(^|/)tests?/|(Tests?|IT|Spec)\.(java|kt|scala)$'
+case = '^\s*@(?:\w+\.)*(?:Test|ParameterizedTest|RepeatedTest|TestFactory)\b'
+
+[[profile]]
+name = "csharp"
+ext = ["cs"]
+comment = ["//"]
+decl = '^\s*(?:(?:public|private|protected|internal|static|sealed|abstract|partial|async|override|virtual)\s+)*(?:class|struct|interface|enum|record)\s+([A-Za-z_]\w*)'
+assert = 'Assert\.|\.Should\(|Expect\('
+off = 'Skip\s*=|\[Ignore'
+test = '(^|/)[^/]*(Tests?|Specs?)(/|\.cs$)|(^|/)tests?/'
+case = '^\s*\[(?:Test|TestMethod|Fact|Theory|TestCase)\b'
+
+[[profile]]
+name = "ruby"
+ext = ["rb"]
+comment = ["#"]
+decl = '^\s*(?:def|class|module)\s+([\w:]+)'
+assert = '\bexpect\b|\bassert\w*|\.should\b'
+off = '\bskip\b|\bxit\b|\bxdescribe\b|\bpending\b'
+test = '(^|/)(spec|test)/|_(spec|test)\.rb$'
+case = '^\s*(?:(?:it|specify|scenario)\s*[(\x22\x27]|def\s+test_)'
+call = true
+
+[[profile]]
+name = "php"
+ext = ["php"]
+comment = ["//", "#"]
+decl = '^\s*(?:(?:abstract|final|public|private|protected|static)\s+)*(?:class|interface|trait|enum|function)\s+([A-Za-z_]\w*)'
+assert = '\$this->assert|\bassert\w*\(|\bexpect\('
+off = 'markTestSkipped|markTestIncomplete'
+test = '(^|/)tests?/|Tests?\.php$'
+case = '^\s*(?:public\s+)?function\s+test\w*|^\s*#\[Test\]|@test\b'
+
+[[profile]]
+name = "c/c++"
+ext = ["c", "cc", "cpp", "cxx", "h", "hh", "hpp", "cu", "cuh", "metal"]
+comment = ["//"]
+decl = '^\s*(?:class|struct|enum|namespace)\s+([A-Za-z_]\w*)'
+assert = 'ASSERT_|EXPECT_|\bassert\(|\bREQUIRE\(|\bCHECK\('
+off = 'DISABLED_|GTEST_SKIP'
+test = '(^|/)(tests?|unittests?)/|[_.]?[tT]ests?\.(c|cc|cpp|cxx|h|hpp)$'
+case = '^\s*(?:TEST|TEST_F|TEST_P|TYPED_TEST|TEST_CASE|SCENARIO)\s*\('
+call = true
+
+[[profile]]
+name = "dart"
+ext = ["dart"]
+comment = ["//"]
+decl = '^\s*(?:(?:abstract|base|final|sealed|interface|mixin)\s+)*(?:class|mixin|enum|extension|typedef)\s+([A-Za-z_]\w*)'
+assert = 'expect\(|\bassert\(|verify\(|\bexpectLater\('
+off = 'skip:|@Skip'
+test = '(^|/)test/|_test\.dart$'
+case = '^\s*(?:test|testWidgets|blocTest|testGoldens)\s*(?:<[^>]*>)?\s*\('
+call = true
+
+[[profile]]
+name = "lua"
+ext = ["lua", "luau"]
+comment = ["--"]
+decl = '^\s*(?:local\s+)?function\s+([\w.:]+)'
+assert = '\bassert[.(]|\bexpect\(|\.should\b'
+off = '\bpending\(|\bxit\(|\bxdescribe\('
+test = '(^|/)(tests?|spec)/|_(spec|test)\.luau?$'
+case = '^\s*(?:it|test)\s*\('
+call = true
+
+[[profile]]
+name = "r"
+ext = ["r", "R"]
+comment = ["#"]
+decl = '^\s*([A-Za-z_.][\w.]*)\s*(?:<-|=)\s*function\b'
+assert = 'expect_\w+\(|stopifnot\('
+off = '\bskip(?:_\w+)?\('
+test = '(^|/)tests/|(^|/)test[-_][^/]*\.[rR]$'
+case = '^\s*test_that\s*\('
+call = true
+
+[[profile]]
+name = "objective-c"
+ext = ["m", "mm"]
+comment = ["//"]
+decl = '^\s*@(?:interface|implementation|protocol)\s+([A-Za-z_]\w*)'
+assert = 'XCTAssert\w*|XCTFail|XCTUnwrap|OCMVerify\w*|\bexpect\('
+off = 'XCTSkip'
+test = '(^|/)[^/]*Tests?(/|\.mm?$)'
+case = '^\s*-\s*\(void\)\s*test\w*'
+
+[[profile]]
+name = "solidity"
+ext = ["sol"]
+comment = ["//"]
+decl = '^\s*(?:abstract\s+)?(?:contract|interface|library|function|event|modifier|struct|enum)\s+([A-Za-z_$][\w$]*)'
+assert = '\bassert\w*\(|vm\.expect\w+\('
+off = 'vm\.skip\('
+test = '(^|/)tests?/|\.t\.sol$'
+case = '^\s*function\s+(?:test|invariant)\w*\s*\('
+
+[[profile]]
+name = "erlang"
+ext = ["erl"]
+comment = ["%"]
+decl = '^([a-z]\w*)\s*\('
+assert = '\?_?assert\w*\(|\?_?assertEqual\('
+off = '\{skip,|\?_?skip'
+test = '(^|/)test/|_(tests|SUITE)\.erl$'
+case = '^\w+_test_?\s*\('
+
+[[profile]]
+name = "vb.net"
+ext = ["vb"]
+comment = ["'"]
+decl = '(?i)^\s*(?:(?:Public|Private|Friend|Protected|Shared|Overrides|MustInherit|NotInheritable|Partial)\s+)*(?:Class|Module|Interface|Enum|Structure|Sub|Function)\s+([A-Za-z_]\w*)'
+assert = 'Assert\.|\.Should\('
+off = 'Skip\s*:?=|<Ignore'
+test = '(^|/)[^/]*(Tests?|Specs?)(/|\.vb$)|(^|/)tests?/'
+case = '(?i)^\s*<(?:Test|TestMethod|Fact|Theory|TestCase)\b'
+
+[[profile]]
+name = "pascal"
+ext = ["pas", "dpr"]
+comment = ["//"]
+decl = '(?i)^\s*(?:class\s+)?(?:procedure|function|constructor|destructor)\s+([\w.]+)'
+assert = 'Check\w*\(|Assert\w*\('
+off = '\[Ignore'
+test = '(^|/)tests?/|Tests?\.(pas|dpr)$'
+case = '(?i)^\s*\[Test\b|^\s*procedure\s+(?:\w+\.)?Test\w*'

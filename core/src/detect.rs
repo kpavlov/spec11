@@ -2,7 +2,9 @@
 //! Specs come from the folder conventions of spec-driven tools; sources and tests from the file list of the CodeGraph
 //! index (else a directory walk) classified by ecosystem. Symlinks are followed only into the repo root or `ALLOWED_PATHS`.
 use regex::Regex;
+use serde::Deserialize;
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 use walkdir::{DirEntry, WalkDir};
 
 /// Spec folders in priority order: dedicated names first, generic doc folders last (they need a requirement bullet to count).
@@ -21,77 +23,36 @@ const SKIP: [&str; 12] = ["node_modules", "target", "build", "dist", "vendor", "
 /// Matches nothing: the regex of an ecosystem spec11 knows nothing about.
 pub const NEVER: &str = r"[^\s\S]";
 
-/// One ecosystem: how its files, comments, declarations and tests look.
+/// One ecosystem: how its files, comments, declarations and tests look. Loaded from `resources/profiles.toml`.
+#[derive(Deserialize)]
 pub struct Profile {
-    pub name: &'static str,
-    pub ext: &'static [&'static str],
-    pub comment: &'static [&'static str],
-    pub decl: &'static str,
-    pub assert: &'static str,
-    pub off: &'static str,
+    pub name: String,
+    pub ext: Vec<String>,
+    pub comment: Vec<String>,
+    pub decl: String,
+    pub assert: String,
+    pub off: String,
     /// Repo-relative path of a test file, also when it sits next to the code (`a_test.go`, `a.test.ts`).
-    pub test: &'static str,
+    pub test: String,
     /// Tests live in the source files too (Rust `mod tests`).
+    #[serde(default)]
     pub inline: bool,
+    /// A line that opens a test case (an attribute, annotation, call or declaration).
+    pub case: String,
+    /// `case` matches a call such as `it("name", ...)` (the name is its quoted string) rather than a marker above a declaration.
+    #[serde(default)]
+    pub call: bool,
 }
 
-pub const PROFILES: [Profile; 10] = [
-    Profile { name: "swift", ext: &["swift"], comment: &["//"],
-        decl: r"^\s*(?:(?:public|internal|private|fileprivate|final|nonisolated|indirect|static)\s+)*(?:struct|class|enum|actor|protocol|extension|func|typealias)\s+([A-Za-z_]\w*)",
-        assert: r"#expect|#require|XCTAssert|XCTFail|XCTUnwrap|Issue\.record|confirmation\(", off: r"\.disabled\(|\.enabled\(if: false|XCTSkip",
-        test: r"(^|/)[^/]*Tests?(/|\.swift$)", inline: false },
-    Profile { name: "rust", ext: &["rs"], comment: &["//"],
-        decl: r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?(?:fn|struct|enum|trait|impl|type|mod)\s+([A-Za-z_]\w*)",
-        assert: r"assert!|assert_eq!|assert_ne!|panic!|matches!", off: r"#\[ignore",
-        test: r"(^|/)(tests|benches)/|_test\.rs$", inline: true },
-    Profile { name: "typescript", ext: &["ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs"], comment: &["//"],
-        decl: r"^\s*(?:export\s+)?(?:default\s+)?(?:declare\s+)?(?:async\s+)?(?:abstract\s+)?(?:function\*?|class|interface|enum|type|const)\s+([A-Za-z_$][\w$]*)",
-        assert: r"expect\(|assert[.(]|\.should\b|\bexpect\.", off: r"\.skip\(|\bxit\(|\bxdescribe\(|\.todo\(",
-        test: r"(^|/)(__tests__|tests?|e2e|cypress)/|\.(test|spec)\.[cm]?[jt]sx?$", inline: false },
-    Profile { name: "python", ext: &["py"], comment: &["#"],
-        decl: r"^\s*(?:async\s+)?(?:def|class)\s+([A-Za-z_]\w*)",
-        assert: r"\bassert\b|pytest\.raises|self\.assert|\.assert_", off: r"@pytest\.mark\.skip|@unittest\.skip|pytest\.skip|pytest\.xfail",
-        test: r"(^|/)(tests?|testing)/|(^|/)test_[^/]*\.py$|_test\.py$|(^|/)conftest\.py$", inline: false },
-    Profile { name: "go", ext: &["go"], comment: &["//"],
-        decl: r"^\s*(?:func(?:\s*\([^)]*\))?|type)\s+([A-Za-z_]\w*)",
-        assert: r"t\.(?:Error|Errorf|Fatal|Fatalf|Fail|FailNow)\b|assert\.|require\.", off: r"t\.Skip",
-        test: r"_test\.go$", inline: false },
-    Profile { name: "jvm", ext: &["java", "kt", "scala"], comment: &["//"],
-        decl: r"^\s*(?:(?:public|private|protected|internal|static|final|abstract|sealed|open|data|suspend|override|inline|case)\s+)*(?:class|interface|enum|record|object|trait|fun|def|void)\s+([A-Za-z_]\w*)",
-        assert: r"\bassert\w*\(|assertThat|verify\(|\bexpect\w*\(|\bshould", off: r"@Disabled|@Ignore|@Ignored",
-        test: r"(^|/)src/[A-Za-z]*[tT]ests?[A-Za-z]*/|(^|/)tests?/|(Tests?|IT|Spec)\.(java|kt|scala)$", inline: false },
-    Profile { name: "csharp", ext: &["cs"], comment: &["//"],
-        decl: r"^\s*(?:(?:public|private|protected|internal|static|sealed|abstract|partial|async|override|virtual)\s+)*(?:class|struct|interface|enum|record)\s+([A-Za-z_]\w*)",
-        assert: r"Assert\.|\.Should\(|Expect\(", off: r"Skip\s*=|\[Ignore",
-        test: r"(^|/)[^/]*(Tests?|Specs?)(/|\.cs$)|(^|/)tests?/", inline: false },
-    Profile { name: "ruby", ext: &["rb"], comment: &["#"],
-        decl: r"^\s*(?:def|class|module)\s+([\w:]+)",
-        assert: r"\bexpect\b|\bassert\w*|\.should\b", off: r"\bskip\b|\bxit\b|\bxdescribe\b|\bpending\b",
-        test: r"(^|/)(spec|test)/|_(spec|test)\.rb$", inline: false },
-    Profile { name: "php", ext: &["php"], comment: &["//", "#"],
-        decl: r"^\s*(?:(?:abstract|final|public|private|protected|static)\s+)*(?:class|interface|trait|enum|function)\s+([A-Za-z_]\w*)",
-        assert: r"\$this->assert|\bassert\w*\(|\bexpect\(", off: r"markTestSkipped|markTestIncomplete",
-        test: r"(^|/)tests?/|Tests?\.php$", inline: false },
-    Profile { name: "c/c++", ext: &["c", "cc", "cpp", "cxx", "h", "hh", "hpp"], comment: &["//"],
-        decl: r"^\s*(?:class|struct|enum|namespace)\s+([A-Za-z_]\w*)",
-        assert: r"ASSERT_|EXPECT_|\bassert\(|\bREQUIRE\(|\bCHECK\(", off: r"DISABLED_|GTEST_SKIP",
-        test: r"(^|/)(tests?|unittests?)/|[_.]?[tT]ests?\.(c|cc|cpp|cxx|h|hpp)$", inline: false },
-];
+#[derive(Deserialize)]
+struct Profiles {
+    profile: Vec<Profile>,
+}
 
-/// Per ecosystem, a line that opens a test case (an attribute, annotation, call or declaration), and whether that line is a call
-/// such as `it("name", ...)` (the name is its quoted string) rather than a marker above a declaration. Keyed by `Profile::name`.
-const CASES: [(&str, &str, bool); 10] = [
-    ("swift", r"^\s*@Test\b|^\s*(?:@\w+\s+)*func\s+test\w*", false),
-    ("rust", r"#\[(?:\w+::)*(?:test|rstest|test_case)\b", false),
-    ("typescript", r"^\s*(?:it|test)(?:\.\w+)*\s*\(", true),
-    ("python", r"^\s*(?:async\s+)?def\s+test\w*", false),
-    ("go", r"^func\s+(?:Test|Benchmark|Fuzz|Example)\w*\s*\(", false),
-    ("jvm", r"^\s*@(?:\w+\.)*(?:Test|ParameterizedTest|RepeatedTest|TestFactory)\b", false),
-    ("csharp", r"^\s*\[(?:Test|TestMethod|Fact|Theory|TestCase)\b", false),
-    ("ruby", r"^\s*(?:(?:it|specify|scenario)\s*[(\x22']|def\s+test_)", true),
-    ("php", r"^\s*(?:public\s+)?function\s+test\w*|^\s*#\[Test\]|@test\b", false),
-    ("c/c++", r"^\s*(?:TEST|TEST_F|TEST_P|TYPED_TEST|TEST_CASE|SCENARIO)\s*\(", true),
-];
+/// To support a new language, add a `[[profile]]` to `resources/profiles.toml`.
+pub static PROFILES: LazyLock<Vec<Profile>> = LazyLock::new(|| {
+    toml::from_str::<Profiles>(include_str!("../resources/profiles.toml")).expect("resources/profiles.toml").profile
+});
 
 /// How test cases are found in one file: its ecosystem, the line regex that opens one, and whether that line is a call.
 pub struct Case {
@@ -102,8 +63,8 @@ pub struct Case {
 
 /// The test-case rule of a file's ecosystem, by extension.
 pub fn case_of(file: &str) -> Option<Case> {
-    let p = PROFILES.iter().find(|p| p.ext.contains(&ext_of(file)))?;
-    CASES.iter().find(|(n, ..)| *n == p.name).map(|&(_, marker, call)| Case { profile: p, marker, call })
+    let p = PROFILES.iter().find(|p| p.ext.iter().any(|e| e == ext_of(file)))?;
+    Some(Case { profile: p, marker: &p.case, call: p.call })
 }
 
 /// Build manifests that make a folder a module.
@@ -299,9 +260,9 @@ fn minimal(mut v: Vec<String>) -> Vec<String> {
 /// `files`: repo-relative, `/`-separated. `None` when no known ecosystem has a file.
 pub fn layout(files: &[String]) -> Option<Layout> {
     let mine: Vec<&String> = files.iter().filter(|f| !f.split('/').any(|c| c.starts_with('.') && c != "." || SKIP.contains(&c))).collect();
-    let (profile, _) = PROFILES.iter().map(|p| (p, mine.iter().filter(|f| p.ext.contains(&ext_of(f))).count())).fold(None, |best: Option<(&Profile, usize)>, c| if c.1 > best.map_or(0, |b| b.1) { Some(c) } else { best })?;
-    let test = Regex::new(profile.test).unwrap();
-    let (tests, src): (Vec<&String>, Vec<&String>) = mine.into_iter().filter(|f| profile.ext.contains(&ext_of(f))).partition(|f| test.is_match(f));
+    let (profile, _) = PROFILES.iter().map(|p| (p, mine.iter().filter(|f| p.ext.iter().any(|e| e == ext_of(f))).count())).fold(None, |best: Option<(&Profile, usize)>, c| if c.1 > best.map_or(0, |b| b.1) { Some(c) } else { best })?;
+    let test = Regex::new(&profile.test).unwrap();
+    let (tests, src): (Vec<&String>, Vec<&String>) = mine.into_iter().filter(|f| profile.ext.iter().any(|e| e == ext_of(f))).partition(|f| test.is_match(f));
     let src_dirs = minimal(src.iter().map(|f| src_root(f)).collect());
     let mut test_dirs: Vec<String> = tests.iter().filter_map(|f| test_root(f)).collect();
     if profile.inline {

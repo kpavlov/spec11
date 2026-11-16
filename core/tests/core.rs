@@ -191,6 +191,17 @@ fn codegraph_schema_drift_is_an_error_not_a_panic() {
 
 #[doc = "[SCAN-09]"]
 #[test]
+fn every_profile_compiles() {
+    for p in spec11_core::detect::PROFILES.iter() {
+        for rx in [&p.decl, &p.assert, &p.off, &p.test, &p.case] {
+            regex::Regex::new(rx).unwrap_or_else(|e| panic!("{}: {rx}: {e}", p.name));
+        }
+        assert!(p.decl.contains('('), "{}: decl needs a name group", p.name);
+    }
+}
+
+#[doc = "[SCAN-09]"]
+#[test]
 fn layout_is_detected_when_spec11_json_is_missing() {
     use spec11_core::detect::{layout, spec_dir};
     let d = std::env::temp_dir().join(format!("spec11-{}-detect", std::process::id()));
@@ -216,7 +227,7 @@ fn layout_is_detected_when_spec11_json_is_missing() {
     assert_eq!(spec_dir(&e, &allow(&e)).as_deref(), Some("openspec/specs"));
 
     // ecosystems, from file lists alone
-    let l = |fs: &[&str]| { let v: Vec<String> = fs.iter().map(|s| s.to_string()).collect(); layout(&v).map(|l| (l.profile.name, l.src, l.tests)) };
+    let l = |fs: &[&str]| { let v: Vec<String> = fs.iter().map(|s| s.to_string()).collect(); layout(&v).map(|l| (l.profile.name.as_str(), l.src, l.tests)) };
     let s = |xs: &[&str]| xs.iter().map(|x| x.to_string()).collect::<Vec<_>>();
     assert_eq!(l(&["RunSolo/RunSolo/A.swift", "RunSolo/RunSoloTests/ATests.swift"]), Some(("swift", s(&["RunSolo"]), s(&["RunSolo/RunSoloTests"]))));
     assert_eq!(l(&["Sources/App/A.swift", "Tests/AppTests/ATests.swift"]), Some(("swift", s(&["Sources"]), s(&["Tests"]))));
@@ -225,6 +236,8 @@ fn layout_is_detected_when_spec11_json_is_missing() {
     assert_eq!(l(&["src/main/java/A.java", "src/test/java/ATest.java"]), Some(("jvm", s(&["src/main"]), s(&["src/test"]))));
     assert_eq!(l(&["web/src/a.ts", "web/src/a.test.ts", "web/e2e/b.ts", "web/node_modules/x/y.js"]), Some(("typescript", s(&["web/src"]), s(&["web/e2e"]))));
     assert_eq!(l(&["lib/a.rb", "spec/a_spec.rb", ".hidden/x.rb"]), Some(("ruby", s(&["lib"]), s(&["spec"]))));
+    assert_eq!(l(&["lib/a.dart", "test/a_test.dart"]), Some(("dart", s(&["lib"]), s(&["test"]))));
+    assert_eq!(l(&["R/a.R", "tests/testthat/test-a.R"]), Some(("r", s(&["R"]), s(&["tests"]))));
     assert_eq!(l(&["README.md"]), None);
 
     // colocated tests (Go, TS) are told apart from sources by name, so a citation in a test is not a source citation
