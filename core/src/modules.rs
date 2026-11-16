@@ -76,7 +76,10 @@ impl Analysis {
         let decls = self.graph.as_ref().and_then(|g| g.decls_in(file).ok()).unwrap_or_default();
         let ls = self.p.lines(file);
         let mut tests = vec![];
-        for (m, line) in ls.iter().enumerate().filter(|(_, l)| marker.is_match(l)) {
+        // a marker inside a string literal (a fixture that writes a test file) is not a test case
+        let unescaped_quotes = |t: &str| t.matches('"').count() - t.matches("\\\"").count();
+        let opens = |l: &str| marker.find_iter(l).any(|f| call || unescaped_quotes(&l[..f.start()]) % 2 == 0);
+        for (m, line) in ls.iter().enumerate().filter(|(_, l)| opens(l)) {
             // the declaration is on the marker line or just below an attribute / annotation
             let decl = (m..(m + 4).min(ls.len())).find_map(|i| self.p.rx.decl.captures(&ls[i]).map(|c| (i, c[1].to_string())));
             let (at, name) = match (decl, call) {
@@ -124,7 +127,7 @@ impl Analysis {
             let Some(case) = detect::case_of(f) else { continue };
             let m = module(f, &mut mods);
             let info = mods.get_mut(&m).unwrap();
-            if self.p.is_test_path(f) { info.test_files += 1 } else { info.src_files += 1 }
+            if self.p.is_test_only(f) { info.test_files += 1 } else { info.src_files += 1 }
             langs.entry(m).or_default().insert(case.profile.name);
         }
         for t in self.tests_view().modules {

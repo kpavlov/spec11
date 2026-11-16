@@ -318,26 +318,30 @@ Also [site](https://example.com/ADR\x2D0004.md).
 #[test]
 fn modules_and_test_cases() {
     let d = scratch("modules");
-    write(&d, "spec11.json", r#"{"specs":"SPEC.md","src":["a/src","b/src","web/src"],"tests":["a/tests"],"ext":["rs","ts"],"comment":["//"],"test_files":"\\.test\\.ts$"}"#);
+    write(&d, "spec11.json", r#"{"specs":"SPEC.md","src":["a/src","b/src","web/src"],"tests":["a/tests","b/src"],"ext":["rs","ts"],"comment":["//"],"test_files":"\\.test\\.ts$"}"#);
     write(&d, "SPEC.md", "- MOD-01 MUST — x.\n");
     for m in ["a", "b"] {
         write(&d, &format!("{m}/Cargo.toml"), "[package]\n");
         write(&d, &format!("{m}/src/lib.rs"), "pub fn f() {}\n");
     }
+    // unit tests inline in `src`: source that declares a test; a marker in a string is not a test
+    write(&d, "b/src/lib.rs", "pub fn f() {}\n#[test]\nfn inline() {}\nconst S: &str = \"#[test]\\nfn fake() {}\";\n");
     write(&d, "web/package.json", "{}\n");
     write(&d, "a/tests/t.rs", "#[doc = \"[MOD\x2D01]\"]\n#[test]\nfn works() {\n    assert!(true);\n}\n\n#[test]\nfn plain() {}\n");
     write(&d, "web/src/x.test.ts", "describe('x', () => {\n  it('does x', () => {});\n});\n");
     let a = Analysis::load(Some(&d)).unwrap();
     let t = a.tests_view();
-    assert_eq!(t.total, 3);
+    assert_eq!(t.total, 4);
     let names = |m: &str| t.modules.iter().find(|x| x.module == m).unwrap().files[0].tests.iter().map(|c| (c.name.clone(), c.line, c.ids.clone())).collect::<Vec<_>>();
     assert_eq!(names("a"), [("works".to_string(), 2, vec!["MOD-01".to_string()]), ("plain".to_string(), 7, vec![])]);
+    assert_eq!(names("b"), [("inline".to_string(), 2, vec![])]);
     assert_eq!(names("web"), [("does x".to_string(), 2, vec![])]);
 
     let m = a.modules_view();
     assert!(!m.index && m.note.unwrap().contains("no CodeGraph index"));
     let by = |p: &str| m.modules.iter().find(|x| x.path == p).unwrap();
     assert_eq!((by("a").manifest.as_deref(), by("a").src_files, by("a").test_files, by("a").tests), (Some("Cargo.toml"), 1, 1, 2));
+    assert_eq!((by("b").src_files, by("b").test_files, by("b").tests), (1, 0, 1));
     assert_eq!((by("web").manifest.as_deref(), by("web").languages.clone()), (Some("package.json"), vec!["typescript".to_string()]));
 
     // with an index: symbols per module and the dependency between modules

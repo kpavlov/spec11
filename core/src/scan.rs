@@ -202,6 +202,13 @@ impl Project {
         self.is_test(rel) || self.cfg.tests.iter().any(|d| d == "." || rel.starts_with(&format!("{d}/")))
     }
 
+    /// A file that exists to hold tests: test-named, or in a tests folder that is not also a source folder (Rust keeps unit tests
+    /// inline in `src`, so those files are source that happens to declare tests).
+    pub fn is_test_only(&self, rel: &str) -> bool {
+        let in_src = self.cfg.src.iter().any(|d| d != "." && rel.starts_with(&format!("{d}/")));
+        self.is_test(rel) || (self.is_test_path(rel) && !in_src)
+    }
+
     /// The test files: those under `tests`, plus test-named files that sit in `src` folders.
     pub fn test_files(&self) -> Vec<String> {
         let mut v = self.files(&self.cfg.tests);
