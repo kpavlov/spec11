@@ -39,8 +39,8 @@ impl ServerHandler for Mcp {
 
     async fn call_tool(&self, request: CallToolRequestParams, _: RequestContext<RoleServer>) -> Result<CallToolResponse, ErrorData> {
         let args = Value::Object(request.arguments.unwrap_or_default());
-        let (root, dash, name) = (self.0.root.clone(), self.0.dashboard.clone(), request.name.to_string());
-        let r = tokio::task::spawn_blocking(move || ops::call(root.as_deref(), &name, &args, &dash)).await.map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+        let (root, dash, name, port) = (self.0.root.clone(), self.0.dashboard.clone(), request.name.to_string(), self.0.mcp_port);
+        let r = tokio::task::spawn_blocking(move || ops::call(root.as_deref(), &name, &args, &dash, port)).await.map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
         Ok(match r {
             Ok((text, data)) => {
                 let mut res = CallToolResult::success(vec![ContentBlock::text(text)]);

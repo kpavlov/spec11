@@ -36,8 +36,32 @@ pub fn tools() -> Vec<Tool> {
         Tool { name: "spec_overlap", description: "Code covered by 2+ requirements (CodeGraph index): where two specs may conflict or complement each other. A candidate list, not a verdict.", schema: obj(merge(path.clone(), json!({"all": {"type": "boolean", "description": "also pairs from the same spec file"}}))), ui: false },
         Tool { name: "spec_uncovered", description: "Code no requirement covers (CodeGraph index): candidates for a missing requirement, not proof.", schema: obj(merge(path, json!({"fanin": {"type": "integer"}, "min": {"type": "integer"}}))), ui: false },
         Tool { name: "spec_file", description: "A spec file's markdown (read-only; name is a file in the specs folder, e.g. 04-documents.md). Without name: the list of spec files.", schema: obj(json!({"name": {"type": "string", "description": "spec file name, e.g. 04-documents.md"}})), ui: false },
+        Tool { name: "spec_doctor", description: "Repo setup checks: specs, tests and source folders, git, the codegraph binary and whether the CodeGraph index is initialized, readable and fresh, skill and MCP entry. Only looks; never indexes or installs.", schema: obj(json!({})), ui: false },
+        Tool { name: "spec_install_status", description: "Whether the spec11 skill and MCP entry are installed for this repo (.agents/skills, .mcp.json) or globally (~/.agents/skills), with what to run if not.", schema: obj(json!({})), ui: true },
+        Tool { name: "spec_install", description: "WRITES FILES: install the spec11 skill into <repo>/.agents/skills (global=true: ~/.agents/skills) and add the spec11 entry to <repo>/.mcp.json, keeping other servers. Same as `spec11 install`.", schema: obj(json!({"global": {"type": "boolean", "description": "install the skill into ~/.agents/skills instead of this repo"}, "port": {"type": "integer", "description": "MCP port for the .mcp.json entry (default: the port this server runs on)"}})), ui: false },
+        Tool { name: "spec_uninstall", description: "WRITES FILES: remove what spec_install added (the skill, and the spec11 entry in .mcp.json), keeping everything else. Same as `spec11 uninstall`.", schema: obj(json!({"global": {"type": "boolean"}})), ui: false },
         Tool { name: "spec_dashboard", description: "URL of the spec11 web dashboard served by this process.", schema: obj(json!({})), ui: true },
     ]
+}
+
+/// The install tools: they write the skill and `.mcp.json`, so they never run an analysis.
+fn setup(root: Option<&Path>, name: &str, args: &Value, mcp_port: u16) -> Option<Result<(String, Value), String>> {
+    use crate::skill;
+    let global = args["global"].as_bool().unwrap_or(false);
+    let changes = match name {
+        "spec_install_status" => None,
+        "spec_install" => Some(skill::apply(root, global, Some(num(args, "port").map_or(mcp_port, |p| p as u16)))),
+        "spec_uninstall" => Some(skill::apply(root, global, None)),
+        _ => return None,
+    };
+    Some((|| {
+        let changed = changes.transpose()?;
+        let st = skill::status(root, mcp_port)?;
+        let mut text = changed.unwrap_or_default().join("\n");
+        let todo = skill::suggestions(&st);
+        text += &(if todo.is_empty() { "\ninstalled: the agent can use spec11 here".to_string() } else { format!("\n{}", todo.join("\n")) });
+        Ok((text.trim_start().to_string() + "\n", json!({"status": st, "suggestions": todo})))
+    })())
 }
 
 fn obj(props: Value) -> Value {
@@ -63,9 +87,16 @@ fn txt<'a>(args: &'a Value, k: &str) -> &'a str {
 }
 
 /// Run one tool against the repo at `root` (or the nearest ancestor of the cwd with a specs folder). Blocking.
-pub fn call(root: Option<&Path>, name: &str, args: &Value, dashboard: &str) -> Result<(String, Value), String> {
+pub fn call(root: Option<&Path>, name: &str, args: &Value, dashboard: &str, mcp_port: u16) -> Result<(String, Value), String> {
     if name == "spec_dashboard" {
         return Ok((format!("{dashboard}\n"), json!({"url": dashboard})));
+    }
+    if name == "spec_doctor" {
+        let checks = crate::doctor::run(root, mcp_port);
+        return Ok((crate::doctor::text(&checks), json!({"checks": checks})));
+    }
+    if let Some(r) = setup(root, name, args, mcp_port) {
+        return r;
     }
     let a = Analysis::load(root)?;
     let note = |a: &Analysis| a.graph_note.clone().unwrap_or_else(|| "no .codegraph index here; the user decides about indexing".into());

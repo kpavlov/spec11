@@ -7,8 +7,6 @@ version = "0.1.0"
 edition = "2024"
 authors = ["Konstantin Pavlov"]
 repository = "https://github.com/kpavlov/spec11"
-homepage = "https://github.com/kpavlov/spec11"
-readme = "README.md"
 keywords = ["spec-driven", "requirements", "traceability", "mcp", "cli"]
 categories = ["development-tools", "command-line-utilities"]
 

@@ -13,7 +13,7 @@ help:
 	@echo "make build    release binary with the UI embedded: $(BIN)"
 	@echo "make run      build, then serve the release binary on :$(PORT) for $(ROOT)"
 	@echo "make report   print the text report for $(ROOT)"
-	@echo "make test     cargo tests; make parity compares with the Python scripts in $(ROOT)"
+	@echo "make test     cargo tests; make parity compares with the old Python scripts if vendored in $(ROOT)"
 	@echo "override: make dev ROOT=/path/to/repo PORT=7500 OPEN=0   (OPEN=0: don't open the browser)"
 
 web/node_modules: web/package.json
@@ -27,10 +27,10 @@ dev: web/node_modules
 	@trap 'kill 0' INT TERM EXIT; \
 	(cd web && npm run dev) & \
 	if [ "$(OPEN)" = 1 ]; then (until curl -sf -o /dev/null http://127.0.0.1:$(PORT)/api/info; do sleep 0.5; done; open http://127.0.0.1:$(PORT)/) & fi; \
-	cargo run -p spec11 -- --root "$(ROOT)" serve --port $(PORT)
+	cargo run -p spec11 -- --root "$(ROOT)" serve --port $(PORT) --no-open
 
 serve:
-	cargo run -p spec11 -- --root "$(ROOT)" serve --port $(PORT)
+	cargo run -p spec11 -- --root "$(ROOT)" serve --port $(PORT) --no-open
 
 # build.rs runs `npm run build` for release builds (SKIP_WEB_BUILD=1 to skip when web/dist is already built)
 build: web/node_modules
@@ -45,7 +45,7 @@ report:
 test:
 	cargo test --workspace
 
-# empty diff = the Rust output equals the Python scripts' (needs the skill vendored in $(ROOT)/.agents/skills/spec-driven)
+# optional: Rust output vs the old Python scripts, if still vendored in $(ROOT)/.agents/skills/spec-driven (no longer part of this repo)
 parity:
 	@cargo build -q -p spec11
 	@set -e; S="$(ROOT)/.agents/skills/spec-driven/scripts"; R="$(CURDIR)/target/debug/spec11"; cd "$(ROOT)"; \

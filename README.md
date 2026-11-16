@@ -9,10 +9,10 @@ One Rust binary, three interfaces over the same core:
 | Interface | How |
 |---|---|
 | CLI | `spec11 report`, `spec11 status [flags]`, `spec11 trace ID` (`--json`, `--root DIR`) |
-| MCP (streamable HTTP) | `spec11 serve` → `http://127.0.0.1:7411/mcp` |
-| Web dashboard | `spec11 serve` → `http://127.0.0.1:7411/` (same or separate port) |
+| MCP (streamable HTTP) | `spec11` / `spec11 serve` → `http://127.0.0.1:7411/mcp` |
+| Web dashboard | `spec11` / `spec11 serve` → `http://127.0.0.1:7411/` (same or separate port) |
 
-It ports the Python skill in `skills/spec11/` (kept as fallback and as the oracle; `make parity` diffs the two).
+It replaces the earlier Python scripts (output is identical; `make parity` can diff against a vendored copy of them).
 
 ## Conventions it reads
 
@@ -29,13 +29,15 @@ make dev                      # Vite HMR + Rust server on :7411, opens the brows
 make run                      # release binary with the UI embedded, serves on :7411
 make report                   # text report
 make test                     # cargo tests
-make parity                   # Rust output == Python scripts' output
+make parity                   # Rust output == the old Python scripts' output (needs them vendored in ROOT)
 make dev ROOT=/path/to/repo PORT=7500 OPEN=0
 ```
 
 `ROOT` defaults to `/Users/maestro/code/github/itstaffhq/run-solo`. Needs Rust and Node/npm; the release binary needs neither at runtime.
 
-`spec11 serve [--port 7411] [--ui-port N]`: one listener serves `/`, `/api` and `/mcp`; with `--ui-port` the UI and `/api` move to that port and the main port carries only `/mcp`. Binds 127.0.0.1 only and rejects unknown `Host`/`Origin` (403).
+`spec11` with no command runs `serve` for the repo that holds the current directory (nearest ancestor with `specs/`, or `--root`) and opens the dashboard; `--no-open` skips the browser. At startup it checks whether the skill and MCP entry are installed for this repo or globally and prints what to run if not; the dashboard shows the same in a banner and a Setup tab with Install/Uninstall buttons.
+
+`spec11 serve [--port 7411] [--ui-port N] [--no-open]`: one listener serves `/`, `/api` and `/mcp`; with `--ui-port` the UI and `/api` move to that port and the main port carries only `/mcp`. Binds 127.0.0.1 only and rejects unknown `Host`/`Origin` (403).
 
 MCP client config:
 
@@ -43,7 +45,21 @@ MCP client config:
 {"mcpServers": {"spec11": {"type": "http", "url": "http://127.0.0.1:7411/mcp"}}}
 ```
 
-Tools: `spec_report`, `spec_status`, `spec_trace`, `spec_overlap`, `spec_uncovered`, `spec_dashboard`. The dashboard is also an MCP Apps resource (`ui://spec11/dashboard`) for hosts that render it; elsewhere use the URL from `spec_dashboard`.
+Tools: `spec_report`, `spec_status`, `spec_trace`, `spec_overlap`, `spec_uncovered`, `spec_file`, `spec_dashboard`, and `spec_install_status` / `spec_install` / `spec_uninstall` (the last two write files). The dashboard is also an MCP Apps resource (`ui://spec11/dashboard`) for hosts that render it; elsewhere use the URL from `spec_dashboard`.
+
+## Doctor
+
+`spec11 doctor` checks the repo: specs found, test and source folders, git, whether the `codegraph` binary is on PATH and its index is initialized, readable and not older than the sources, and whether the skill and MCP entry are installed. It prints a hint per problem and exits 1 only when spec11 cannot work (no `specs/`). It never indexes or installs anything. The same list is the MCP tool `spec_doctor` and the Setup tab.
+
+## Install the skill
+
+```sh
+spec11 install              # <repo>/.agents/skills/spec11/SKILL.md  +  spec11 entry in <repo>/.mcp.json
+spec11 install --global     # ~/.agents/skills/spec11/SKILL.md (the MCP entry is per repo)
+spec11 uninstall [--global] # removes only what install added
+```
+
+The skill is built into the binary and tells the agent to use the MCP tools (CLI as fallback). `.mcp.json` is created if missing; other servers and keys are kept as they are, and a file with invalid JSON is left untouched. `--port N` sets the port the entry points at (default 7411). Start the server with `spec11`.
 
 ## Layout
 
@@ -51,7 +67,7 @@ Tools: `spec_report`, `spec_status`, `spec_trace`, `spec_overlap`, `spec_uncover
 core/     spec11-core: scan, config, report, coverage, codegraph (the only SQL)
 server/   spec11 binary: CLI, axum API, MCP (rmcp), UI serving
 web/      Svelte 5 + Vite (no SvelteKit), builds to one dist/index.html
-skills/   the agent skill (SKILL.md) and the Python reference scripts
+skills/   the agent skill (SKILL.md), embedded in the binary
 ```
 
 In debug builds the server proxies the UI to Vite (`localhost:5173`); in release it serves the embedded `web/dist`.

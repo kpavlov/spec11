@@ -1,22 +1,45 @@
 ---
-name: spec-driven
+name: spec11
 description: >
-  Report the SDD (spec-driven) project status deterministically, check which spec requirement IDs (ABC-12 in specs/*.md) have tests tagged [ABC-12] and source comments, list requirements that are not implemented, touched by the current changes or have spec issues, find `later` requirements that are already built and check-marked ones with no proof, find code that no requirement covers, find code covered by several requirements (conflicting or complementary specs), and trace one requirement to its tests and code. Use when asked to explore or report the SDD/spec status of the project, before changing behaviour, when asked what is implemented or untested, or to find the code a requirement affects.
+  Report spec-driven-development (SDD) status deterministically with the spec11 MCP server: which requirement IDs (ABC-12 in specs/*.md) have tests tagged [ABC-12] and source citations, what is not implemented, what the current changes touch, `later` requirements that are already built, check-marked ones with no proof, code no requirement covers, code covered by several requirements (conflicting or complementary specs), and one requirement traced to its tests and code. Use when asked to explore or report the SDD/spec status of a project, before changing behaviour, when asked what is implemented or untested, or to find the code a requirement affects.
 ---
 
-# Spec-driven
+# Spec-driven with spec11
 
-`specs/` is the source of truth: each requirement is `- **ABC-12** MUST|SHOULD|MAY — text`, a test proves it by tagging its title `@Test("[ABC-12] …")` (specs/README.md), and source comments cite it as `(ABC-12)`. Change the spec first, then tests and code.
+`specs/` is the source of truth: each requirement is `- **ABC-12** MUST|SHOULD|MAY — text`, a test proves it by tagging its title with `[ABC-12]`, and source comments cite it as `(ABC-12)`. Change the spec first, then tests and code.
+
+spec11 finds **evidence, not truth**: a tag or citation does not prove a requirement is implemented, nor that its test passes. Relay its output; never rebuild the numbers by reading specs and tests yourself, and never change a spec marker or tag because of the report alone.
+
+## How to call it
+
+**MCP (preferred).** Run `spec11` in the repo once (it starts the server for that repo and opens the dashboard; `spec11 serve --no-open` does not open it) and connect the client to `http://127.0.0.1:7411/mcp` (streamable HTTP):
+
+```json
+{"mcpServers": {"spec11": {"type": "http", "url": "http://127.0.0.1:7411/mcp"}}}
+```
+
+Add it to the client's MCP config if the `spec_*` tools are not available. `spec11 --root DIR serve` picks the repo; without it the server uses the directory it was started in.
+
+| Tool | Arguments | Same as CLI |
+|---|---|---|
+| `spec_report` | `limit` | `spec11 report [--limit N]` |
+| `spec_status` | `spec`, `prefix`, `all`, `missing`, `changed` (git ref), `built`, `done`, `unproven`, `issues`, `effort`, `limit` | `spec11 status [flags]` |
+| `spec_trace` | `id` | `spec11 trace ID [--codegraph]` |
+| `spec_overlap` | `path`, `all` | `spec11 overlap [PATH]` |
+| `spec_uncovered` | `path`, `fanin`, `min` | `spec11 uncovered [PATH]` |
+| `spec_file` | `name` (omit to list) | read `specs/NAME` |
+| `spec_dashboard` | none | URL of the web dashboard |
+| `spec_doctor` | none | `spec11 doctor`: repo setup, CodeGraph binary and index |
+| `spec_install_status` | none | whether the skill and MCP entry are installed here or globally |
+| `spec_install`, `spec_uninstall` | `global`, `port` | `spec11 install/uninstall [--global]` (they write files: only when the user asks) |
+
+**CLI (no server needed).** `spec11 [--root DIR] [--json] report|status|trace|overlap|uncovered`. Output is plain text, identical on every run for the same tree.
+
+**Configuration.** Defaults are Swift (`RunSolo/...` paths). Any other layout goes in an optional `spec11.json` at the repo root: `specs`, `tests`, `src`, `ext`, `comment`, `decl`, `assert`, `off`, `retired_prefixes`, `codegraph`, `infra_paths`.
 
 ## Exploring the project status
 
-When asked to explore, audit or report the SDD status of the project, **run the script and relay its output; do not rebuild the numbers by reading specs and tests yourself**. The report is plain text and identical on every run for the same tree, so two people (or models) get the same answer.
-
-```sh
-python3 .agents/skills/spec-driven/scripts/report.py [--limit N]
-```
-
-It finds every spec file and requirement and prints a headline, a one-line problem tally, and one section per problem kind (an empty one says `none`):
+When asked to explore, audit or report the SDD status, call `spec_report` and relay it. It prints a headline, a one-line problem tally, and one section per problem kind (an empty one says `none`):
 
 | Section | Meaning |
 |---|---|
@@ -28,85 +51,56 @@ It finds every spec file and requirement and prints a headline, a one-line probl
 | spec issues | duplicate IDs, bullets without MUST/SHOULD/MAY, misplaced markers, citations of undefined IDs, a check mark with `(later)` |
 | dangling citations | IDs cited by tests or source that no spec defines |
 | specs to compare | declarations covered by two or more requirements whose specs do not cite each other: possible conflict (needs the CodeGraph index) |
-| code with no requirement | the top of `status.py --uncovered` (needs the CodeGraph index) |
+| code with no requirement | the top of `spec_uncovered` (needs the CodeGraph index) |
 
 Then:
-1. Give the user the report (paste it, or the headline, tally and every non-empty section), then your reading of it: the two or three problems that matter most and why. Counts and ID lists come only from the script.
-2. Drill down with the flags in the next section (`--missing`, `--unproven`, `--built`, `--issues`, `--overlap PATH`, `--uncovered PATH`, `trace.py ID`), never by grepping.
-3. The script reports evidence, not truth. Never call two requirements conflicting from the report: see "Asked for conflicting requirements" below. Ask which effort the user wants for the judgement calls (`low`, `medium`, `high`, see below); default `low` is the report as it stands. Never change a spec marker or tag because of the report alone.
+1. Give the user the report (the headline, tally and every non-empty section), then your reading of it: the two or three problems that matter most and why. Counts and ID lists come only from spec11.
+2. Drill down with `spec_status` flags, `spec_trace`, `spec_overlap`, `spec_uncovered`, never by grepping.
+3. Ask which effort the user wants for judgement calls (`low`, `medium`, `high`, below); default `low` is the report as it stands. Never call two requirements conflicting from the report: see "Asked for conflicting requirements".
 
-## Scripts
+If something looks missing ("not checked", no tests found), run `spec_doctor`: it reports the repo layout, whether the `codegraph` binary exists and its index is initialized and fresh, and what to run. The CodeGraph index (`.codegraph/codegraph.db`, opened read-only) adds test-to-code links, overlap and uncovered code. Without one those parts say "not checked": indexing is the user's decision, so do not create the index on your own.
 
-Scripts (Python 3 stdlib, ~50 ms, run from anywhere in the repo; paths are `.agents/skills/spec-driven/scripts/`):
+## spec_status — what is implemented
 
-```sh
-report.py [--limit N]                                       # whole-project status, deterministic text
-status.py [--spec 04] [--prefix DOC]                       # summary per spec file
-status.py --all | --missing | --changed [REF] | --issues   # one line per requirement
-status.py --built                                           # later/deferred requirements that already have tests or code
-status.py --done | --unproven                               # check-marked (✅ ✔️ ☑️ ✳️) requirements, and those with no proof
-status.py ... --effort low|medium|high                      # evidence per listed line (see effort modes below)
-status.py --uncovered [PATH]                                # code no requirement covers (same as uncovered.py)
-status.py --overlap [PATH]                                  # code covered by 2+ requirements (same as overlap.py)
-trace.py DOC-25 [--codegraph]                               # one requirement in depth
-selfcheck.py                                                # run after editing the scripts
-```
+**Summary (no list flag):** one line per spec file, `tested/due`, then `src-only` (cited in source, no test), `none` (neither), and counts of `manual` and `later`, the latter with how many already have tests or code, e.g. `later: 15 (3 with tests/code)`. Consecutive IDs print as ranges (`DOC-01..05`). A `TOTAL` line closes it, followed by spec issues and a hint.
 
-## `spec11` binary, MCP and dashboard
-
-The Rust port (`cargo build --release -p spec11`, repo root of this skill) prints the same text as the scripts, ~4x faster: `spec11 report|status|trace` take the same flags (`status.py --missing` is `spec11 status --missing`; `--json` gives typed output; `--root DIR` picks the repo). Prefer it when installed; the Python scripts stay as the fallback and as the oracle (`make parity`). Language and layout defaults are Swift/run-solo; override them in an optional `spec11.json` at the repo root (`specs`, `tests`, `src`, `ext`, `comment`, `decl`, `assert`, `off`, `retired_prefixes`, `codegraph`, `infra_paths`).
-
-`spec11 serve [--port 7411] [--ui-port N]` runs one local process on 127.0.0.1:
-- **MCP** (streamable HTTP) at `http://127.0.0.1:7411/mcp`; client config `{"mcpServers":{"spec11":{"type":"http","url":"http://127.0.0.1:7411/mcp"}}}`. Tools: `spec_report`, `spec_status`, `spec_trace`, `spec_overlap`, `spec_uncovered`, `spec_dashboard`: the same deterministic evidence, bounded by `limit`. Same rules as the scripts: relay the output, it is evidence, not truth.
-- **Dashboard** at `http://127.0.0.1:7411/` (or `--ui-port`): report, requirement table with trace panel, overlap, uncovered. `spec_dashboard` returns the URL; hosts that support MCP Apps render it inline from `ui://spec11/dashboard`.
-
-## status.py — what is implemented
-
-**Summary (no list flag):** one line per spec file, `tested/due`, then `src-only` (cited in app source, no test), `none` (neither), and counts of `manual` and `later`, the latter with how many already have tests or code, e.g. `later: 15 (3 with tests/code)`. Consecutive IDs print as ranges (`DOC-01..05`). A `TOTAL` line closes it, followed by spec issues (first 10) and a hint.
-
-**Requirement lists:** `--all`, `--missing`, `--changed [REF]` and `--issues` print one line per requirement:
-
-```
-TRIP-02 src-only 18-trips.md:38 [changed: spec,src] [issue]  The card holds title …
-```
-
-`ID  state  spec-file:line  [flags]  first 100 characters`. Several flags together narrow the list (all must hold), and `--spec`/`--prefix` narrow it further.
+**Requirement lists** print one line per requirement: `ID  state  spec-file:line  [flags]  first 100 characters`. Several flags together narrow the list (all must hold), and `spec`/`prefix` narrow it further.
 
 | Flag | Lists |
 |---|---|
-| `--all` | every requirement, in ID order |
-| `--missing` | due requirements with no test: state `src-only` or `none`. `later`, `deferred` and `manual` ones are not due |
-| `--changed [REF]` | requirements touched by the working tree against `REF` (default `HEAD`; staged, unstaged and untracked files count): `spec` = its spec bullet was edited, `test` = a test file that tags it was edited, `src` = a source file that cites it was edited. The test and source match is per file, so it means "may be affected", not "its lines changed" |
-| `--built` | requirements marked `later`/`deferred` that already have a `[ID]` test or a source citation, flagged `[built?: N tests, M src]`: the marker says not built, the code says otherwise. Evidence only, so the state still needs assessing (see below) |
-| `--done` | requirements carrying a check mark (✅ ✔ ☑ ✳, with or without the variation selector) before the ID or anywhere in the bullet outside struck text. A check mark is a hint that the requirement is done, not proof. Each line gets `[DONE: verdict]` |
-| `--unproven` | check-marked requirements whose verdict is `NO-TEST` or `NO-LINK` |
-| `--issues` | requirements with a spec issue, the issue printed under the line |
+| `all` | every requirement, in ID order |
+| `missing` | due requirements with no test: state `src-only` or `none`. `later`, `deferred` and `manual` ones are not due |
+| `changed` | requirements touched by the working tree against a git ref (default `HEAD`; staged, unstaged and untracked files count): `spec` = its bullet was edited, `test` = a test file that tags it was edited, `src` = a source file that cites it was edited. Matching is per file: "may be affected", not "its lines changed" |
+| `built` | requirements marked `later`/`deferred` that already have a `[ID]` test or a source citation, flagged `[built?: N tests, M src]`. Evidence only: the state still needs assessing (below) |
+| `done` | requirements carrying a check mark (✅ ✔ ☑ ✳) before the ID or anywhere in the bullet outside struck text. A hint, not proof. Each line gets `[DONE: verdict]` |
+| `unproven` | check-marked requirements whose verdict is `NO-TEST` or `NO-LINK` |
+| `issues` | requirements with a spec issue, printed under the line |
 
-Verdicts of a check-marked requirement: `NO-TEST` (no `[ID]` test anywhere: strong evidence it is not done), `NO-LINK` (tests exist, but the CodeGraph index cannot follow any of them, through test helpers up to 3 hops, to app code, so the test may prove nothing: verify), `ok` (a tagged test reaches app code), `unchecked` (no CodeGraph index). The summary always ends with `check-marked done: N | NO TEST: … | tests not linked to code: …`. The graph link is a hint too: it shows a test calls the code, not that the test checks the requirement.
+Verdicts of a check-marked requirement: `NO-TEST` (no `[ID]` test anywhere: strong evidence it is not done), `NO-LINK` (tests exist, but the CodeGraph index cannot follow any of them, through helpers up to 3 hops, to app code, so the test may prove nothing: verify), `ok` (a tagged test reaches app code), `unchecked` (no CodeGraph index). The graph link is a hint too: it shows a test calls the code, not that the test checks the requirement.
 
-States: `tested` (a `[ID]` tag exists, which does not mean the test passes: run the suite), `src-only`, `none`, `manual` (checked by a person), `later`. A requirement ending in `(later)` or `(deferred)` is `later`; both mean not built yet. A marker inside a struck-through sentence is ignored.
+States: `tested` (a `[ID]` tag exists; run the suite to know it passes), `src-only`, `none`, `manual` (checked by a person), `later`. A requirement ending in `(later)` or `(deferred)` is `later`; a marker inside struck-through text is ignored.
 
-Always printed: **check-marked done** counts (above), **tests/sources citing IDs not in specs** (typos or retired IDs). **Spec issues** are: an ID defined twice, a bullet without MUST/SHOULD/MAY (not counted), a `(later)`/`(deferred)`/`(manual)` marker before the end of a requirement (it then counts as due), a requirement citing an ID no spec defines, a requirement with a check mark that is also marked `(later)`/`(deferred)`/`(manual)`.
+**Spec issues** are: an ID defined twice, a bullet without MUST/SHOULD/MAY (not counted), a `(later)`/`(deferred)`/`(manual)` marker before the end of a requirement (it then counts as due), a requirement citing an ID no spec defines, a check mark together with a `(later)`/`(deferred)`/`(manual)` marker.
 
-Scanned: `specs/*.md` bullets (wrapped lines are joined; struck-through bullets are retired); tests in `RunSolo/RunSoloTests` and `RunSolo/RunSoloUITests` (`[ABC-12]`, `[ABC-12][ABC-14]` or `[ABC-12, ABC-14]` anywhere); sources in `RunSolo/RunSolo` (IDs after `//`, so block comments are not read).
+Scanned: `specs/*.md` bullets (wrapped lines joined; struck-through bullets are retired); test tags `[ABC-12]`, `[ABC-12][ABC-14]` or `[ABC-12, ABC-14]` anywhere in the test folders; source IDs after the line-comment marker (block comments are not read). Folders and extensions come from `spec11.json`.
 
-## trace.py — what a requirement touches
+## spec_trace — what a requirement touches
 
-For one ID prints the full spec text and the IDs it cites, the tests tagged with it, each source comment citing it with the declaration it sits in, and related code: types named in the tagged tests' bodies (`*` = the file also cites the ID). The last line is a `codegraph explore` query; `--codegraph` runs it. Use the output as a starting set, then read the real flow with `codegraph_explore`; name matching misses code a test reaches only indirectly. Exit 1 if the ID is unknown everywhere.
+For one ID: the full spec text and the IDs it cites, the tests tagged with it, each source comment citing it with the declaration it sits in, and related code: types named in the tagged tests' bodies (`*` = the file also cites the ID). The last line is a `codegraph explore` query. Use the output as a starting set, then read the real flow with `codegraph_explore`; name matching misses code a test reaches only indirectly. An ID unknown everywhere is an error.
 
 ## Assessing the real state — effort modes
 
-The scripts only find evidence. Two cases need judgement, and a quick model gets them wrong:
-- **Marked later, maybe built** (`--built`): the marker says not built, tags or citations say otherwise. A citation can sit on a stub, and a test can cover one clause of a long requirement.
-- **Marked done, maybe not** (`--unproven`, or `--done`): a check mark is only a hint. `NO-TEST` is strong evidence it is not done; `NO-LINK` means the tests may not exercise the code.
+spec11 only finds evidence. Two cases need judgement, and a quick model gets them wrong:
+- **Marked later, maybe built** (`built`): the marker says not built, tags or citations say otherwise. A citation can sit on a stub, and a test can cover one clause of a long requirement.
+- **Marked done, maybe not** (`unproven`, or `done`): a check mark is only a hint. `NO-TEST` is strong evidence it is not done; `NO-LINK` means the tests may not exercise the code.
 
 Effort sets who judges and how deep. Use `low` unless the user asks for more; "deep inspection" or "high effort" means `high`.
 
 | Effort | Who | What |
 |---|---|---|
-| `low` (default) | the scripts | Report the lists and verdicts as they are, with `--effort low` counts. No judgement, no claim that anything is implemented. |
-| `medium` | one assessor at Sonnet level or above (Agent tool, `model: "sonnet"`; never `haiku`), or you if you are that capable | Split each requirement into clauses; per clause name the code (`file:line`) and the tagged test; read the code with `codegraph_explore`, not only comments. Batches of up to 5 requirements per assessor, one assessor per spec file, each given `status.py ... --effort medium` and `trace.py ID` output. |
-| `high` | the strongest model available (`model: "opus"`), one requirement per assessor | Everything in `medium`, plus: read each tagged test and say what it really asserts; for `NO-LINK` decide whether the test exercises app code at all (the graph misses dynamic dispatch and UI tests); for `NO-TEST` look for the behaviour in code anyway and say what test is missing; run the tagged tests (`RunSomeTests`, or `xcodebuild test -only-testing`) and report pass or fail; never infer from names or comments alone. Input: `status.py ... --effort high` (full spec text, test and code locations, graph links). |
+| `low` (default) | spec11 | Report the lists and verdicts as they are. No judgement, no claim that anything is implemented. |
+| `medium` | one assessor at Sonnet level or above (Agent tool, `model: "sonnet"`; never `haiku`), or you if you are that capable | Split each requirement into clauses; per clause name the code (`file:line`) and the tagged test; read the code with `codegraph_explore`, not only comments. Batches of up to 5 requirements per assessor, one assessor per spec file, each given `spec_status ... effort=medium` and `spec_trace` output. |
+| `high` | the strongest model available (`model: "opus"`), one requirement per assessor | Everything in `medium`, plus: read each tagged test and say what it really asserts; for `NO-LINK` decide whether the test exercises app code at all (the graph misses dynamic dispatch and UI tests); for `NO-TEST` look for the behaviour in code anyway and say what test is missing; run the tagged tests and report pass or fail; never infer from names or comments alone. Input: `spec_status ... effort=high` (full spec text, test and code locations, graph links). |
 
 The assessor does not edit. It returns, per requirement: `implemented` (every clause has working code and a test), `partial` (list the missing clauses), `stub` (cited or tagged, behaviour absent) or `not-built`, plus the evidence in one or two lines. Then act on it yourself, spec first:
 
@@ -116,64 +110,63 @@ The assessor does not edit. It returns, per requirement: `implemented` (every cl
 - Marked later and `partial`, `stub` or `not-built`: keep the marker; remove a misleading tag or citation.
 - Edit specs on your own only for `implemented` marked later; confirm every other change with the user. Report one table: ID, verdict, one line of evidence.
 
-## uncovered.py — code with no requirement
+## spec_uncovered — code with no requirement
 
-`status.py --uncovered [PATH]` (or `uncovered.py [PATH] [--fanin N] [--min N]`) reads the CodeGraph index (`.codegraph/codegraph.db`, read-only; if there is none it stops, because indexing is the user's decision) and lists top-level types and functions of `RunSolo/RunSolo` that no requirement covers, grouped by file and sorted by size, as `Name:first-last` line ranges. These are candidates for a **missing requirement**, not proof.
+Reads the CodeGraph index and lists top-level types and functions in the source folders that no requirement covers, grouped by file and sorted by size, as `Name:first-last` line ranges. These are candidates for a **missing requirement**, not proof.
 
 A unit is listed only if all of this holds, so shared plumbing does not drown the result:
 - No spec ID is cited in a comment inside it or just above it.
 - No test tagged `[ID]` names it in its body.
 - Code that does cite an ID does not use it directly (one hop of calls, instantiates, references): a helper of a covered feature is covered.
-- It is not shared infrastructure: used from fewer than `--fanin` other files (default 5), and not under `UI/Components/`, `UI/DataTypes/` or the app entry.
-- It is `internal` or `public` and at least `--min` lines (default 10).
+- It is not shared infrastructure: used from fewer than `fanin` other files (default 5), and not under the `infra_paths` of `spec11.json`.
+- It is `internal` or `public` and at least `min` lines (default 10).
 
-The first line shows how many units each rule skipped. The index follows file edits within about a second; run `codegraph sync` first if you just changed code.
+The first line shows how many units each rule skipped. The index follows file edits within about a second; run `codegraph sync` first if code just changed.
 
 **Triage each candidate before writing anything** (read it with `codegraph_explore "<Name>"`):
-- *Business behaviour* — a rule, a computation, a saved or shown field, a user-visible flow or limit: write a requirement in the matching spec (`specs/README.md` index, next free ID, never a retired one), test it with `[ID]`, and cite `(ID)` at the code.
-- *Plumbing* — framework glue, layout, styling, SwiftUI wiring with no rule of its own, generic helpers, platform adapters: ignore it. If a whole kind keeps showing up (a shared helper type), raise `--fanin` or `INFRA_PATHS` in `uncovered.py` instead of writing requirements for it.
+- *Business behaviour* — a rule, a computation, a saved or shown field, a user-visible flow or limit: write a requirement in the matching spec (the specs index, next free ID, never a retired one), test it with `[ID]`, and cite `(ID)` at the code.
+- *Plumbing* — framework glue, layout, styling, wiring with no rule of its own, generic helpers, platform adapters: ignore it. If a whole kind keeps showing up, raise `fanin` or add it to `infra_paths` instead of writing requirements for it.
 - *Belongs to an existing requirement* — add `(ID)` in a comment at the code; the spec already says it.
 
-## overlap.py — code several requirements cover
+## spec_overlap — code several requirements cover
 
-`status.py --overlap [PATH]` (or `overlap.py [PATH] [--all]`) lists declarations (method, function, type, property) of `RunSolo/RunSolo` that two or more requirements cover, from the CodeGraph index. A requirement covers a declaration when its ID is cited in a comment inside it or in the doc comment right above it. Each pair of IDs is marked:
+Lists declarations (method, function, type, property) that two or more requirements cover, from the CodeGraph index. A requirement covers a declaration when its ID is cited in a comment inside it or in the doc comment right above it. Each pair of IDs is marked:
 - `linked`: one spec's text cites the other, or both cite a third ID. The specs already know each other, so they are probably complementary.
 - `UNLINKED`: no declared relation. Read these first; the specs may conflict, repeat each other, or share code only by accident.
 
-Pairs from the same spec file are hidden unless `--all`. The script finds the overlap; deciding what it means is a judgement (effort modes above: `medium` for `complementary`, `duplicate` and `incidental`; any claim of `conflicting` needs the strong-model review below). For each `UNLINKED` pair read both requirements (`trace.py ID`) and the declaration (`codegraph_explore "<Name>"`), then classify:
+Pairs from the same spec file are hidden unless `all`. spec11 finds the overlap; deciding what it means is a judgement (`medium` for `complementary`, `duplicate` and `incidental`; any claim of `conflicting` needs the strong-model review below). For each `UNLINKED` pair read both requirements (`spec_trace`) and the declaration (`codegraph_explore "<Name>"`), then classify:
 
 | Verdict | Test | Action |
 |---|---|---|
 | conflicting | they demand incompatible behaviour of this code: different limits, formats, defaults, ordering, or one forbids what the other requires | Only after the review below. Show the user both texts and the code. Never pick a side silently. After the user decides, fix the losing spec, its tests and the code |
 | complementary | different aspects of one feature (one validates, one stores, one displays) or one refines the other | Add a reference in each bullet (`see ABC-12`), so the next run reports the pair as `linked` |
-| duplicate | the same rule stated twice | Propose retiring one: strike it through and keep its ID reserved (specs/README.md); the user approves; move its tests' tags to the survivor |
+| duplicate | the same rule stated twice | Propose retiring one: strike it through and keep its ID reserved; the user approves; move its tests' tags to the survivor |
 | incidental | the code is shared plumbing and one citation is only a loose pointer | Move that citation to the code that really implements it, or remove it |
 
 ### Asked for conflicting requirements: a strong model must review first
 
-An `UNLINKED` pair is a candidate, not a finding: two IDs on one declaration only prove that someone cited both. When the user asks which requirements conflict, or when you are about to call a pair `conflicting`, do not answer from the script output or from the spec texts alone. Hand each candidate pair to the strongest model available (Agent tool, `model: "opus"`, one pair per assessor; a Sonnet-level or smaller model is not enough, and if no strong model can be used, say so and report the pair only as an unverified candidate). The reviewer, who does not edit anything, must:
+An `UNLINKED` pair is a candidate, not a finding: two IDs on one declaration only prove that someone cited both. When the user asks which requirements conflict, or when you are about to call a pair `conflicting`, do not answer from the tool output or from the spec texts alone. Hand each candidate pair to the strongest model available (Agent tool, `model: "opus"`, one pair per assessor; a Sonnet-level or smaller model is not enough, and if no strong model can be used, say so and report the pair only as an unverified candidate). The reviewer, who does not edit anything, must:
 
-1. **Understand the current code first.** Read the declaration and what it does (`codegraph_explore "<Name>"`), its callers and callees, the tests tagged with either ID (`trace.py ID`), and any other code that cites either ID. Say in a few lines what the code does today for each requirement: implements A only, B only, both, or neither.
+1. **Understand the current code first.** Read the declaration and what it does (`codegraph_explore "<Name>"`), its callers and callees, the tests tagged with either ID (`spec_trace`), and any other code that cites either ID. Say in a few lines what the code does today for each requirement: implements A only, B only, both, or neither.
 2. **Read both requirements in full** and extract their conditions: which entity, state, input, version or phase each one applies to, and whether either is `(later)`, `(deferred)`, struck or "after 1.0".
 3. **Try to reconcile them.** Look for a reading in which both hold: disjoint conditions, one a refinement or exception of the other, different layers (storage vs display), different moments (on save vs on read).
 4. **Only if no reading reconciles them, write the contradiction as a concrete case**: one input or situation, and the two outputs the specs demand from it. No such case, no conflict.
 5. **Report** per pair: verdict (`conflicting`, `complementary`, `duplicate`, `incidental`, or `unclear` with what is missing), the concrete case for a conflict, what the code does today, and the `file:line` evidence for each claim. Never infer behaviour from names or comments.
 
-Then relay the verdicts to the user. A conflict is reported with both bullets quoted and the case; fixing it is the user's decision (specs first, then tests and code).
-
-A `linked` pair needs no action unless the texts disagree; check that when reading the code anyway. Report one table: declaration, IDs, verdict, one line of evidence.
+Then relay the verdicts to the user. A conflict is reported with both bullets quoted and the case; fixing it is the user's decision (specs first, then tests and code). A `linked` pair needs no action unless the texts disagree; check that when reading the code anyway. Report one table: declaration, IDs, verdict, one line of evidence.
 
 ## Workflow
 
-0. Specs marked `(later)` may already be built (`status.py --built`) and check-marked specs may not be (`status.py --unproven`): assess per effort (above).
-1. Starting work: `status.py --changed` shows which requirements the current changes already touch; `--missing --prefix X` shows what an area still lacks.
-2. Behaviour change: `trace.py ID`, read the spec and its tests, edit the spec first.
+0. Specs marked `(later)` may already be built (`built`) and check-marked specs may not be (`unproven`): assess per effort (above).
+1. Starting work: `spec_status changed=HEAD` shows which requirements the current changes already touch; `missing=true prefix=X` shows what an area still lacks.
+2. Behaviour change: `spec_trace`, read the spec and its tests, edit the spec first.
 3. New requirement: add the bullet, write the tests, and cite `(ID)` in a comment at the code that implements it.
-4. Writing or changing a test: it must name the requirement it proves, in the form the scripts read, square brackets with the ID:
-   - Title: `@Test("[ABC-12] what holds")`. One test per behaviour; list several IDs as `[ABC-12][ABC-14]` or `[ABC-12, ABC-14]` only when one assertion set really proves both.
+4. Writing or changing a test: it must name the requirement it proves, in the form spec11 reads, square brackets with the ID:
+   - Title: e.g. `@Test("[ABC-12] what holds")` (Swift Testing; use the test framework's own title or name). One test per behaviour; list several IDs as `[ABC-12][ABC-14]` or `[ABC-12, ABC-14]` only when one assertion set really proves both.
    - Comment: in the body, a `// [ABC-13] why this line proves it` beside each assertion or setup that proves a *different* requirement than the title, and above a test helper or fixture that exists for one. A bare `(ABC-12)` in a test comment is not read.
    - No ID fits: the behaviour is unspecified. Write the requirement first (step 3), then the test. Never tag a test with a nearby ID that does not say what it checks.
-   - After editing tests, `status.py --changed` should list the requirement as `tested` with `[changed: test]`.
-5. Several specs on one piece of code: `status.py --overlap`, classify per the table above.
-6. Cleaning up: `status.py --uncovered Domain/` finds behaviour nobody specified; triage as above.
-7. Before finishing: `status.py --changed --missing` should be empty (nothing you touched is untested) and `status.py --issues` clean.
+   - After editing tests, `spec_status changed=HEAD` should list the requirement as `tested` with `[changed: test]`.
+5. Several specs on one piece of code: `spec_overlap`, classify per the table above.
+6. Cleaning up: `spec_uncovered path=Domain/` finds behaviour nobody specified; triage as above.
+7. Before finishing: `spec_status changed=HEAD missing=true` should be empty (nothing you touched is untested) and `spec_status issues=true` clean.
+8. For a visual overview open the dashboard (`spec_dashboard` returns its URL).

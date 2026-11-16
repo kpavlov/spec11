@@ -5,7 +5,10 @@
   type Ref = { file: string; line: number; text: string };
   type Row = { id: string; state: string; file: string; line: number; level: string; text: string; mark: string; done: boolean; verdict: string; built: boolean; issues: string[]; tests: Ref[]; cites: Ref[]; graph: string[] };
 
-  let tab = $state<"report" | "requirements" | "specs" | "overlap" | "uncovered">("report");
+  let tab = $state<"report" | "requirements" | "specs" | "overlap" | "uncovered" | "setup">("report");
+  let setup = $state<{ status: any; suggestions: string[]; text: string } | null>(null);
+  let busy = $state(false);
+  let checks = $state<{ name: string; level: string; detail: string; hint: string | null }[]>([]);
   let specFiles = $state<string[] | null>(null);
   let specFile = $state("");
   let specMd = $state("");
@@ -35,6 +38,22 @@
     trace = await guard(call("spec_trace", { id }));
   }
 
+  async function loadSetup() {
+    const [r, d] = await Promise.all([call("spec_install_status"), call("spec_doctor")]);
+    setup = { ...r.data, text: r.text };
+    checks = d.data.checks;
+  }
+
+  async function runSetup(tool: "spec_install" | "spec_uninstall", global = false) {
+    busy = true;
+    try {
+      const r = await guard(call(tool, { global }));
+      setup = { ...r.data, text: r.text };
+    } finally {
+      busy = false;
+    }
+  }
+
   async function openSpec(name: string) {
     specFile = name;
     specMd = (await guard(call("spec_file", { name }))).data.markdown;
@@ -56,6 +75,7 @@
   });
 
   load();
+  loadSetup().catch(() => {});
 
   const states = ["all", "tested", "src-only", "none", "manual", "later"];
   const shown = $derived(rows.filter((r) => (stateFilter === "all" || r.state === stateFilter) && (!query || `${r.id} ${r.text} ${r.file}`.toLowerCase().includes(query.toLowerCase()))));
@@ -99,7 +119,7 @@
   <h1>spec11</h1>
   <span class="mono muted">{root}</span>
   <nav>
-    {#each ["report", "requirements", "specs", "overlap", "uncovered"] as t}
+    {#each ["report", "requirements", "specs", "overlap", "uncovered", "setup"] as t}
       <button class:on={tab === t} aria-current={tab === t ? "page" : undefined} onclick={() => (tab = t as typeof tab)}>{t}</button>
     {/each}
     <button onclick={load} title="rescan" aria-label="rescan">↻</button>
@@ -107,6 +127,14 @@
 </header>
 
 {#if error}<p class="error">{error}</p>{/if}
+{#if setup && setup.suggestions.length && tab !== "setup"}
+  <p class="banner">
+    <span>spec11 is not fully set up for this repo: {setup.suggestions[0]}</span>
+    <span class="grow"></span>
+    <button disabled={busy} onclick={() => runSetup("spec_install")}>Install here</button>
+    <button onclick={() => (tab = "setup")}>Details</button>
+  </p>
+{/if}
 
 <main>
   {#if !report}
@@ -174,6 +202,36 @@
       {@render tracePanel()}
     </div>
     {#if shown.length > 500}<p class="muted">First 500 shown; narrow the filter.</p>{/if}
+  {:else if tab === "setup"}
+    {#if !setup}<p class="muted">Checking…</p>
+    {:else}
+      {#snippet row(title: string, where: any, global: boolean)}
+        <div class="card block setup">
+          <h3>{title}</h3>
+          <p><span class="pill {where.skill === 'current' ? 'tested' : where.skill === 'outdated' ? 'src-only' : 'none'}">skill {where.skill}</span> <span class="mono muted">{where.skill_path}</span></p>
+          <p><span class="pill {where.mcp === 'ok' ? 'tested' : where.mcp === 'other' ? 'src-only' : 'none'}">mcp {where.mcp === "ok" ? "installed" : where.mcp === "other" ? "other port" : "missing"}</span> <span class="mono muted">{where.mcp_path ?? "~/.claude.json (user scope, read-only here)"}</span></p>
+          <p>
+            <button disabled={busy} onclick={() => runSetup("spec_install", global)}>{where.skill === "missing" ? "Install" : "Reinstall"}{global ? " skill globally" : " in this repo"}</button>
+            <button disabled={busy || (where.skill === "missing" && where.mcp !== "ok")} onclick={() => runSetup("spec_uninstall", global)}>Uninstall</button>
+          </p>
+        </div>
+      {/snippet}
+      {@render row("This repo", setup.status.project, false)}
+      {@render row("Global (~/.agents/skills)", setup.status.global, true)}
+      <p class="muted">The skill tells the agent to use spec11's MCP tools. Installing in the repo also adds the MCP server to <code>.mcp.json</code> (other servers are kept); the global install covers the skill only. The agent needs this server running: <code>spec11</code>.</p>
+      <h3>Checks <button onclick={loadSetup}>↻</button></h3>
+      <table>
+        <tbody>
+          {#each checks as k}
+            <tr>
+              <td class="nowrap"><span class="pill {k.level === 'ok' ? 'tested' : k.level === 'warn' ? 'src-only' : 'none'}">{k.level}</span></td>
+              <td class="nowrap">{k.name}</td>
+              <td>{k.detail}{#if k.hint}<div class="muted">→ {k.hint}</div>{/if}</td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    {/if}
   {:else if tab === "specs"}
     {#if specFiles === null}<p class="muted">Loading…</p>
     {:else}
@@ -215,6 +273,11 @@
 <footer class="muted">Evidence, not truth: a citation or tag does not prove a requirement is implemented, nor that its test passes.</footer>
 
 <style>
+  .banner { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0; padding: 8px 16px; background: color-mix(in srgb, var(--warn) 14%, var(--bg)); border-bottom: 1px solid var(--line); font-size: 13px; }
+  .grow { flex: 1; }
+  .setup h3 { margin: 0 0 6px; font-size: 15px; }
+  .setup p { margin: 6px 0; }
+  button:disabled { opacity: 0.5; cursor: default; }
   header { display: flex; align-items: baseline; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
   h1 { margin: 0; font-size: 18px; }
   nav { margin-left: auto; display: flex; gap: 6px; }

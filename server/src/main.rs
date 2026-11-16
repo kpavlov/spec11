@@ -1,7 +1,9 @@
 mod api;
+mod doctor;
 mod frontend;
 mod mcp;
 mod ops;
+mod skill;
 
 use axum::{Router, extract::State, http::{HeaderMap, StatusCode, header}, middleware::{self, Next}, response::{IntoResponse, Response}};
 use clap::{Args, Parser, Subcommand};
@@ -12,6 +14,8 @@ use std::{path::PathBuf, process::ExitCode, sync::Arc};
 pub struct AppState {
     pub root: Option<PathBuf>,
     pub dashboard: String,
+    /// Port of /mcp, for the .mcp.json entry the install tools write.
+    pub mcp_port: u16,
     /// `host:port` values a request may carry (DNS-rebinding guard).
     pub hosts: Arc<Vec<String>>,
     #[cfg(debug_assertions)]
@@ -27,8 +31,9 @@ struct Cli {
     /// Print JSON instead of text.
     #[arg(long, global = true)]
     json: bool,
+    /// Without a command: `serve` for the repo in the current directory, and open the dashboard.
     #[command(subcommand)]
-    cmd: Cmd,
+    cmd: Option<Cmd>,
 }
 
 #[derive(Subcommand)]
@@ -48,6 +53,22 @@ enum Cmd {
         #[arg(long)]
         codegraph: bool,
     },
+    /// Install the spec11 skill into <repo>/.agents/skills and add the spec11 MCP server to <repo>/.mcp.json.
+    Install {
+        /// Install the skill into ~/.agents/skills instead (the MCP config is per repo and is left alone).
+        #[arg(long)]
+        global: bool,
+        /// Port of `spec11 serve` that the MCP entry points at.
+        #[arg(long, default_value_t = 7411)]
+        port: u16,
+    },
+    /// Remove what `install` added; other skills and MCP servers stay.
+    Uninstall {
+        #[arg(long)]
+        global: bool,
+    },
+    /// Check the repo setup: specs, tests, sources, git, the codegraph binary and index, skill and MCP entry.
+    Doctor,
     /// Serve the dashboard (`/`, `/api`) and the MCP server (`/mcp`) on 127.0.0.1.
     Serve {
         #[arg(long, default_value_t = 7411)]
@@ -55,6 +76,9 @@ enum Cmd {
         /// Serve the UI and /api on this port instead; `--port` then carries only /mcp.
         #[arg(long)]
         ui_port: Option<u16>,
+        /// Don't open the dashboard in the browser.
+        #[arg(long)]
+        no_open: bool,
     },
     /// Code covered by 2+ requirements (needs the CodeGraph index).
     Overlap {
@@ -124,37 +148,73 @@ fn routers(state: AppState) -> (Router, Option<Router>) {
 
 fn app_state(root: Option<PathBuf>, ports: &[u16]) -> AppState {
     let hosts = ports.iter().flat_map(|p| [format!("127.0.0.1:{p}"), format!("localhost:{p}")]).collect();
-    AppState { root, dashboard: format!("http://127.0.0.1:{}/", ports.last().unwrap()), hosts: Arc::new(hosts), #[cfg(debug_assertions)] http: reqwest::Client::new() }
+    AppState { root, dashboard: format!("http://127.0.0.1:{}/", ports.last().unwrap()), mcp_port: ports[0], hosts: Arc::new(hosts), #[cfg(debug_assertions)] http: reqwest::Client::new() }
 }
 
-fn serve(root: Option<PathBuf>, port: u16, ui_port: Option<u16>) -> Result<u8, String> {
+/// Best effort: a failure to launch a browser is not an error.
+fn open_browser(url: &str) {
+    let (cmd, args): (&str, Vec<&str>) = if cfg!(target_os = "macos") { ("open", vec![url]) } else if cfg!(windows) { ("cmd", vec!["/c", "start", "", url]) } else { ("xdg-open", vec![url]) };
+    let _ = std::process::Command::new(cmd).args(args).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn();
+}
+
+fn serve(root: Option<PathBuf>, port: u16, ui_port: Option<u16>, no_open: bool) -> Result<u8, String> {
+    // the workspace is fixed once, here: the repo that holds the current directory (or --root)
+    let root = spec11_core::scan::Project::open(root.as_deref())?.root;
     let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().map_err(|e| e.to_string())?;
     rt.block_on(async move {
         let bind = |p: u16| async move { tokio::net::TcpListener::bind(("127.0.0.1", p)).await.map_err(|e| format!("127.0.0.1:{p}: {e}")) };
         let ports: Vec<u16> = std::iter::once(port).chain(ui_port).collect();
-        let state = app_state(root, &ports);
-        eprintln!("spec11: dashboard {}  mcp http://127.0.0.1:{port}/mcp", state.dashboard);
+        let state = app_state(Some(root.clone()), &ports);
+        eprintln!("spec11: {}\n  dashboard {}\n  mcp       http://127.0.0.1:{port}/mcp", root.display(), state.dashboard);
+        match skill::status(Some(&root), port) {
+            Ok(st) => skill::suggestions(&st).iter().for_each(|t| eprintln!("  setup     {t}  (or use Setup in the dashboard)")),
+            Err(e) => eprintln!("  setup     could not check the install: {e}"),
+        }
+        let dashboard = state.dashboard.clone();
         let (main, ui) = routers(state);
         let run = |l, app: Router| async move { axum::serve(l, app).with_graceful_shutdown(async { let _ = tokio::signal::ctrl_c().await; }).await.map_err(|e| e.to_string()) };
-        match (ui, ui_port) {
-            (Some(ui), Some(up)) => {
-                let (a, b) = tokio::join!(run(bind(port).await?, main), run(bind(up).await?, ui));
+        let main_l = bind(port).await?;
+        let ui_l = match ui_port { Some(up) => Some(bind(up).await?), None => None };
+        if !no_open {
+            open_browser(&dashboard); // after the bind, so the page is there when the browser asks
+        }
+        match (ui, ui_l) {
+            (Some(ui), Some(ul)) => {
+                let (a, b) = tokio::join!(run(main_l, main), run(ul, ui));
                 a?;
                 b?;
             }
-            _ => run(bind(port).await?, main).await?,
+            _ => run(main_l, main).await?,
         }
         Ok(0)
     })
 }
 
+/// `port` = install, `None` = uninstall.
+fn install(root: Option<&std::path::Path>, global: bool, port: Option<u16>) -> Result<u8, String> {
+    skill::apply(root, global, port)?.iter().for_each(|l| println!("{l}"));
+    if port.is_some() && !global {
+        println!("next   spec11   # starts the MCP server and dashboard the skill talks to");
+    }
+    Ok(0)
+}
+
 fn run(cli: Cli) -> Result<u8, String> {
-    if let Cmd::Serve { port, ui_port } = cli.cmd {
-        return serve(cli.root, port, ui_port);
+    let cmd = cli.cmd.unwrap_or(Cmd::Serve { port: 7411, ui_port: None, no_open: false });
+    match cmd {
+        Cmd::Serve { port, ui_port, no_open } => return serve(cli.root, port, ui_port, no_open),
+        Cmd::Doctor => {
+            let checks = doctor::run(cli.root.as_deref(), 7411);
+            out(cli.json, &checks, || doctor::text(&checks));
+            return Ok(u8::from(checks.iter().any(|k| k.level == "fail")));
+        }
+        Cmd::Install { global, port } => return install(cli.root.as_deref(), global, Some(port)),
+        Cmd::Uninstall { global } => return install(cli.root.as_deref(), global, None),
+        _ => {}
     }
     let a = Analysis::load(cli.root.as_deref())?;
     let no_index = || a.graph_note.clone().unwrap_or_else(|| "spec11: no .codegraph index here; the user decides about indexing".into());
-    match cli.cmd {
+    match cmd {
         Cmd::Report { limit } => {
             let r = a.report();
             out(cli.json, &r, || r.text(&a, limit));
@@ -184,7 +244,7 @@ fn run(cli: Cli) -> Result<u8, String> {
                 return Ok(1);
             }
         },
-        Cmd::Serve { .. } => unreachable!(),
+        Cmd::Serve { .. } | Cmd::Install { .. } | Cmd::Uninstall { .. } | Cmd::Doctor => unreachable!(),
         Cmd::Overlap { path, all } => {
             let rows = a.overlap(path.as_deref().unwrap_or(""), all).map_err(|e| e.to_string())?.ok_or_else(no_index)?;
             out(cli.json, &rows, || a.overlap_text(&rows, 25));
@@ -252,6 +312,26 @@ mod tests {
         let mut r = post("/api/call/spec_report", "127.0.0.1:7411", "{}");
         r.headers_mut().insert("origin", "http://evil.test".parse().unwrap());
         assert_eq!(send(&app, r).await.0, StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn install_tools_write_the_repo_and_report_status() {
+        let repo = repo();
+        let (app, _) = routers(app_state(Some(repo.clone()), &[7411]));
+        let call = |n: &str, a: &str| post(&format!("/api/call/{n}"), "127.0.0.1:7411", a);
+        let (_, body) = send(&app, call("spec_install_status", "{}")).await;
+        assert!(body.contains(r#""skill":"missing""#) && body.contains("spec11 install"), "{body}");
+        std::fs::write(repo.join(".mcp.json"), r#"{"mcpServers":{"other":{"command":"x"}}}"#).unwrap();
+        let (st, body) = send(&app, call("spec_install", "{}")).await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        assert!(body.contains(r#""skill":"current""#) && body.contains(r#""mcp":"ok""#), "{body}");
+        let mcp = std::fs::read_to_string(repo.join(".mcp.json")).unwrap();
+        assert!(mcp.contains("\"other\"") && mcp.contains("127.0.0.1:7411/mcp"), "{mcp}");
+        assert!(repo.join(".agents/skills/spec11/SKILL.md").exists());
+        let (_, body) = send(&app, call("spec_uninstall", "{}")).await;
+        assert!(body.contains(r#""skill":"missing""#), "{body}");
+        assert!(!repo.join(".agents/skills/spec11/SKILL.md").exists());
+        assert!(std::fs::read_to_string(repo.join(".mcp.json")).unwrap().contains("\"other\""));
     }
 
     #[tokio::test]

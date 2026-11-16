@@ -18,7 +18,7 @@ async fn info(State(s): State<AppState>) -> Result<Json<Value>, (StatusCode, Jso
 
 async fn call(State(s): State<AppState>, Path(name): Path<String>, body: Option<Json<Value>>) -> (StatusCode, Json<Value>) {
     let args = body.map(|b| b.0).unwrap_or_else(|| json!({}));
-    let r = tokio::task::spawn_blocking(move || ops::call(s.root.as_deref(), &name, &args, &s.dashboard)).await;
+    let r = tokio::task::spawn_blocking(move || ops::call(s.root.as_deref(), &name, &args, &s.dashboard, s.mcp_port)).await;
     match r {
         Ok(Ok((text, data))) => (StatusCode::OK, Json(json!({"text": text, "data": data}))),
         Ok(Err(e)) => (StatusCode::BAD_REQUEST, Json(json!({"error": e}))),
