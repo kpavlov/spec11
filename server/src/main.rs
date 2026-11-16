@@ -23,7 +23,7 @@ pub struct AppState {
 }
 
 #[derive(Parser)]
-#[command(name = "spec11", about = "Deterministic spec-driven-development evidence: evidence, not truth.")]
+#[command(name = "spec11", version, about = "Deterministic spec-driven-development evidence: evidence, not truth.")]
 struct Cli {
     /// Repo root (default: nearest ancestor with a specs/ folder).
     #[arg(long, global = true)]

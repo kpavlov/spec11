@@ -1,17 +1,26 @@
 # spec11: Rust core + server + Svelte dashboard. Targets the run-solo repo by default.
 SHELL := /bin/bash
-ROOT ?= /Users/maestro/code/github/itstaffhq/run-solo
+# default target repo: run-solo when it exists on this machine, else the current directory
+RUN_SOLO := /Users/maestro/code/github/itstaffhq/run-solo
+ROOT ?= $(if $(wildcard $(RUN_SOLO)/specs),$(RUN_SOLO),$(CURDIR))
 PORT ?= 7411
 OPEN ?= 1
 BIN  := target/release/spec11
+# macOS and Linux
+OS   := $(shell uname -s | tr A-Z a-z)
+ARCH := $(shell uname -m | sed s/arm64/aarch64/)
+OPENER := $(shell command -v open || command -v xdg-open)
+VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
 
-.PHONY: help dev serve web build run report test parity clean
+.PHONY: help dev serve web build run install uninstall dist report test parity clean
 
 help:
 	@echo "make dev      Vite (HMR, :5173) + Rust server on :$(PORT) proxying to it, scanning $(ROOT)"
 	@echo "make serve    Rust server only (debug), scanning $(ROOT); run 'cd web && npm run dev' yourself"
 	@echo "make build    release binary with the UI embedded: $(BIN)"
 	@echo "make run      build, then serve the release binary on :$(PORT) for $(ROOT)"
+	@echo "make install   build + install spec11 for your user into ~/.cargo/bin; make uninstall removes it"
+	@echo "make dist      dist/spec11-$(VERSION)-$(OS)-$(ARCH).tar.gz for this machine (macOS or Linux)"
 	@echo "make report   print the text report for $(ROOT)"
 	@echo "make test     cargo tests; make parity compares with the old Python scripts if vendored in $(ROOT)"
 	@echo "override: make dev ROOT=/path/to/repo PORT=7500 OPEN=0   (OPEN=0: don't open the browser)"
@@ -26,7 +35,7 @@ web: web/node_modules
 dev: web/node_modules
 	@trap 'kill 0' INT TERM EXIT; \
 	(cd web && npm run dev) & \
-	if [ "$(OPEN)" = 1 ]; then (until curl -sf -o /dev/null http://127.0.0.1:$(PORT)/api/info; do sleep 0.5; done; open http://127.0.0.1:$(PORT)/) & fi; \
+	if [ "$(OPEN)" = 1 ]; then (until curl -sf -o /dev/null http://127.0.0.1:$(PORT)/api/info; do sleep 0.5; done; $(OPENER) http://127.0.0.1:$(PORT)/) & fi; \
 	cargo run -p spec11 -- --root "$(ROOT)" serve --port $(PORT) --no-open
 
 serve:
@@ -38,6 +47,20 @@ build: web/node_modules
 
 run: build
 	$(BIN) --root "$(ROOT)" serve --port $(PORT)
+
+# the release build embeds the web UI (build.rs runs npm); needs ~/.cargo/bin on PATH
+install: web/node_modules
+	cargo install --path server --locked --force
+	@echo "installed: $$(command -v spec11 || echo 'add ~/.cargo/bin to PATH')   then: spec11 doctor"
+
+uninstall:
+	cargo uninstall spec11
+
+# one tarball per OS/arch: build on that OS (rusqlite is bundled, so only a C compiler is needed); CI does both
+dist: build
+	@mkdir -p dist
+	tar -czf dist/spec11-$(VERSION)-$(OS)-$(ARCH).tar.gz -C target/release spec11
+	@ls -la dist/spec11-$(VERSION)-$(OS)-$(ARCH).tar.gz
 
 report:
 	cargo run -q -p spec11 -- --root "$(ROOT)" report

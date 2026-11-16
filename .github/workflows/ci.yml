@@ -1,0 +1,31 @@
+name: ci
+on:
+  # push:
+    # branches: [main]
+  # pull_request:
+  workflow_dispatch:
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cd web && npm ci && npx svelte-check
+      - run: cargo test --workspace --locked
+      # release build embeds web/dist (build.rs runs npm); the release-only embedded-UI test runs here too
+      - run: cargo test --release --workspace --locked
+      - run: make dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: spec11-${{ matrix.os }}
+          path: dist/*.tar.gz
