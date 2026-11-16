@@ -1,0 +1,19 @@
+[package]
+name = "spec11-core"
+version.workspace = true
+edition.workspace = true
+description = "Deterministic spec-driven-development evidence: requirement IDs vs tests and code citations. Evidence, not truth."
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "../README.md"
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+indexmap = { version = "2", features = ["serde"] }
+regex = "1"
+rusqlite = { version = "0.43", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+walkdir = "2"

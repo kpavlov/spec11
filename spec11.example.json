@@ -1,0 +1,9 @@
+{
+  "specs": "specs",
+  "tests": ["Tests"],
+  "src": ["Sources"],
+  "ext": ["swift"],
+  "comment": ["//"],
+  "retired_prefixes": [],
+  "codegraph": ".codegraph/codegraph.db"
+}

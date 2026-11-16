@@ -1,0 +1,14 @@
+:root {
+  --bg: #fafafa; --fg: #1b1f24; --muted: #667085; --line: #e3e6ea; --card: #fff;
+  --ok: #1a7f4b; --warn: #b54708; --bad: #b42318; --accent: #3b5bdb; --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #14161a; --fg: #e6e8eb; --muted: #98a2b3; --line: #2a2e35; --card: #1b1e23; --ok: #4ade80; --warn: #fdb022; --bad: #f97066; --accent: #8ea2ff; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.45 system-ui, sans-serif; }
+code, pre, .mono { font-family: var(--mono); font-size: 12.5px; }
+button { font: inherit; color: inherit; background: var(--card); border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+button:hover, button.on { border-color: var(--accent); color: var(--accent); }
+input, select { font: inherit; color: inherit; background: var(--card); border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; }
