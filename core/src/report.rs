@@ -112,7 +112,7 @@ impl Analysis {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct Row {
     pub id: String,
     pub state: String,
@@ -133,7 +133,7 @@ pub struct Row {
 
 // ───────────────────────────── Report ─────────────────────────────
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub struct Unproven {
     pub id: String,
     pub verdict: String,
@@ -142,14 +142,14 @@ pub struct Unproven {
     pub text: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub struct TestProblem {
     pub id: String,
     pub file: String,
     pub line: usize,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub struct Report {
     pub spec_files: usize,
     pub requirements: usize,
@@ -323,7 +323,7 @@ pub struct StatusOpts {
     pub effort: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub struct SpecLine {
     pub file: String,
     pub tested: usize,
@@ -336,7 +336,7 @@ pub struct SpecLine {
     pub later_built: usize,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub struct Status {
     pub listing: bool,
     pub effort: String,
@@ -504,14 +504,14 @@ impl Status {
 
 // ───────────────────────────── Trace ─────────────────────────────
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub struct SourceCite {
     #[serde(flatten)]
     pub r: Ref,
     pub decl: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub struct Related {
     pub file: String,
     pub types: Vec<String>,
@@ -519,7 +519,7 @@ pub struct Related {
     pub cites: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub struct Trace {
     pub id: String,
     pub spec: Option<Spec>,

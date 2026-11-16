@@ -16,7 +16,7 @@ pub fn head() -> String {
 }
 const DONE: &str = r"[✅✔☑✳]\x{FE0F}?"; // check marks: a hint that the requirement is done
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct Spec {
     pub id: String,
     pub file: String,
@@ -29,7 +29,7 @@ pub struct Spec {
     pub done: bool,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct Ref {
     pub file: String,
     pub line: usize,
@@ -574,27 +574,4 @@ pub fn parse_diff(diff: &str) -> Diff {
         }
     }
     out
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn ranges_join_consecutive() {
-        assert_eq!(ranges(["DOC-01", "DOC-02", "DOC-03", "DOC-07", "SEC-4"]), "DOC-01..03,DOC-07,SEC-04");
-    }
-
-    #[test]
-    fn diff_ranges() {
-        let d = parse_diff("+++ b/specs/a.md\n@@ -1,0 +2,3 @@\n@@ -9 +11 @@\n+++ /dev/null\n@@ -1 +1 @@\n");
-        assert_eq!(d["specs/a.md"], vec![(2, 4), (11, 11)]);
-        assert_eq!(d.len(), 1);
-    }
-
-    #[test]
-    fn body_stops_at_closing_brace() {
-        let ls: Vec<String> = ["@Test(\"[A-1]\")", "func f() {", "  x()", "}", "other"].iter().map(|s| s.to_string()).collect();
-        assert_eq!(body(&ls, 1, 200).len(), 4);
-    }
 }

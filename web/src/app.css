@@ -20,8 +20,8 @@
 
 * { box-sizing: border-box; }
 html { -webkit-text-size-adjust: 100%; }
-body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; }
-code, pre, .mono { font-family: var(--mono); font-size: 13px; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; }
+code, pre, .mono { font-family: var(--mono); font-size: 14px; }
 a { color: var(--accent); text-underline-offset: 2px; }
 button { font: inherit; color: var(--fg); background: var(--raised); border: 1px solid transparent; border-radius: var(--radius); padding: 5px 12px; cursor: pointer; }
 button:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 16%, var(--raised)); color: var(--accent); }

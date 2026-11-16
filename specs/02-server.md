@@ -1,9 +1,12 @@
 # Server: CLI, API and MCP
 
-- **API-01** MUST — define every tool once in `server/src/ops.rs`, so the CLI, `/api/call/{name}` and `/mcp` return the same answer.
+- **API-01** MUST — define every tool once in `server/src/ops.rs`, so the CLI and `/mcp` return the same answer; the dashboard calls them over `/mcp`, with no second HTTP API for them.
 - **API-02** MUST — bind 127.0.0.1 only and answer 403 to an unknown `Host` or `Origin` on `/api` and `/mcp` (DNS rebinding).
 - **API-03** MUST — read spec, test and source files only by names the scanner itself lists, so `..` and absolute paths are rejected.
 - **API-04** MUST — serve MCP over streamable HTTP at `/mcp`, with the dashboard as the `ui://spec11/dashboard` resource.
 - **API-07** SHOULD — offer the modules and the detected test cases as read-only JSON MCP resources, `spec11://modules` and `spec11://tests`. They are resources only, with no tool; `/mcp` also answers the 2026-07-28 revision (per-request `_meta`, no `initialize`, `server/discover`) so the dashboard reads them with the MCP client SDK.
-- **API-05** MAY — move the dashboard and `/api` to a separate `--ui-port` while `/mcp` stays on the main port.
+- **API-08** SHOULD — offer the report, status, uncovered and overlap views as plain-text MCP resources (`spec11://report`, `spec11://status`, `spec11://uncovered`, `spec11://overlap`) beside their tools, which stay for clients without resource support, and accept `subscriptions/listen` for the `spec11://` resources: acknowledge only the URIs it has, send `notifications/resources/updated` for them within about 2 seconds of a change to the repo's files or the CodeGraph index, and end the stream when the client cancels or the server shuts down.
+- **API-09** SHOULD — declare an `outputSchema` (JSON Schema) on every tool, typed from the same structs the result is serialized from, so a client can validate and read the tool's `structuredContent`.
+- **API-10** SHOULD — offer each of the report, status, uncovered and overlap views also as a JSON resource (`spec11://report.json` and so on, the tool's `structuredContent`), beside the text resource and the `modules` and `tests` JSON resources. Every JSON resource names the JSON Schema that types it, in its description and in `_meta.schema`, and that schema is itself readable at `spec11://schemas/<name>` (`application/schema+json`).
+- **API-05** MAY — move the dashboard and `/api/info` to a separate `--ui-port`, which also carries `/mcp` for the dashboard, while the main port carries only `/mcp`.
 - **API-06** MUST — serve the embedded dashboard from release builds, falling back to `index.html` for client-side routes.

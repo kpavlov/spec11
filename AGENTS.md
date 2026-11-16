@@ -14,7 +14,7 @@ spec11: Rust workspace (`core`, `server`) + Svelte dashboard (`web`) + the agent
 - **Evidence, not truth.** Tool descriptions, UI and docs must not claim a requirement is implemented or a test passes. No LLM in the core.
 - Output is deterministic: same tree, same text. Text renderers in `core/src/report.rs` kept the Python output byte for byte; changing them changes what `SKILL.md` describes, so update it too.
 - **All SQL lives in `core/src/codegraph.rs`**, read-only (`SQLITE_OPEN_READ_ONLY`). Schema drift is a typed `SchemaDrift` error rendered as "not checked", never a panic. A missing index is not an error either: indexing is the user's decision.
-- Tools are defined once in `server/src/ops.rs`; the CLI, `/api/call/{name}` and `/mcp` all go through it. Add a tool there, not per interface.
+- Tools are defined once in `server/src/ops.rs`; the CLI and `/mcp` both go through it, and the dashboard calls `/mcp` too (there is no separate tool API under `/api`, which keeps only `/api/info`). Add a tool there, not per interface.
 - `Analysis` uses `Rc` (not `Send`): run it inside `spawn_blocking`.
 - The server binds 127.0.0.1 only; the Host/Origin guard in `server/src/main.rs` covers `/api` and `/mcp` (DNS-rebinding). Don't loosen it.
 - Web: plain Svelte + Vite, no SvelteKit, pnpm (no npm, no Bun; `packageManager` in `web/package.json` pins it). `vite-plugin-singlefile` output must stay one `index.html`: it is embedded and also served as the MCP Apps resource. `web/src/transport.ts` is the only place that knows fetch vs MCP Apps bridge.

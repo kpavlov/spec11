@@ -211,6 +211,7 @@ mod tests {
         d
     }
 
+    #[doc = "[SETUP-01]"]
     #[test]
     fn embedded_skill_is_the_spec11_skill() {
         assert!(SKILL.starts_with("---\nname: spec11\n"));
@@ -271,6 +272,7 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&f).unwrap(), "{ not json");
     }
 
+    #[doc = "[SETUP-01, SETUP-03]"]
     #[test]
     fn status_and_suggestions_follow_install() {
         let repo = tmp("s");
@@ -290,6 +292,7 @@ mod tests {
         assert_eq!(status(Some(&repo), 7411).unwrap()["project"]["skill"], "missing");
     }
 
+    #[doc = "[SETUP-01]"]
     #[test]
     fn project_dir_is_the_explicit_root() {
         let root = tmp("c");

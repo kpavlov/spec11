@@ -432,3 +432,16 @@ fn diff_ranges_map_to_changed_lines() {
     let gone = spec11_core::scan::parse_diff("+++ b/x.rs\n@@ -5,2 +4,0 @@\n");
     assert_eq!(gone["x.rs"], vec![(4, 4)]);
 }
+
+#[doc = "[SCAN-17]"]
+#[test]
+fn consecutive_ids_print_as_a_range() {
+    assert_eq!(spec11_core::scan::ranges(["DOC-01", "DOC-02", "DOC-03", "DOC-07", "SEC-4"]), "DOC-01..03,DOC-07,SEC-04");
+}
+
+#[doc = "[SCAN-08]"]
+#[test]
+fn a_tests_body_stops_at_its_closing_brace() {
+    let ls: Vec<String> = ["@Test(\"[A-1]\")", "func f() {", "  x()", "}", "other"].iter().map(|s| s.to_string()).collect();
+    assert_eq!(spec11_core::scan::body(&ls, 1, 200).len(), 4);
+}

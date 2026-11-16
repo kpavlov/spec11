@@ -8,7 +8,7 @@ use std::{collections::{BTreeMap, BTreeSet, HashMap}, sync::LazyLock};
 
 const NOTE: &str = "Detected from markers in test files, not run: a listed test does not mean it passes.";
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub struct TestCase {
     pub name: String,
     /// CodeGraph's qualified name of the declaration, when the index has it.
@@ -19,34 +19,34 @@ pub struct TestCase {
     pub ids: Vec<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub struct TestFile {
     pub file: String,
     pub tests: Vec<TestCase>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub struct ModuleTests {
     pub module: String,
     pub tests: usize,
     pub files: Vec<TestFile>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub struct TestsView {
     pub note: &'static str,
     pub total: usize,
     pub modules: Vec<ModuleTests>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub struct Dep {
     pub module: String,
     /// Call, reference, instantiate, extend and import edges from this module to that one.
     pub edges: i64,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub struct ModuleInfo {
     pub path: String,
     pub manifest: Option<String>,
@@ -59,7 +59,7 @@ pub struct ModuleInfo {
     pub depends_on: Vec<Dep>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub struct ModulesView {
     /// Whether symbols and dependencies come from a CodeGraph index.
     pub index: bool,

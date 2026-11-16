@@ -19,6 +19,7 @@ Deterministic evidence only: same tree, same text. No LLM in the core.
 - **SCAN-14** SHOULD — list the test cases of the test files (a Rust `#[test]`, a JUnit `@Test`, a Python `def test_`, a JS `it(`, a Go `func Test` and the like, or the `case` regex of `spec11.json`) with the requirement IDs tagged on each, grouped by module; a marker inside a string literal is not a case. Detected, not run: it says nothing about passing.
 - **SCAN-10** MUST — follow a symlink only when it resolves inside the repo root or a path listed in the `ALLOWED_PATHS` environment variable.
 - **SCAN-16** SHOULD — list the requirements a git diff touches (`status --changed <ref>`): staged, unstaged and untracked files, mapped from their changed line ranges to the spec lines and cited code they hit. A pure deletion marks the line it sat before.
+- **SCAN-17** SHOULD — print consecutive IDs of a list as one range (`DOC-01..03`), with the others separated by commas, in the summary and problem lines.
 
 ## CodeGraph
 

@@ -18,6 +18,8 @@ pub struct AppState {
     pub mcp_port: u16,
     /// `host:port` values a request may carry (DNS-rebinding guard).
     pub hosts: Arc<Vec<String>>,
+    /// Cancelled on Ctrl-C so open `subscriptions/listen` streams end and the graceful shutdown can finish.
+    pub shutdown: tokio_util::sync::CancellationToken,
     #[cfg(debug_assertions)]
     pub http: reqwest::Client,
 }
@@ -73,11 +75,11 @@ enum Cmd {
         #[arg(long)]
         fix: bool,
     },
-    /// Serve the dashboard (`/`, `/api`) and the MCP server (`/mcp`) on 127.0.0.1.
+    /// Serve the dashboard (`/`, `/api/info`) and the MCP server (`/mcp`) on 127.0.0.1.
     Serve {
         #[arg(long, default_value_t = 7411)]
         port: u16,
-        /// Serve the UI and /api on this port instead; `--port` then carries only /mcp.
+        /// Serve the UI on this port instead (it also carries /mcp, which the UI uses); `--port` then carries only /mcp.
         #[arg(long)]
         ui_port: Option<u16>,
         /// Don't open the dashboard in the browser.
@@ -140,7 +142,8 @@ async fn guard(State(s): State<AppState>, headers: HeaderMap, req: axum::extract
     if s.hosts.iter().any(|h| h == host) && origin_ok { next.run(req).await } else { StatusCode::FORBIDDEN.into_response() }
 }
 
-/// (main router, optional UI router). Without `ui_port` the main router serves everything; with it, `/mcp` only.
+/// (main router, optional UI router). Without `ui_port` the main router serves everything; with it, `/mcp` only, and the UI router
+/// serves the UI and `/mcp` too, since the dashboard talks to the server over MCP.
 fn routers(state: AppState) -> (Router, Option<Router>) {
     let split = state.hosts.len() > 2;
     let ui = || Router::new().nest("/api", api::router()).route("/", axum::routing::get(frontend::handler)).route("/{*path}", axum::routing::get(frontend::handler));
@@ -148,12 +151,12 @@ fn routers(state: AppState) -> (Router, Option<Router>) {
     let guarded = |r: Router<AppState>| -> Router {
         r.layer(middleware::from_fn_with_state(state.clone(), guard)).layer(tower_http::compression::CompressionLayer::new()).with_state(state.clone())
     };
-    if split { (guarded(mcp()), Some(guarded(ui()))) } else { (guarded(ui().merge(mcp())), None) }
+    if split { (guarded(mcp()), Some(guarded(ui().merge(mcp())))) } else { (guarded(ui().merge(mcp())), None) }
 }
 
 fn app_state(root: Option<PathBuf>, ports: &[u16]) -> AppState {
     let hosts = ports.iter().flat_map(|p| [format!("127.0.0.1:{p}"), format!("localhost:{p}")]).collect();
-    AppState { root, dashboard: format!("http://127.0.0.1:{}/", ports.last().unwrap()), mcp_port: ports[0], hosts: Arc::new(hosts), #[cfg(debug_assertions)] http: reqwest::Client::new() }
+    AppState { root, dashboard: format!("http://127.0.0.1:{}/", ports.last().unwrap()), mcp_port: ports[0], hosts: Arc::new(hosts), shutdown: Default::default(), #[cfg(debug_assertions)] http: reqwest::Client::new() }
 }
 
 /// Best effort: a failure to launch a browser is not an error.
@@ -176,8 +179,12 @@ fn serve(root: Option<PathBuf>, port: u16, ui_port: Option<u16>, no_open: bool) 
             Err(e) => eprintln!("  setup     could not check the install: {e}"),
         }
         let dashboard = state.dashboard.clone();
+        let stop = state.shutdown.clone();
         let (main, ui) = routers(state);
-        let run = |l, app: Router| async move { axum::serve(l, app).with_graceful_shutdown(async { let _ = tokio::signal::ctrl_c().await; }).await.map_err(|e| e.to_string()) };
+        let run = |l, app: Router| {
+            let stop = stop.clone();
+            async move { axum::serve(l, app).with_graceful_shutdown(async move { let _ = tokio::signal::ctrl_c().await; stop.cancel(); }).await.map_err(|e| e.to_string()) }
+        };
         let main_l = bind(port).await?;
         let ui_l = match ui_port { Some(up) => Some(bind(up).await?), None => None };
         if !no_open {
@@ -280,6 +287,7 @@ fn main() -> ExitCode {
 mod tests {
     use super::*;
     use axum::{body::Body, http::Request};
+    use serde_json::json;
     use tower::ServiceExt;
 
     fn repo() -> PathBuf {
@@ -299,6 +307,11 @@ mod tests {
 
     fn post(uri: &str, host: &str, body: &str) -> Request<Body> {
         Request::post(uri).header("host", host).header("content-type", "application/json").header("accept", "application/json, text/event-stream").body(Body::from(body.to_string())).unwrap()
+    }
+
+    /// A tool call over `/mcp`: what the CLI runs, and what the dashboard sends.
+    fn tool(name: &str, args: &str, host: &str) -> Request<Body> {
+        post("/mcp", host, &format!(r#"{{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{"name":"{name}","arguments":{args}}}}}"#))
     }
 
     #[doc = "[API-07]"]
@@ -323,33 +336,128 @@ mod tests {
         assert!(st == StatusCode::OK && body.contains("2026-07-28"), "{st} {body}");
     }
 
+    #[doc = "[API-08]"]
+    #[tokio::test]
+    async fn subscription_notifies_when_the_repo_changes() {
+        use http_body_util::BodyExt;
+        use std::time::Duration;
+        let d = std::env::temp_dir().join(format!("spec11-sub-{}", std::process::id()));
+        std::fs::create_dir_all(d.join("specs")).unwrap();
+        std::fs::write(d.join("specs/01-a.md"), "- **AAA-01** MUST — one.\n").unwrap();
+        let state = app_state(Some(d.clone()), &[7411]);
+        let stop = state.shutdown.clone();
+        let (app, _) = routers(state);
+        let meta = r#""_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientInfo":{"name":"t","version":"1"},"io.modelcontextprotocol/clientCapabilities":{}}"#;
+        let body = format!(r#"{{"jsonrpc":"2.0","id":1,"method":"subscriptions/listen","params":{{{meta},"notifications":{{"resourceSubscriptions":["spec11://report","spec11://nope"]}}}}}}"#);
+        let mut req = post("/mcp", "127.0.0.1:7411", &body);
+        req.headers_mut().insert("mcp-protocol-version", "2026-07-28".parse().unwrap());
+        req.headers_mut().insert("mcp-method", "subscriptions/listen".parse().unwrap());
+        let mut stream = app.clone().oneshot(req).await.unwrap().into_body();
+        // reads frames until `want` shows up in what has arrived so far
+        let mut seen = String::new();
+        let mut until = async |want: &str, seen: &mut String| {
+            tokio::time::timeout(Duration::from_secs(8), async {
+                while !seen.contains(want) {
+                    match stream.frame().await {
+                        Some(Ok(f)) => seen.push_str(&String::from_utf8_lossy(f.data_ref().map_or(&[][..], |b| &b[..]))),
+                        _ => break,
+                    }
+                }
+            })
+            .await
+            .unwrap();
+            assert!(seen.contains(want), "{want} not in {seen}");
+        };
+        until("acknowledged", &mut seen).await;
+        assert!(seen.contains("spec11://report") && !seen.contains("spec11://nope"), "{seen}");
+        seen.clear();
+        tokio::time::sleep(Duration::from_millis(500)).await; // the listener takes its first stamp after the ack
+        std::fs::write(d.join("specs/01-a.md"), "- **AAA-01** MUST — one.\n- **AAA-02** MUST — two.\n").unwrap();
+        until("notifications/resources/updated", &mut seen).await;
+        assert!(seen.contains("spec11://report"), "{seen}");
+        seen.clear();
+        stop.cancel(); // shutdown ends the stream with the graceful result
+        until("complete", &mut seen).await;
+        // (API-08) the view is readable too, beside its tool
+        let (_, body) = send(&app, post("/mcp", "127.0.0.1:7411", r#"{"jsonrpc":"2.0","id":3,"method":"resources/read","params":{"uri":"spec11://report"}}"#)).await;
+        assert!(body.contains("text/plain") && body.contains("SDD STATUS"), "{body}");
+    }
+
+
+
+    #[doc = "[API-09]"]
+    #[test]
+    fn tools_declare_an_output_schema_whose_required_keys_their_results_have() {
+        let d = repo();
+        let args = |n: &str| match n {
+            "spec_trace" => json!({"id": "AAA-01"}),
+            "spec_source" => json!({"path": "RunSolo/RunSolo/A.swift"}),
+            _ => json!({}),
+        };
+        let mut checked = 0;
+        for t in ops::tools() {
+            let schema = ops::output_schema(t.name).unwrap_or_else(|| panic!("{} has no output schema", t.name));
+            assert_eq!(schema["type"], "object", "{}", t.name);
+            // the writing tools are not run here, and overlap/uncovered need an index this fixture lacks
+            if matches!(t.name, "spec_install" | "spec_uninstall" | "spec_codegraph" | "spec_overlap" | "spec_uncovered") {
+                continue;
+            }
+            let (_, data) = ops::call(Some(&d), t.name, &args(t.name), "http://x/", 7411).unwrap();
+            for k in schema["required"].as_array().unwrap() {
+                assert!(data.get(k.as_str().unwrap()).is_some(), "{}: `{k}` missing from {data}", t.name);
+            }
+            checked += 1;
+        }
+        assert!(checked >= 6, "{checked}");
+    }
+
+    #[doc = "[API-10]"]
+    #[tokio::test]
+    async fn json_resources_name_the_schema_that_types_them() {
+        let (app, _) = routers(app_state(Some(repo()), &[7411]));
+        let rpc = |id: u32, method: &str, params: &str| post("/mcp", "127.0.0.1:7411", &format!(r#"{{"jsonrpc":"2.0","id":{id},"method":"{method}","params":{params}}}"#));
+        let init = r#"{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"t","version":"1"}}"#;
+        send(&app, rpc(1, "initialize", init)).await;
+        let (_, list) = send(&app, rpc(2, "resources/list", "{}")).await;
+        for n in ["report", "status", "uncovered", "overlap", "modules", "tests"] {
+            assert!(list.contains(&format!("spec11://schemas/{n}")), "{n}: {list}");
+        }
+        assert!(list.contains(r#""schema":"spec11://schemas/report""#) && list.contains("spec11://report.json"), "{list}");
+        let (_, body) = send(&app, rpc(3, "resources/read", r#"{"uri":"spec11://report.json"}"#)).await;
+        assert!(body.contains("application/json") && body.contains("requirements"), "{body}");
+        let (_, body) = send(&app, rpc(4, "resources/read", r#"{"uri":"spec11://schemas/modules"}"#)).await;
+        assert!(body.contains("application/schema+json") && body.contains("properties"), "{body}");
+        let (_, tools) = send(&app, rpc(5, "tools/list", "{}")).await;
+        assert!(tools.contains("outputSchema"), "{tools}");
+    }
+
     #[doc = "[API-01, API-02, API-03]"]
     #[tokio::test]
     async fn api_and_guard() {
         let (app, ui) = routers(app_state(Some(repo()), &[7411]));
         assert!(ui.is_none());
-        let (st, body) = send(&app, post("/api/call/spec_report", "127.0.0.1:7411", "{}")).await;
+        let (st, body) = send(&app, tool("spec_report", "{}", "127.0.0.1:7411")).await;
         assert_eq!(st, StatusCode::OK, "{body}");
         assert!(body.contains("SDD STATUS") && body.contains("\"none\":2"), "{body}");
-        let (st, body) = send(&app, post("/api/call/spec_trace", "localhost:7411", r#"{"id":"aaa-01"}"#)).await;
+        let (st, body) = send(&app, tool("spec_trace", r#"{"id":"aaa-01"}"#, "localhost:7411")).await;
         assert!(st == StatusCode::OK && body.contains("AAA-01"), "{body}");
-        let (_, body) = send(&app, post("/api/call/spec_file", "127.0.0.1:7411", "{}")).await;
+        let (_, body) = send(&app, tool("spec_file", "{}", "127.0.0.1:7411")).await;
         assert!(body.contains("01-a.md"), "{body}");
-        let (st, body) = send(&app, post("/api/call/spec_file", "127.0.0.1:7411", r#"{"name":"specs/01-a.md"}"#)).await;
+        let (st, body) = send(&app, tool("spec_file", r#"{"name":"specs/01-a.md"}"#, "127.0.0.1:7411")).await;
         assert!(st == StatusCode::OK && body.contains("AAA-02"), "{body}");
         for bad in ["../Cargo.toml", "/etc/passwd", "01-a"] {
-            let (st, _) = send(&app, post("/api/call/spec_file", "127.0.0.1:7411", &format!(r#"{{"name":"{bad}"}}"#))).await;
-            assert_eq!(st, StatusCode::BAD_REQUEST, "{bad}");
+            let (_, body) = send(&app, tool("spec_file", &format!(r#"{{"name":"{bad}"}}"#), "127.0.0.1:7411")).await;
+            assert!(body.contains(r#""isError":true"#), "{bad}: {body}");
         }
-        let (st, body) = send(&app, post("/api/call/spec_source", "127.0.0.1:7411", r#"{"path":"RunSolo/RunSolo/A.swift"}"#)).await;
+        let (st, body) = send(&app, tool("spec_source", r#"{"path":"RunSolo/RunSolo/A.swift"}"#, "127.0.0.1:7411")).await;
         assert!(st == StatusCode::OK && body.contains("struct A"), "{body}");
         for bad in ["../Cargo.toml", "/etc/passwd", "specs/01-a.md", "RunSolo/RunSolo/../../specs/01-a.md"] {
-            let (st, _) = send(&app, post("/api/call/spec_source", "127.0.0.1:7411", &format!(r#"{{"path":"{bad}"}}"#))).await;
-            assert_eq!(st, StatusCode::BAD_REQUEST, "{bad}");
+            let (_, body) = send(&app, tool("spec_source", &format!(r#"{{"path":"{bad}"}}"#), "127.0.0.1:7411")).await;
+            assert!(body.contains(r#""isError":true"#), "{bad}: {body}");
         }
-        assert_eq!(send(&app, post("/api/call/nope", "127.0.0.1:7411", "{}")).await.0, StatusCode::BAD_REQUEST);
-        assert_eq!(send(&app, post("/api/call/spec_report", "evil.test", "{}")).await.0, StatusCode::FORBIDDEN);
-        let mut r = post("/api/call/spec_report", "127.0.0.1:7411", "{}");
+        assert!(send(&app, tool("nope", "{}", "127.0.0.1:7411")).await.1.contains(r#""isError":true"#));
+        assert_eq!(send(&app, tool("spec_report", "{}", "evil.test")).await.0, StatusCode::FORBIDDEN);
+        let mut r = tool("spec_report", "{}", "127.0.0.1:7411");
         r.headers_mut().insert("origin", "http://evil.test".parse().unwrap());
         assert_eq!(send(&app, r).await.0, StatusCode::FORBIDDEN);
     }
@@ -359,7 +467,7 @@ mod tests {
     async fn install_tools_write_the_repo_and_report_status() {
         let repo = repo();
         let (app, _) = routers(app_state(Some(repo.clone()), &[7411]));
-        let call = |n: &str, a: &str| post(&format!("/api/call/{n}"), "127.0.0.1:7411", a);
+        let call = |n: &str, a: &str| tool(n, a, "127.0.0.1:7411");
         let (_, body) = send(&app, call("spec_install_status", "{}")).await;
         assert!(body.contains(r#""skill":"missing""#) && body.contains("spec11 install"), "{body}");
         std::fs::write(repo.join(".mcp.json"), r#"{"mcpServers":{"other":{"command":"x"}}}"#).unwrap();
@@ -408,10 +516,13 @@ mod tests {
     async fn split_ports_separate_mcp_from_ui() {
         let (mcp_app, ui) = routers(app_state(Some(repo()), &[7411, 7412]));
         let ui = ui.unwrap();
-        assert_eq!(send(&ui, post("/api/call/spec_report", "127.0.0.1:7412", "{}")).await.0, StatusCode::OK);
-        assert_ne!(send(&ui, post("/mcp", "127.0.0.1:7412", "{}")).await.0, StatusCode::OK);
-        let (st, _) = send(&mcp_app, post("/api/call/spec_report", "127.0.0.1:7411", "{}")).await;
-        assert_eq!(st, StatusCode::NOT_FOUND);
+        // the UI port serves the info route and MCP (the dashboard talks MCP); the main port serves MCP only
+        let get = |host: &str| Request::get("/api/info").header("host", host).body(Body::empty()).unwrap();
+        assert_eq!(send(&ui, get("127.0.0.1:7412")).await.0, StatusCode::OK);
+        let (st, body) = send(&ui, tool("spec_report", "{}", "127.0.0.1:7412")).await;
+        assert!(st == StatusCode::OK && body.contains("SDD STATUS"), "{body}");
+        assert_eq!(send(&mcp_app, get("127.0.0.1:7411")).await.0, StatusCode::NOT_FOUND);
+        assert!(send(&mcp_app, tool("spec_report", "{}", "127.0.0.1:7411")).await.1.contains("SDD STATUS"));
     }
 
     /// Release builds only: the embedded UI, SPA fallback, 404 for a missing asset.

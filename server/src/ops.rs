@@ -1,4 +1,4 @@
-//! The tools, defined once: the CLI, `/api/call/{name}` and `/mcp` all run these over `spec11-core`.
+//! The tools, defined once: the CLI and `/mcp` (the dashboard included) both run these over `spec11-core`.
 //! Every tool returns plain text (what the Python scripts printed) and a JSON object (the same data, typed).
 use serde_json::{Value, json};
 use spec11_core::{Analysis, StatusOpts};
@@ -180,11 +180,154 @@ pub const RESOURCES: [(&str, &str, &str, fn(&Analysis) -> serde_json::Result<Str
     ("spec11://tests", "spec11 tests", "Test cases detected in the test files, grouped by module and file, with the requirement IDs tagged on each. Detected, not run: it does not say a test passes.", |a| serde_json::to_string_pretty(&a.tests_view())),
 ];
 
-// (API-07)
-/// The JSON text of a resource, `None` for an unknown URI.
-pub fn read_resource(root: Option<&Path>, uri: &str) -> Result<Option<String>, String> {
+/// The read-only tools that take no argument, also as plain-text MCP resources: (uri, name, tool). The text is what the CLI prints.
+/// The description is the tool's. Tools with arguments (`spec_trace`, status filters) and the writing ones stay tools only.
+pub const VIEWS: [(&str, &str, &str); 4] = [
+    ("spec11://report", "spec11 report", "spec_report"),
+    ("spec11://status", "spec11 status", "spec_status"),
+    ("spec11://uncovered", "spec11 uncovered", "spec_uncovered"),
+    ("spec11://overlap", "spec11 overlap", "spec_overlap"),
+];
+
+/// The same tools as JSON resources, `<view uri>.json`: (uri, name, tool). The JSON is the tool's `structuredContent`, typed by
+/// the schema at `spec11://schemas/<name>`. Without a CodeGraph index `uncovered` and `overlap` cannot be typed data: reading
+/// them is an error that says why.
+pub const DATA: [(&str, &str, &str); 4] = [
+    ("spec11://report.json", "spec11 report (JSON)", "spec_report"),
+    ("spec11://status.json", "spec11 status (JSON)", "spec_status"),
+    ("spec11://uncovered.json", "spec11 uncovered (JSON)", "spec_uncovered"),
+    ("spec11://overlap.json", "spec11 overlap (JSON)", "spec_overlap"),
+];
+
+pub const SCHEMA_PREFIX: &str = "spec11://schemas/";
+pub const JSON_MIME: &str = "application/json";
+pub const SCHEMA_MIME: &str = "application/schema+json";
+pub const TEXT_MIME: &str = "text/plain";
+
+/// The description of a tool, for the resource that shows the same thing.
+pub fn tool_description(name: &str) -> &'static str {
+    tools().into_iter().find(|t| t.name == name).map_or("", |t| t.description)
+}
+
+/// Every resource that can change when the repo does (and so can be subscribed to). The schemas never change.
+pub fn resource_uris() -> impl Iterator<Item = &'static str> {
+    RESOURCES.iter().map(|r| r.0).chain(VIEWS.iter().map(|v| v.0)).chain(DATA.iter().map(|d| d.0))
+}
+
+/// The schema a JSON resource is typed by, as its `spec11://schemas/<name>` URI.
+pub fn schema_uri(resource: &str) -> Option<String> {
+    let name = resource.strip_prefix("spec11://")?;
+    let name = name.strip_suffix(".json").unwrap_or(name);
+    schema(name).map(|_| format!("{SCHEMA_PREFIX}{name}"))
+}
+
+/// Names that have a published schema (`spec11://schemas/<name>`): the JSON resources.
+pub const SCHEMAS: [&str; 6] = ["report", "status", "uncovered", "overlap", "modules", "tests"];
+
+/// The schema of a type. schemars' numeric `format` hints (`uint`, `int64`, ...) are not JSON Schema formats: validators warn on them.
+fn of<T: schemars::JsonSchema>() -> Value {
+    fn plain(v: &mut Value) {
+        match v {
+            Value::Object(m) => {
+                if m.get("format").and_then(Value::as_str).is_some_and(|f| f.starts_with("uint") || f.starts_with("int") || f.starts_with("double") || f.starts_with("float")) {
+                    m.remove("format");
+                }
+                m.values_mut().for_each(plain);
+            }
+            Value::Array(a) => a.iter_mut().for_each(plain),
+            _ => {}
+        }
+    }
+    let mut v = serde_json::to_value(schemars::schema_for!(T)).unwrap_or_default();
+    plain(&mut v);
+    v
+}
+
+fn strs() -> Value {
+    json!({"type": "array", "items": {"type": "string"}})
+}
+
+fn shape(props: Value, required: &[&str]) -> Value {
+    json!({"$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "properties": props, "required": required})
+}
+
+/// JSON Schema of a result's structured content: `report`, `status`, `trace`, `overlap`, `uncovered`, `modules`, `tests`,
+/// `file`, `source`, `doctor`, `codegraph`, `install`, `dashboard`. Typed from the core structs where there are any.
+pub fn schema(name: &str) -> Option<Value> {
+    use spec11_core::{Report, Status, Trace, coverage::{OverlapRow, Uncovered}, modules::{ModulesView, TestsView}};
+    #[derive(schemars::JsonSchema)]
+    #[allow(dead_code)]
+    struct Overlap {
+        rows: Vec<OverlapRow>,
+    }
+    #[derive(schemars::JsonSchema)]
+    #[allow(dead_code)]
+    struct Doctor {
+        checks: Vec<crate::doctor::Check>,
+        index_action: Option<String>,
+    }
+    Some(match name {
+        "report" => of::<Report>(),
+        "status" => of::<Status>(),
+        "trace" => of::<Trace>(),
+        "uncovered" => of::<Uncovered>(),
+        "overlap" => of::<Overlap>(),
+        "modules" => of::<ModulesView>(),
+        "tests" => of::<TestsView>(),
+        "doctor" => of::<Doctor>(),
+        "file" => shape(json!({"files": strs(), "name": {"type": "string"}, "markdown": {"type": "string"}}), &[]),
+        "source" => shape(json!({"path": {"type": "string"}, "text": {"type": "string"}}), &["path", "text"]),
+        "codegraph" => shape(json!({"output": {"type": "string"}}), &["output"]),
+        "install" => shape(json!({"status": {"type": "object"}, "suggestions": strs()}), &["status", "suggestions"]),
+        "dashboard" => shape(json!({"url": {"type": "string"}}), &["url"]),
+        _ => return None,
+    })
+}
+
+/// The `outputSchema` of a tool: its result's `structuredContent`.
+pub fn output_schema(tool: &str) -> Option<Value> {
+    let name = tool.strip_prefix("spec_")?;
+    schema(if name.starts_with("install") || name == "uninstall" { "install" } else { name })
+}
+
+// (API-07, API-08)
+/// (mime type, text) of a resource, `None` for an unknown URI.
+pub fn read_resource(root: Option<&Path>, uri: &str) -> Result<Option<(&'static str, String)>, String> {
+    if let Some((.., tool)) = VIEWS.iter().find(|v| v.0 == uri) {
+        return match call(root, tool, &json!({}), "", 0) {
+            Ok((text, _)) => Ok(Some((TEXT_MIME, text))),
+            // "not checked" (no usable CodeGraph index) is content here, not an error: indexing is the user's decision
+            Err(e) if matches!(*tool, "spec_overlap" | "spec_uncovered") && Analysis::load(root).is_ok_and(|a| a.graph.is_none()) => Ok(Some((TEXT_MIME, e))),
+            Err(e) => Err(e),
+        };
+    }
+    if let Some((.., tool)) = DATA.iter().find(|d| d.0 == uri) {
+        let (_, data) = call(root, tool, &json!({}), "", 0)?;
+        return serde_json::to_string_pretty(&data).map(|t| Some((JSON_MIME, t))).map_err(|e| e.to_string());
+    }
+    if let Some(name) = uri.strip_prefix(SCHEMA_PREFIX).filter(|n| SCHEMAS.contains(n)) {
+        return Ok(schema(name).map(|s| (SCHEMA_MIME, s.to_string())));
+    }
     let Some((.., render)) = RESOURCES.iter().find(|r| r.0 == uri) else { return Ok(None) };
-    render(&Analysis::load(root)?).map(Some).map_err(|e| e.to_string())
+    render(&Analysis::load(root)?).map(|t| Some((JSON_MIME, t))).map_err(|e| e.to_string())
+}
+
+// (API-08)
+/// A fingerprint (path, mtime, size) of what the analysis reads: the repo's files, the spec files, `spec11.json` and the
+/// CodeGraph index with its WAL. Equal stamps mean the resources read the same. 0 when the repo cannot be opened. Blocking.
+// ponytail: one repo walk per poll and per subscriber; share one poller or use a file watcher if that ever costs.
+pub fn stamp(root: Option<&Path>) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let Ok(p) = spec11_core::scan::Project::open(root) else { return 0 };
+    let db = if p.cfg.codegraph.is_empty() { ".codegraph/codegraph.db".to_string() } else { p.cfg.codegraph.clone() };
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    let extra = ["spec11.json".to_string(), format!("{db}-wal"), format!("{db}-shm"), db];
+    for rel in p.files.iter().chain(&p.spec_files()).chain(&extra) {
+        if let Ok(m) = std::fs::metadata(p.root.join(rel)) {
+            (rel, m.len(), m.modified().ok()).hash(&mut h);
+        }
+    }
+    h.finish()
 }
 
 pub fn evidence_note() -> &'static str {

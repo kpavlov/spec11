@@ -4,7 +4,7 @@ use spec11_core::{Analysis, codegraph::{Graph, GraphError}, scan::Project};
 use std::path::Path;
 use std::time::SystemTime;
 
-#[derive(Serialize)]
+#[derive(Serialize, schemars::JsonSchema)]
 pub struct Check {
     pub name: &'static str,
     /// `ok`, `warn` (works, but something is missing) or `fail` (spec11 cannot work here).

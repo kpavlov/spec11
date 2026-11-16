@@ -1306,6 +1306,7 @@ checksum = "ab508826f74a77ca9d5aba6ff19b522583ee3eaf28a19384ff3d0e5835fadf6e"
 dependencies = [
  "chrono",
  "dyn-clone",
+ "indexmap",
  "ref-cast",
  "schemars_derive",
  "serde",
@@ -1473,6 +1474,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "clap",
+ "http-body-util",
  "mime_guess",
  "reqwest",
  "rmcp",
@@ -1482,6 +1484,7 @@ dependencies = [
  "serde_json",
  "spec11-core",
  "tokio",
+ "tokio-util",
  "tower",
  "tower-http 0.7.1",
 ]
@@ -1494,6 +1497,7 @@ dependencies = [
  "indexmap",
  "regex",
  "rusqlite",
+ "schemars",
  "serde",
  "serde_json",
  "toml",

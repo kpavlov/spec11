@@ -41,10 +41,11 @@ export async function call<T = any>(tool: string, args: Record<string, unknown> 
     if (r.isError) throw new Error(text);
     return { text, data: r.structuredContent as T };
   }
-  const res = await fetch(`/api/call/${tool}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(args) });
-  const body = await res.json();
-  if (!res.ok) throw new Error(body.error ?? res.statusText);
-  return body;
+  // standalone: the same `tools/call` over /mcp (indexing can outlast the default 60 s timeout)
+  const r = await (await connect()).callTool({ name: tool, arguments: args }, { timeout: tool === "spec_codegraph" ? 600_000 : undefined });
+  const text = (r.content ?? []).map((c) => ("text" in c ? c.text : "")).join("\n");
+  if (r.isError) throw new Error(text);
+  return { text, data: r.structuredContent as T };
 }
 
 // Standalone: the official MCP client, pinned to 2026-07-28 (no `initialize`, no session; it sends `server/discover` once and then the per-request `_meta` headers).
@@ -55,6 +56,33 @@ const connect = () =>
     await c.connect(new StreamableHTTPClientTransport(new URL("/mcp", location.href)));
     return c;
   })().catch((e) => ((mcp = undefined), Promise.reject(e))));
+
+// Push: `subscriptions/listen` on /mcp for these resources, `onChange` on each `notifications/resources/updated`.
+// Standalone only: the host bridge is request/response and so it gets no updates (a no-op).
+// A dropped stream is re-opened after a pause; the returned function stops it. `onState(true)` once the stream is open, `onState(false)` when it drops.
+export function watch(uris: string[], onChange: () => void, onState: (up: boolean) => void = () => {}): () => void {
+  if (embedded) return () => {};
+  let stopped = false;
+  let sub: { close(): Promise<void> } | undefined;
+  (async function open() {
+    while (!stopped) {
+      try {
+        const c = await connect();
+        c.setNotificationHandler("notifications/resources/updated", () => onChange());
+        sub = await c.listen({ resourceSubscriptions: uris });
+        if (stopped) return void sub.close();
+        onState(true);
+        await (sub as any).closed;
+        onState(false);
+      } catch {
+        onState(false);
+        mcp = undefined; // reconnect from scratch (the server may have restarted)
+      }
+      await new Promise((r) => setTimeout(r, 3000));
+    }
+  })();
+  return () => ((stopped = true), void sub?.close());
+}
 
 // An MCP resource (JSON): `resources/read` through the host bridge, or straight to `/mcp` with the SDK client.
 export async function read<T = any>(uri: string): Promise<T> {

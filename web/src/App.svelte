@@ -1,9 +1,10 @@
 <script lang="ts">
   import { untrack } from "svelte";
-  import { call, embedded, read } from "./transport";
+  import { call, embedded, read, watch } from "./transport";
   import { TABS, format, parse, type Route } from "./router";
   import Markdown from "./Markdown.svelte";
   import { inline } from "./markdown";
+  import { highlightLines } from "./highlight";
 
   type Ref = { file: string; line: number; text: string };
   type Row = { id: string; state: string; file: string; line: number; level: string; text: string; mark: string; done: boolean; verdict: string; built: boolean; issues: string[]; tests: Ref[]; cites: Ref[]; graph: string[] };
@@ -43,11 +44,16 @@
   const stored = (k: string) => { try { return localStorage.getItem(k) ?? ""; } catch { return ""; } };
   let dismissed = $state(stored("spec11.banner"));
   const dismiss = (m: string) => { dismissed = m; try { localStorage.setItem("spec11.banner", m); } catch { /* storage blocked */ } };
+  // nav emoji; below 1350px only these show (the label is hidden, the title keeps the name)
+  const EMOJI: Record<string, string> = { dashboard: "📊", requirements: "📋", modules: "📦", tests: "🧪", specs: "📄", overlap: "🔀", uncovered: "🚫" };
   const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
 
   // ---- theme: auto (OS) | light | dark, remembered per browser ----
   type Theme = "auto" | "light" | "dark";
-  const themes: { v: Theme; icon: string; tip: string }[] = [{ v: "auto", icon: "◐", tip: "Follow the system theme" }, { v: "light", icon: "☀", tip: "Light theme" }, { v: "dark", icon: "☾", tip: "Dark theme" }];
+  // one button cycles system → light → dark; it shows the current state
+  const themes: { v: Theme; icon: string; name: string }[] = [{ v: "auto", icon: "◐", name: "system" }, { v: "light", icon: "☀", name: "light" }, { v: "dark", icon: "☾", name: "dark" }];
+  const curTheme = $derived(themes.find((t) => t.v === theme)!);
+  const nextTheme = $derived(themes[(themes.indexOf(curTheme) + 1) % themes.length]);
   const saved = (): Theme => { try { const t = localStorage.getItem("spec11.theme"); return t === "light" || t === "dark" ? t : "auto"; } catch { return "auto"; } };
   let theme = $state<Theme>(saved());
   $effect(() => {
@@ -93,15 +99,22 @@
 
   const guard = <T,>(p: Promise<T>) => p.catch((e) => { error = String(e.message ?? e); throw e; });
 
+  // server connection: null until known; the push stream sets it, and so does every successful load or poll (the only signal when embedded)
+  let up = $state<boolean | null>(null);
+  // bumped by every load: the views below refetch (keeping what they show until the new data lands)
+  let gen = $state(0);
+  let loadId = 0;
   async function load() {
     error = "";
-    trace = null; // the trace effect below refetches once `rows` is replaced
+    const me = ++loadId;
     const [r, s] = await guard(Promise.all([call("spec_report", { limit: 1000 }), call("spec_status", { all: true, limit: 5000 })]));
+    if (me !== loadId) return; // a newer load started meanwhile: its answer wins
     report = r.data;
     rows = s.data.rows;
-    // resources go straight to /mcp, which a split-port UI cannot reach: the modules views then stay empty instead of failing the load
+    up = true;
+    // the modules views are optional: a failed resource read leaves them empty instead of failing the load
     read("spec11://modules").then((m) => (modules = m)).catch(() => (modules = null));
-    overlap = uncovered = tests = null;
+    gen++;
     if (!root) fetch("/api/info").then((x) => x.json()).then((i) => (root = i.root ?? "")).catch(() => {});
   }
 
@@ -142,8 +155,9 @@
     const id = route.id;
     void rows; // a refresh replaces the rows and must reload the open trace
     if (!id) { trace = null; return; }
-    if (untrack(() => trace?.data?.id) === id) return;
-    call("spec_trace", { id }).then((r) => (trace = r)).catch((e) => { trace = null; error = e.message; });
+    // another requirement blanks the view; a refresh of the same one keeps showing it until the new trace lands
+    if (untrack(() => trace?.data?.id?.toUpperCase()) !== id.toUpperCase()) trace = null;
+    call("spec_trace", { id }).then((r) => { if (route.id === id) trace = r; }).catch((e) => { trace = null; error = e.message; });
   });
 
   $effect(() => {
@@ -158,10 +172,17 @@
     if (path && untrack(() => code?.path) !== path) call("spec_source", { path }).then((r) => (code = r.data)).catch((e) => { code = null; error = e.message; });
   });
 
+  // fetched once per load generation, when its tab is open
+  const fetched: Record<string, number> = {};
+  const fetchOnce = (key: string, get: () => Promise<void>) => {
+    if (fetched[key] === gen) return;
+    fetched[key] = gen;
+    get().catch((e) => { fetched[key] = -1; error = e.message; });
+  };
   $effect(() => {
-    if (route.tab === "overlap" && overlap === null) call("spec_overlap").then((r) => (overlap = r.data.rows)).catch((e) => (error = e.message));
-    if ((route.tab === "tests" || (route.tab === "modules" && route.module)) && tests === null) read("spec11://tests").then((r) => (tests = r)).catch((e) => (error = e.message));
-    if (route.tab === "uncovered" && uncovered === null) call("spec_uncovered").then((r) => (uncovered = r.data)).catch((e) => (error = e.message));
+    if (route.tab === "overlap") fetchOnce("overlap", () => call("spec_overlap").then((r) => void (overlap = r.data.rows)));
+    if (route.tab === "tests" || (route.tab === "modules" && route.module)) fetchOnce("tests", () => read("spec11://tests").then((r) => void (tests = r)));
+    if (route.tab === "uncovered") fetchOnce("uncovered", () => call("spec_uncovered").then((r) => void (uncovered = r.data)));
   });
 
   // scroll to what the URL points at once it is rendered
@@ -174,6 +195,22 @@
   });
 
   load();
+  // the server pushes `resources/updated` when the repo changes; one notification per subscribed resource arrives for one change
+  let reloadTimer: ReturnType<typeof setTimeout> | undefined;
+  // throttled: the first push reloads at once, a burst after it collapses into one trailing reload at most every 2 s
+  let lastLoad = 0;
+  $effect(() => watch(["spec11://report", "spec11://status"], () => {
+    clearTimeout(reloadTimer);
+    reloadTimer = setTimeout(() => { lastLoad = Date.now(); load().catch(() => {}); }, Math.max(0, lastLoad + 2000 - Date.now()));
+  }, (s) => (up = s)));
+  // fallback when no push arrives (embedded host, a dropped stream, a proxy that buffers): every 30 s, reload only if the report changed
+  $effect(() => {
+    const t = setInterval(async () => {
+      if (document.hidden) return;
+      try { if (JSON.stringify((await call("spec_report", { limit: 1000 })).data) !== JSON.stringify(untrack(() => report))) await load(); up = true; } catch { up = false; /* the next tick retries */ }
+    }, 30_000);
+    return () => clearInterval(t);
+  });
   loadSetup().catch(() => {});
 
   // ---- views ----
@@ -209,7 +246,40 @@
   const withId = (tab: Route["tab"], id: string): Route => ({ tab, id });
   // typing in the filter replaces the URL instead of stacking a history entry per keystroke
   const filter = (patch: Partial<Route>) => navigate({ ...route, ...patch }, true);
-  const segs = (line: string) => line.split(/(\b[A-Z]{2,5}-\d{1,4}\b)/).map((t, i) => ({ t, id: i % 2 === 1 && known.has(t) }));
+  // highlighted line HTML with known requirement IDs turned into links (only text between tags is touched)
+  const linkIds = (html: string) => html.replace(/(<[^>]+>)|\b[A-Z]{2,5}-\d{1,4}\b/g, (m, tag) => (tag || !known.has(m) ? m : `<a class="id" href="${u(req(m))}">${m}</a>`));
+  const lines = $derived(code ? highlightLines(code.path, code.text).map(linkIds) : []);
+
+  // code viewer: wrap, copy the path, open in an editor (URL scheme of the chosen IDE, remembered per browser)
+  // `scheme://file/<abs path>:<line>` (VS Code family, Zed), JetBrains `open?file=&line=`, or the editor's own form
+  const fileUrl = (scheme: string) => (f: string, l: number) => `${scheme}://file${f}:${l}`;
+  const jetbrains = (scheme: string) => (f: string, l: number) => `${scheme}://open?file=${encodeURIComponent(f)}&line=${l}`;
+  const EDITORS: Record<string, (file: string, line: number) => string> = {
+    IntelliJ: jetbrains("idea"),
+    WebStorm: jetbrains("webstorm"),
+    PyCharm: jetbrains("pycharm"),
+    GoLand: jetbrains("goland"),
+    RustRover: jetbrains("rustrover"),
+    CLion: jetbrains("clion"),
+    PhpStorm: jetbrains("phpstorm"),
+    Rider: jetbrains("rider"),
+    "Android Studio": jetbrains("androidstudio"),
+    "VS Code": fileUrl("vscode"),
+    "VS Code Insiders": fileUrl("vscode-insiders"),
+    VSCodium: fileUrl("vscodium"),
+    Cursor: fileUrl("cursor"),
+    Windsurf: fileUrl("windsurf"),
+    Zed: fileUrl("zed"),
+    Sublime: (f, l) => `subl://open?url=${encodeURIComponent("file://" + f)}&line=${l}`,
+    TextMate: (f, l) => `txmt://open?url=${encodeURIComponent("file://" + f)}&line=${l}`,
+    Xcode: (f, l) => `xcode://open?file=${encodeURIComponent(f)}&line=${l}`,
+  };
+  const savedEditor = stored("spec11.editor");
+  let editor = $state(savedEditor in EDITORS ? savedEditor : "IntelliJ");
+  let wrap = $state(stored("spec11.wrap") === "1");
+  let copied = $state(false);
+  const save = (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* storage blocked */ } };
+  const copyPath = (path: string) => navigator.clipboard.writeText(path).then(() => { copied = true; setTimeout(() => (copied = false), 1200); }).catch(() => {});
 </script>
 
 {#snippet idlink(id: string, to: Route)}
@@ -260,18 +330,18 @@
 
 <header>
   <h1><a href="/">spec11</a></h1>
+  <span class="dot" class:up={up === true} class:down={up === false} role="status" title={up === null ? "server: connecting" : up ? "server: connected" : "server: disconnected, retrying"}></span>
   <a class="root mono muted" href="/">{root}</a>
   <nav aria-label="views">
-    {#each TABS as t}
-      <a class="tab" class:on={route.tab === t} aria-current={route.tab === t ? "page" : undefined} href={u({ tab: t })}>
-        {t}{#if t === "dashboard" && report?.total_problems}<span class="badge bad" title="{report.total_problems} problems">{report.total_problems}</span>{/if}{#if t === "setup" && setup?.suggestions.length}<span class="badge warn" title="not fully set up">!</span>{/if}
+    {#each TABS.filter((t) => t !== "setup") as t}
+      <a class="tab" class:on={route.tab === t} aria-current={route.tab === t ? "page" : undefined} href={u({ tab: t })} title={t} aria-label={t}>
+        <span aria-hidden="true">{EMOJI[t]}</span><span class="lbl">{t}</span>{#if t === "dashboard" && report?.total_problems}<span class="badge bad" title="{report.total_problems} problems">{report.total_problems}</span>{/if}
       </a>
     {/each}
   </nav>
-  <button onclick={load} title="Rescan the repo" aria-label="rescan">↻</button>
-  <div class="themes" role="group" aria-label="theme">
-    {#each themes as t}<button class:on={theme === t.v} aria-pressed={theme === t.v} title={t.tip} aria-label={t.tip} onclick={() => (theme = t.v)}>{t.icon}</button>{/each}
-  </div>
+  <button class="icon" onclick={load} title="Rescan the repo" aria-label="rescan">↻</button>
+  <button class="icon" onclick={() => (theme = nextTheme.v)} title="Theme: {curTheme.name} (click for {nextTheme.name})" aria-label="Theme: {curTheme.name}, switch to {nextTheme.name}">{curTheme.icon}</button>
+  <a class="tab icon" class:on={route.tab === "setup"} aria-current={route.tab === "setup" ? "page" : undefined} href={u({ tab: "setup" })} title={setup?.suggestions.length ? "Setup (not fully set up)" : "Setup"} aria-label="Setup">⚙️{#if setup?.suggestions.length}<span class="badge warn" title="not fully set up">!</span>{/if}</a>
 </header>
 
 {#if error}<p class="error">{error}</p>{/if}
@@ -388,13 +458,19 @@
     {#if !route.path}<p class="muted">No file selected: open one from a requirement's tests or citations.</p>
     {:else if !code || code.path !== route.path}<p class="muted">Loading {route.path}…</p>
     {:else}
-      <p class="mono nowrap crumb"><a href="/requirements">requirements</a> / {code.path}{route.line ? `:${route.line}` : ""}</p>
-      <table class="code">
+      <p class="mono crumb">
+        <span class="nowrap"><a href="/requirements">requirements</a> / {code.path}{route.line ? `:${route.line}` : ""}</span>
+        <button class="small" title="Copy the file path" onclick={() => copyPath(code!.path)}>{copied ? "Copied" : "Copy path"}</button>
+        {#if root}<a class="btn small" title="Open in {editor}" href={EDITORS[editor](`${root}/${code.path}`, route.line ?? 1)}>Open in</a>{/if}
+        <select class="small" bind:value={editor} onchange={() => save("spec11.editor", editor)} aria-label="Editor">{#each Object.keys(EDITORS) as e}<option>{e}</option>{/each}</select>
+        <button class="small" class:on={wrap} aria-pressed={wrap} onclick={() => { wrap = !wrap; save("spec11.wrap", wrap ? "1" : "0"); }}>Wrap</button>
+      </p>
+      <table class="code" class:wrap>
         <tbody>
-          {#each code.text.split("\n") as l, i}
+          {#each lines as l, i}
             <tr id={`L${i + 1}`} class:hl={route.line === i + 1}>
               <td class="ln"><a href={u({ tab: "code", path: code.path, line: i + 1 })}>{i + 1}</a></td>
-              <td class="src">{#each segs(l) as p}{#if p.id}<a class="id" href={u(req(p.t))}>{p.t}</a>{:else}{p.t}{/if}{/each}</td>
+              <td class="src">{@html l}</td>
             </tr>
           {/each}
         </tbody>
@@ -551,10 +627,13 @@
 
 <style>
   /* layout */
-  header { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 10px; padding: 10px 20px; background: color-mix(in srgb, var(--bg) 92%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  header { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 10px; padding: 10px 20px; background: color-mix(in srgb, var(--bg) 92%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
+  header > :not(.root):not(nav) { flex-shrink: 0; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); margin-left: -4px; } .dot.up { background: var(--ok); } .dot.down { background: var(--bad); }
   h1 { margin: 0; font-size: 18px; letter-spacing: -0.01em; }
-  nav { margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap; }
-  main { padding: 20px; max-width: 1240px; margin: 0 auto; }
+  nav { margin-left: auto; display: flex; gap: 6px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+  nav a { flex-shrink: 0; white-space: nowrap; }
+  main { padding: 20px; max-width: 100%; overflow-x: clip; }
   footer { padding: 24px 16px; text-align: center; font-size: 12px; }
   .muted { color: var(--muted); }
   .nowrap { white-space: nowrap; }
@@ -566,14 +645,16 @@
   /* header controls */
   a.tab { color: var(--fg); background: var(--raised); text-decoration: none; border-radius: var(--radius); padding: 5px 12px; text-transform: capitalize; }
   a.tab:hover { background: color-mix(in srgb, var(--accent) 16%, var(--raised)); color: var(--accent); }
-  a.tab.on { background: var(--accent); color: var(--card); font-weight: 600; }
+  a.tab.on { background: color-mix(in srgb, var(--accent) 26%, var(--raised)); color: var(--accent); font-weight: 600; }
   h1 a, a.root { color: inherit; text-decoration: none; }
   a.root { color: var(--muted); max-width: 32ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
   .badge { display: inline-block; min-width: 18px; margin-left: 6px; padding: 0 5px; border-radius: 2px; font-size: 11px; font-weight: 700; line-height: 18px; text-align: center; color: var(--card); }
   .badge.bad { background: var(--bad); } .badge.warn { background: var(--warn); }
-  a.tab.on .badge { outline: 1px solid var(--card); }
-  .themes { display: flex; gap: 2px; }
-  .themes button { padding: 5px 10px; }
+  a.tab.on .badge { outline: 1px solid var(--raised); }
+  .icon { padding: 5px 9px; line-height: 1.2; }
+  a.tab.icon .badge { margin-left: 3px; }
+  .lbl { margin-left: 7px; }
+  @media (max-width: 1350px) { .lbl { display: none; } a.tab { padding: 5px 9px; } }
   
 
   /* report */
@@ -657,12 +738,25 @@
   article { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 4px 20px 14px; box-shadow: var(--shadow); }
   @media (max-width: 800px) { .specs { grid-template-columns: 1fr; } .files { position: static; max-height: 30vh; } }
   .crumb { margin: 0 0 8px; }
-  table.code { font-family: var(--mono); font-size: 12.5px; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); }
+  table.code { display: block; max-width: 100%; overflow-x: auto; font-family: var(--mono); font-size: 13.5px; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); }
   table.code td { border: none; padding: 0 10px; white-space: pre; }
   td.ln { text-align: right; width: 1%; user-select: none; }
   td.ln a { color: var(--muted); }
   tr.hl { background: color-mix(in srgb, var(--warn) 22%, transparent); }
   td.src { overflow-x: auto; }
+  table.code.wrap td.src { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .crumb { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .crumb .small { font-size: 12px; padding: 2px 8px; }
+  a.btn { background: var(--raised); color: var(--fg); border-radius: var(--radius); text-decoration: none; }
+  a.btn:hover { background: color-mix(in srgb, var(--accent) 16%, var(--raised)); color: var(--accent); }
+  /* highlight.js token colours (the markup comes from {@html}, hence :global) */
+  :global(.hljs-comment, .hljs-quote) { color: var(--muted); font-style: italic; }
+  :global(.hljs-keyword, .hljs-selector-tag, .hljs-literal, .hljs-built_in, .hljs-doctag) { color: light-dark(#8a2be2, #c9a7ff); }
+  :global(.hljs-string, .hljs-regexp, .hljs-addition) { color: var(--ok); }
+  :global(.hljs-number, .hljs-symbol, .hljs-bullet, .hljs-meta) { color: var(--warn); }
+  :global(.hljs-title, .hljs-section, .hljs-attr, .hljs-attribute) { color: light-dark(#0b5cad, #7cb7ff); }
+  :global(.hljs-type, .hljs-class .hljs-title) { color: light-dark(#0b7a75, #5eead4); }
+  :global(.hljs-deletion) { color: var(--bad); }
   .block { margin-bottom: 10px; }
   .setup h3 { margin: 0 0 6px; font-size: 15px; }
   .setup p { margin: 6px 0; }

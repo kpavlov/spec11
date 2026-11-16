@@ -39,7 +39,7 @@ make dev ROOT=/path/to/repo PORT=7500 OPEN=0
 
 `spec11` with no command runs `serve` for the repo that holds the current directory (nearest ancestor with `specs/`, or `--root`) and opens the dashboard; `--no-open` skips the browser. At startup it checks whether the skill and MCP entry are installed for this repo or globally and prints what to run if not; the dashboard shows the same in a banner and a Setup tab with Install/Uninstall buttons.
 
-`spec11 serve [--port 7411] [--ui-port N] [--no-open]`: one listener serves `/`, `/api` and `/mcp`; with `--ui-port` the UI and `/api` move to that port and the main port carries only `/mcp`. Binds 127.0.0.1 only and rejects unknown `Host`/`Origin` (403).
+`spec11 serve [--port 7411] [--ui-port N] [--no-open]`: one listener serves `/`, `/api/info` and `/mcp`; with `--ui-port` the UI and `/api/info` move to that port (which also carries `/mcp`, the dashboard's only data path) and the main port carries only `/mcp`. Binds 127.0.0.1 only and rejects unknown `Host`/`Origin` (403).
 
 MCP client config:
 
@@ -47,7 +47,7 @@ MCP client config:
 {"mcpServers": {"spec11": {"type": "http", "url": "http://127.0.0.1:7411/mcp"}}}
 ```
 
-Tools: `spec_report`, `spec_status`, `spec_trace`, `spec_overlap`, `spec_uncovered`, `spec_file`, `spec_source`, `spec_dashboard`, and `spec_install_status` / `spec_install` / `spec_uninstall` / `spec_codegraph` (the last three write files). Read-only JSON resources: `spec11://modules` (modules by build manifest, with CodeGraph symbols and the modules each depends on) and `spec11://tests` (test cases detected by marker, grouped by module, with the requirement IDs tagged on each; detected, not run). The dashboard is also an MCP Apps resource (`ui://spec11/dashboard`) for hosts that render it; elsewhere use the URL from `spec_dashboard`.
+Tools: `spec_report`, `spec_status`, `spec_trace`, `spec_overlap`, `spec_uncovered`, `spec_file`, `spec_source`, `spec_dashboard`, and `spec_install_status` / `spec_install` / `spec_uninstall` / `spec_codegraph` (the last three write files). Plain-text resources with the same output as `spec_report`, `spec_status`, `spec_uncovered` and `spec_overlap`: `spec11://report`, `spec11://status`, `spec11://uncovered`, `spec11://overlap`; prefer them where the client reads resources (a client on 2026-07-28 can also `subscriptions/listen` to them and is notified when the repo changes). The tools stay for clients without resource support and for arguments. The same four as JSON (`spec11://report.json`, `status.json`, `uncovered.json`, `overlap.json`), typed by JSON Schemas readable at `spec11://schemas/<name>`; the tools declare them as `outputSchema`. Read-only JSON resources: `spec11://modules` (modules by build manifest, with CodeGraph symbols and the modules each depends on) and `spec11://tests` (test cases detected by marker, grouped by module, with the requirement IDs tagged on each; detected, not run). The dashboard is also an MCP Apps resource (`ui://spec11/dashboard`) for hosts that render it; elsewhere use the URL from `spec_dashboard`.
 
 ## Dashboard URLs
 

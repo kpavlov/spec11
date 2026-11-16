@@ -7,7 +7,7 @@ use indexmap::IndexMap;
 use serde::Serialize;
 use std::collections::{BTreeSet, HashMap, HashSet};
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct OverlapRow {
     pub file: String,
     pub line: i64,
@@ -17,7 +17,7 @@ pub struct OverlapRow {
     pub pairs: Vec<(String, String, bool)>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct Unit {
     pub name: String,
     pub file: String,
@@ -27,7 +27,7 @@ pub struct Unit {
     pub kind: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct UncoveredFile {
     /// Relative to the app dir.
     pub file: String,
@@ -35,7 +35,7 @@ pub struct UncoveredFile {
     pub units: Vec<Unit>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct Skipped {
     pub covered: usize,
     pub shared: usize,
@@ -43,7 +43,7 @@ pub struct Skipped {
     pub small: usize,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct Uncovered {
     pub units: usize,
     pub lines: i64,
