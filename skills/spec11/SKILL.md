@@ -6,7 +6,7 @@ description: >
 
 # Spec-driven with spec11
 
-`specs/` is the source of truth: each requirement is `- **ABC-12** MUST|SHOULD|MAY — text`, a test proves it by tagging its title with `[ABC-12]`, and source comments cite it as `(ABC-12)`. Change the spec first, then tests and code.
+`specs/` is the source of truth: each requirement is `- **ABC-12** MUST|SHOULD|MAY — text` (also `- ABC-12: text … MUST`, `*`/numbered lists, `| ABC-12 | MUST | text |` rows, and `SHALL`), a test proves it by tagging its title with `[ABC-12]`, and source comments cite it as `(ABC-12)`. Change the spec first, then tests and code.
 
 spec11 finds **evidence, not truth**: a tag or citation does not prove a requirement is implemented, nor that its test passes. Relay its output; never rebuild the numbers by reading specs and tests yourself, and never change a spec marker or tag because of the report alone.
 

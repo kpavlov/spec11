@@ -69,7 +69,7 @@ pub fn run(root: Option<&Path>, mcp_port: u16) -> Vec<Check> {
     match Analysis::load(Some(&p.root)) {
         Ok(a) => {
             let r = a.report();
-            let (level, hint) = if r.requirements == 0 { ("warn", Some("no `- **ABC-12** MUST — text` bullets found in the specs folder")) } else { ("ok", None) };
+            let (level, hint) = if r.requirements == 0 { ("warn", Some("no requirements found in the specs folder: expected bullets like `- **ABC-12** MUST — text` or `- ABC-12: the system MUST …`")) } else { ("ok", None) };
             out.push(c("specs", level, format!("{} requirements in {} spec files", r.requirements, r.spec_files), hint));
             if !r.spec_issues.is_empty() {
                 out.push(c("spec issues", "warn", format!("{} (first: {})", r.spec_issues.len(), r.spec_issues[0]), Some("spec11 status --issues")));

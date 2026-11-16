@@ -239,6 +239,29 @@ fn layout_is_detected_when_spec11_json_is_missing() {
 }
 
 #[cfg(unix)]
+#[doc = "[SCAN-11]"]
+#[test]
+fn lenient_spec_formats() {
+    let d = std::env::temp_dir().join(format!("spec11-{}-lenient", std::process::id()));
+    let _ = fs::remove_dir_all(&d);
+    write(&d, "specs/a.md", "\
+- LEN-01 MUST — plain.
+* **LEN-02**: The system SHALL do it.
+1. `LEN-03` SHOULD: numbered.
+- **LEN-04:** MAY wrap
+  onto a line (manual)
+| ID | Level | Text |
+|---|---|---|
+| LEN-05 | MUST | in a table |
+- LEN-06 has no level.
+");
+    let a = Analysis::load(Some(&d)).unwrap();
+    let got: Vec<(&str, &str, &str)> = a.s.values().map(|s| (s.id.as_str(), s.level.as_str(), s.text.as_str())).collect();
+    assert_eq!(got, [("LEN-01", "MUST", "plain."), ("LEN-02", "SHALL", "The system SHALL do it."), ("LEN-03", "SHOULD", "numbered."), ("LEN-04", "MAY", "wrap onto a line (manual)"), ("LEN-05", "MUST", "in a table")]);
+    assert_eq!(a.s["LEN-04"].mark, "manual");
+    assert!(a.issues.iter().any(|x| x.starts_with("LEN-06") && x.contains("has no MUST")));
+}
+
 #[doc = "[SCAN-10]"]
 #[test]
 fn symlinks_are_followed_only_inside_root_or_allowed_paths() {

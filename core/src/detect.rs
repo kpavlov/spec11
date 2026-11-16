@@ -102,7 +102,7 @@ pub fn walk(dir: &Path, allow: &[PathBuf]) -> Vec<PathBuf> {
 /// The first spec folder of `root`: one holding a requirement bullet, else a dedicated-name folder with any markdown,
 /// else a bare `specs/`. `None` when the repo has none of them.
 pub fn spec_dir(root: &Path, allow: &[PathBuf]) -> Option<String> {
-    let bullet = Regex::new(r"^\s*- (?:[✅✔☑✳]\x{FE0F}?\s*)?\*\*[A-Z]{2,5}-\d{1,3}\*\*\s+(?:MUST|SHOULD|MAY)\b").unwrap();
+    let bullet = Regex::new(&format!("{}.*{}", crate::scan::head(), crate::scan::LEVEL)).unwrap();
     let mds = |d: &str| -> Vec<PathBuf> { walk(&root.join(d), allow).into_iter().filter(|p| p.extension().is_some_and(|x| x == "md")).collect() };
     let found: Vec<(&str, Vec<PathBuf>)> = SPEC_DIRS.iter().filter(|d| root.join(d).is_dir()).map(|d| (*d, mds(d))).collect();
     let has_bullet = |fs: &[PathBuf]| fs.iter().any(|f| std::fs::read(f).is_ok_and(|b| String::from_utf8_lossy(&b).lines().any(|l| bullet.is_match(l))));

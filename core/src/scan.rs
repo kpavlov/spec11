@@ -8,6 +8,12 @@ use serde::Serialize;
 use std::{cell::RefCell, collections::HashMap, path::{Path, PathBuf}, process::Command, rc::Rc};
 
 const ID: &str = r"[A-Z]{2,5}-\d{1,3}";
+pub const LEVEL: &str = r"\b(?:MUST|SHOULD|MAY|SHALL)\b";
+/// Start of a requirement line: a bullet (`-`, `*`, `+`, `1.`) or table row, an optional check mark, then the ID, plain, bold or in
+/// backticks, with an optional `:`. Group 1 is the ID.
+pub fn head() -> String {
+    format!(r"^\s*(?:(?:[-*+]|\d+[.)])\s+|\|\s*)(?:{DONE}\s*)?[*_`]*({ID})\b[*_`]*[:.]?[*_`]*")
+}
 const DONE: &str = r"[✅✔☑✳]\x{FE0F}?"; // check marks: a hint that the requirement is done
 
 #[derive(Debug, Clone, Serialize)]
@@ -34,8 +40,8 @@ pub type Refs = HashMap<String, Vec<Ref>>;
 pub type Diff = IndexMap<String, Vec<(i64, i64)>>;
 
 pub struct Rx {
-    spec: Regex,
-    loose: Regex,
+    head: Regex,
+    level: Regex,
     block_end: Regex,
     tag: Regex,
     pub mention: Regex,
@@ -54,22 +60,29 @@ impl Rx {
     fn new(cfg: &Config) -> Result<Rx, String> {
         let r = |s: String| Regex::new(&s).map_err(|e| format!("bad regex {s}: {e}"));
         Ok(Rx {
-            spec: r(format!(r"^\s*- (?:{DONE}\s*)?\*\*({ID})\*\*\s+(MUST|SHOULD|MAY)\b\s*(?:—\s*)?(.*)"))?,
-            loose: r(format!(r"^\s*- (?:{DONE}\s*)?\*\*({ID})\*\*"))?,
-            block_end: r(r"^\s*(- |#|\|)".into())?, // a wrapped bullet continues until a blank line, bullet, heading or table row
+            head: r(format!("{}(.*)", head()))?,
+            level: r(LEVEL.into())?,
+            block_end: r(r"^\s*([-*+] |\d+[.)] |#|\|)".into())?, // a wrapped bullet continues until a blank line, bullet, heading or table row
             tag: r(format!(r"\[({ID}(?:\s*[,;]\s*{ID})*)\]"))?, // `[ABC-12]`, `[ABC-12][ABC-14]` and `[ABC-12, ABC-14]`
             mention: r(format!(r"\b({ID})\b"))?,
             mark: r(r"\((later|deferred|manual)\)$".into())?, // `(deferred)` means the same as `(later)`
             done: r(DONE.into())?,
             struck: r(r"~~.*?~~".into())?,
             later_inside: r(r"\((?:later|deferred|manual)\)".into())?,
-            retired: r(format!(r"^\s*- ~~\*\*({ID})\*\*"))?,
+            retired: r(format!(r"^\s*(?:[-*+]|\d+[.)])\s+~~[*_`]*({ID})"))?,
             decl: r(cfg.decl.clone())?,
             assert: r(cfg.assert.clone())?,
             off: r(cfg.off.clone())?,
             test: if cfg.test_files.is_empty() { None } else { Some(r(cfg.test_files.clone())?) },
         })
     }
+}
+
+/// The text of a requirement's first line: what follows the ID, minus separators and a level that opens it.
+fn lead(rest: &str, level: &str) -> String {
+    let sep = |c: char| c.is_whitespace() || "|:—–-".contains(c);
+    let rest = rest.trim_start_matches(sep);
+    rest.strip_prefix(level).unwrap_or(rest).trim_start_matches(sep).trim_end_matches(|c: char| c.is_whitespace() || c == '|').to_string()
 }
 
 pub struct Project {
@@ -163,7 +176,7 @@ impl Project {
     }
 
     // (SCAN-01)
-    /// {id: Spec} from `- **ABC-12** MUST — text` bullets, wrapped lines joined. A bullet ending in `(manual)`, `(later)` or
+    /// {id: Spec} from `- **ABC-12** MUST — text` bullets (also `- ABC-12: text MUST …`, `1.`/`*` lists, `| ABC-12 | MUST | text |` rows), wrapped lines joined. A bullet ending in `(manual)`, `(later)` or
     /// `(deferred)` carries mark "manual" or "later"; struck-out bullets (`- ~~**ABC-12**`) are retired.
     /// Spec mistakes found on the way (duplicate ID, no level, marker not at the end) go to `problems`.
     pub fn specs(&self, problems: &mut Vec<String>) -> IndexMap<String, Spec> {
@@ -172,17 +185,17 @@ impl Project {
             let ls = self.lines(&format!("{}/{f}", self.cfg.specs));
             for (idx, line) in ls.iter().enumerate() {
                 let n = idx + 1;
-                let Some(m) = self.rx.spec.captures(line) else {
-                    if let Some(l) = self.rx.loose.captures(line) {
-                        problems.push(format!("{} {f}:{n} has no MUST/SHOULD/MAY, so it is not counted", &l[1]));
-                    }
+                let Some(m) = self.rx.head.captures(line) else { continue };
+                let id = m[1].to_string();
+                let Some(lv) = self.rx.level.find(&m[2]) else {
+                    problems.push(format!("{id} {f}:{n} has no MUST/SHOULD/MAY, so it is not counted"));
                     continue;
                 };
-                let id = m[1].to_string();
                 let m1 = m.get(1).unwrap();
-                let mut parts = vec![m[3].trim().to_string()];
+                let mut parts = vec![lead(&m[2], lv.as_str())];
                 let mut j = n;
-                while j < ls.len() && !ls[j].trim().is_empty() && !self.rx.block_end.is_match(&ls[j]) {
+                // a table row is one line; a bullet wraps
+                while !line.trim_start().starts_with('|') && j < ls.len() && !ls[j].trim().is_empty() && !self.rx.block_end.is_match(&ls[j]) {
                     parts.push(ls[j].trim().to_string());
                     j += 1;
                 }
@@ -211,7 +224,7 @@ impl Project {
                 if done && !mark.is_empty() {
                     problems.push(format!("{id} {f}:{n} has a check mark but is also marked ({}/deferred)", if mark == "manual" { "manual" } else { "later" }));
                 }
-                found.insert(id.clone(), Spec { id, file: f.clone(), line: n, end: j, level: m[2].to_string(), text, mark: mark.into(), done });
+                found.insert(id.clone(), Spec { id, file: f.clone(), line: n, end: j, level: lv.as_str().to_string(), text, mark: mark.into(), done });
             }
         }
         found
