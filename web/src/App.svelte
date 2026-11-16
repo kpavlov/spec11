@@ -39,6 +39,12 @@
     document.title = ["spec11", route.tab, route.id ?? route.file ?? route.path].filter(Boolean).join(" · ");
   });
 
+  // setup banner: hidden per browser until its message changes
+  const stored = (k: string) => { try { return localStorage.getItem(k) ?? ""; } catch { return ""; } };
+  let dismissed = $state(stored("spec11.banner"));
+  const dismiss = (m: string) => { dismissed = m; try { localStorage.setItem("spec11.banner", m); } catch { /* storage blocked */ } };
+  const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
+
   // ---- theme: auto (OS) | light | dark, remembered per browser ----
   type Theme = "auto" | "light" | "dark";
   const themes: { v: Theme; icon: string; tip: string }[] = [{ v: "auto", icon: "◐", tip: "Follow the system theme" }, { v: "light", icon: "☀", tip: "Light theme" }, { v: "dark", icon: "☾", tip: "Dark theme" }];
@@ -212,7 +218,7 @@
 
 {#snippet cases(files: any[])}
   {#each files as f}
-    <h4 class="mono nowrap"><a href={u({ tab: "code", path: f.file })}>{f.file}</a> <span class="muted">{f.tests.length}</span></h4>
+    <h3 class="file mono nowrap"><a href={u({ tab: "code", path: f.file })}>{f.file}</a> <span class="muted">{f.tests.length}</span></h3>
     <ul class="refs">
       {#each f.tests as t}
         <li><a class="mono" href={u({ tab: "code", path: f.file, line: t.line })} title={t.qualified}>{t.name}</a> {#each t.ids as id}{@render idlink(id, known.has(id) ? req(id) : { tab: "requirements", q: id })}{" "}{/each}{#if !t.ids.length}<span class="muted">untagged</span>{/if}</li>
@@ -246,7 +252,7 @@
         <h4>Related code ({trace.data.related_total})</h4>
         <ul class="refs">{#each trace.data.related as r}<li><a class="mono nowrap" href={u({ tab: "code", path: r.file })}>{r.file}</a> <span class="muted">{r.types.join(", ")}{r.cites ? " · cites it" : ""}</span></li>{/each}</ul>
       {/if}
-      <details><summary class="muted">plain text</summary><pre>{trace.text}</pre></details>
+      <details class="plain"><summary class="muted">plain text</summary><pre>{trace.text}</pre></details>
       <p class="muted note">Evidence, not truth.</p>
     </aside>
   {/if}
@@ -269,12 +275,13 @@
 </header>
 
 {#if error}<p class="error">{error}</p>{/if}
-{#if setup && setup.suggestions.length && route.tab !== "setup"}
+{#if setup && setup.suggestions.length && route.tab !== "setup" && dismissed !== setup.suggestions[0]}
   <p class="banner">
     <span>spec11 is not fully set up for this repo: {setup.suggestions[0]}</span>
     <span class="grow"></span>
     <button disabled={busy} class="primary" onclick={() => runSetup("spec_install")}>Install here</button>
     <a class="tab" href="/setup">Details</a>
+    <button aria-label="dismiss" title="Hide until the message changes" onclick={() => dismiss(setup!.suggestions[0])}>✕</button>
   </p>
 {/if}
 
@@ -296,7 +303,7 @@
     {#if !report.index}<p class="note-line muted">No CodeGraph index: test-to-code links and uncovered code are not checked.</p>{/if}
     {#if modules?.modules.length}
       <details open>
-        <summary><span>Modules</span> <a href="/modules">all {modules.modules.length}</a></summary>
+        <summary><span>Modules</span> <b class="count">{modules.modules.length}</b></summary>
         <table>
           <tbody>
             {#each [...modules.modules].sort((a, b) => b.tests - a.tests || a.path.localeCompare(b.path)).slice(0, 8) as m}
@@ -310,6 +317,7 @@
             {/each}
           </tbody>
         </table>
+        <p><a href="/modules">All {modules.modules.length} modules</a></p>
       </details>
     {/if}
 
@@ -364,6 +372,7 @@
           {#each shown.slice(0, 500) as r (r.id)}
             <tr onclick={() => navigate({ ...route, id: r.id })} class:sel={route.id === r.id} class="st-{r.state}">
               <td class="mono nowrap"><a href={u({ ...route, id: r.id })}>{r.id}</a></td>
+              <td class="nowrap">{#if /^(MUST|SHOULD|MAY)$/.test(r.level)}<span class="rfc {r.level.toLowerCase()}">{r.level}</span>{/if}</td>
               <td><span class="pill {r.state}">{r.state}</span>{#if r.done}<span class="pill done" title="check-marked: {r.verdict}">✓ {r.verdict}</span>{/if}</td>
               <td title={plain(r.text)}><div class="txt">{@html inline(r.text)}</div></td>
               <td class="mono muted nowrap"><a href={u({ tab: "specs", file: r.file, id: r.id })}>{r.file}:{r.line}</a></td>
@@ -433,17 +442,17 @@
     {:else if !modOf}<p class="muted empty">No module <code>{route.module}</code>. <a href="/modules">All modules</a></p>
     {:else}
       <section class="card block">
-        <h3 class="mono">{modOf.path}</h3>
+        <h2 class="mono">{modOf.path}</h2>
         <p>
           {#if modOf.manifest}<span class="pill">{modOf.manifest}</span>{/if}
           {#each modOf.languages as l}<span class="pill">{l}</span>{/each}
-          <span class="muted">{modOf.src_files} source files · {modOf.test_files} test files · {symbolsOf(modOf)} symbols</span>
+          <span class="muted">{plural(modOf.src_files, "source file")} · {plural(modOf.test_files, "test file")} · {plural(symbolsOf(modOf), "symbol")}</span>
         </p>
         {#if Object.keys(modOf.symbols).length}<p class="muted">{Object.entries(modOf.symbols).map(([k, n]) => `${n} ${k}`).join(" · ")}</p>{/if}
         {#if modOf.depends_on.length}<p>depends on {#each modOf.depends_on as d}<a class="id" href={u({ tab: "modules", module: d.module })} title="{d.edges} edges">{d.module}</a>{" "}{/each}</p>{/if}
         {#if usedBy.length}<p>used by {#each usedBy as d}<a class="id" href={u({ tab: "modules", module: d.path })}>{d.path}</a>{" "}{/each}</p>{/if}
       </section>
-      <h3>Tests <span class="muted">{modOf.tests}</span> <a class="more" href={u({ tab: "tests", module: modOf.path })}>filter in Tests</a></h3>
+      <h2>Tests <span class="muted">{modOf.tests}</span> <a class="more" href={u({ tab: "tests", module: modOf.path })}>filter in Tests</a></h2>
       {#if tests === null}<p class="muted">Loading tests…</p>
       {:else if !testsOf(modOf.path)}<p class="muted">No tests detected in this module.</p>
       {:else}{@render cases(testsOf(modOf.path).files)}{/if}
@@ -489,7 +498,7 @@
     {:else}
       <p class="muted">{tests.total} tests detected in {tests.modules.length} modules, {taggedN} tagged with a requirement. {tests.note}</p>
       {#each groups as g (g.module)}
-        <h3 class="mono"><a href={u({ tab: "modules", module: g.module })}>{g.module}</a></h3>
+        <h2 class="mono modh"><a href={u({ tab: "modules", module: g.module })}>{g.module}</a> <span class="muted">{g.files.reduce((n, f) => n + f.tests.length, 0)} tests</span></h2>
         {@render cases(g.files)}
       {/each}
       {#if !matched.length}<p class="muted empty">No test matches. <a href="/tests">Clear filters</a></p>{/if}
@@ -588,12 +597,15 @@
   details ul { margin: 0; padding-left: 18px; } details li { margin: 4px 0; }
   .ids { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 0; }
 
-  h4 { margin: 12px 0 4px; font-size: 13px; }
+  h4, h3.file { margin: 12px 0 4px; font-size: 13px; }
+  h2 { margin: 18px 0 6px; font-size: 16px; }
+  h2.modh { padding-bottom: 4px; border-bottom: 1px solid var(--line); margin-top: 26px; }
+  h2.modh .muted { font-size: 13px; font-weight: 400; font-family: var(--sans, inherit); }
+  details.plain { margin: 12px 0 0; padding: 6px 10px; }
   th { text-align: left; font-size: 12px; font-weight: 600; color: var(--muted); padding: 7px 10px; border-bottom: 1px solid var(--line); }
   .num { text-align: right; font-variant-numeric: tabular-nums; }
   a.more { font-size: 13px; font-weight: 400; margin-left: 8px; }
   select { font: inherit; }
-  summary a { font-weight: 400; font-size: 13px; }
 
   /* ids, links, pills */
   a.id { font-family: var(--mono); font-size: 12.5px; padding: 1px 7px; white-space: nowrap; text-decoration: none; border: 1px solid var(--line); border-radius: 6px; background: var(--card); }
@@ -618,7 +630,7 @@
   .split { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; align-items: start; }
   @media (min-width: 1000px) { .split:has(aside) { grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); } }
   table { width: 100%; border-collapse: collapse; }
-  td { padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  td { padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: baseline; }
   tr[onclick] { cursor: pointer; }
   tr[onclick] td:first-child { border-left: 3px solid transparent; }
   tr.st-none td:first-child { border-left-color: var(--bad); }
