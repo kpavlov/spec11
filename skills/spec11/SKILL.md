@@ -37,7 +37,7 @@ Add it to the client's MCP config if the `spec_*` tools are not available. `spec
 
 **CLI (no server needed).** `spec11 [--root DIR] [--json] report|status|trace|overlap|uncovered`. Output is plain text, identical on every run for the same tree.
 
-**Configuration.** Defaults are Swift (`RunSolo/...` paths). Any other layout goes in an optional `spec11.json` at the repo root: `specs`, `tests`, `src`, `ext`, `comment`, `decl`, `assert`, `off`, `retired_prefixes`, `codegraph`, `infra_paths`.
+**Configuration.** None is needed in the usual layouts: the specs folder (`specs/`, `spec/`, `docs/specs/`, `openspec/specs/`, `.kiro/specs/`, a `docs/` holding requirement bullets) and the source and test folders, extensions and regexes of the dominant language (Swift, Rust, TypeScript/JavaScript, Python, Go, Java/Kotlin/Scala, C#, Ruby, PHP, C/C++) are detected, from the CodeGraph index when there is one. Symlinks count only inside the repo root or `ALLOWED_PATHS`. Anything else, or a second language, goes in an optional `spec11.json` at the repo root: `specs`, `tests`, `src`, `ext`, `comment`, `decl`, `assert`, `off`, `test_files`, `retired_prefixes`, `codegraph`, `infra_paths`; a field you set replaces its detected value.
 
 ## Exploring the project status
 

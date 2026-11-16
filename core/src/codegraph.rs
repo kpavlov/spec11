@@ -80,7 +80,7 @@ impl Graph {
 
     /// {id: app files (relative to `app`)} each tagged test reaches through calls/instantiates/references, up to 3 hops, through test helpers.
     /// An id with tests but no files has tests the graph cannot connect to app code.
-    pub fn code_links(&self, tests: &Refs, app: &str, test_dirs: &[String]) -> R<HashMap<String, BTreeSet<String>>> {
+    pub fn code_links(&self, tests: &Refs, app: &str, is_test: &dyn Fn(&str) -> bool) -> R<HashMap<String, BTreeSet<String>>> {
         let mut inside = self.c.prepare("select id from nodes where file_path=?1 and start_line<=?2 and end_line>=?2 and kind in ('method','function') order by end_line-start_line limit 1")?;
         let mut out_edges = self.c.prepare(&format!("select e.target, n.file_path from edges e join nodes n on n.id=e.target where e.source=?1 and e.kind in ({USES})"))?;
         let mut out = HashMap::new();
@@ -94,10 +94,12 @@ impl Graph {
                     for src in &frontier {
                         let rows: Vec<(String, String)> = out_edges.query_map([src], |x| Ok((x.get(0)?, x.get(1)?)))?.collect::<Result<_, _>>()?;
                         for (dst, path) in rows {
-                            if let Some(rest) = path.strip_prefix(app) {
+                            if is_test(&path) {
+                                if seen.insert(dst.clone()) {
+                                    next.push(dst);
+                                }
+                            } else if let Some(rest) = path.strip_prefix(app) {
                                 files.insert(rest.to_string());
-                            } else if test_dirs.iter().any(|d| path.starts_with(d.as_str())) && seen.insert(dst.clone()) {
-                                next.push(dst);
                             }
                         }
                     }
@@ -106,6 +108,12 @@ impl Graph {
             }
         }
         Ok(out)
+    }
+
+    /// Repo-relative paths of the files the index covers (generated ones left out): what layout detection starts from.
+    pub fn file_paths(&self) -> R<Vec<String>> {
+        let mut st = self.c.prepare("select path from files where generated=0 order by path")?;
+        Ok(st.query_map([], |r| r.get(0))?.collect::<Result<_, _>>()?)
     }
 
     /// (start, end, qualified name) of declarations in `file`.

@@ -1,11 +1,12 @@
-//! `spec11.json` at the repo root. Every field defaults to what the Python scripts hardcoded (run-solo, Swift).
+//! `spec11.json` at the repo root. Every field is optional: an empty one is detected from the repo (see `detect.rs`).
+use crate::detect::{self, Layout};
 use serde::Deserialize;
 use std::path::Path;
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct Config {
-    /// Folder of `*.md` specs, relative to the root.
+    /// Folder of `*.md` specs, relative to the root (also in subfolders).
     pub specs: String,
     pub tests: Vec<String>,
     pub src: Vec<String>,
@@ -19,29 +20,13 @@ pub struct Config {
     pub assert: String,
     /// A test head containing a match is switched off.
     pub off: String,
+    /// A file whose repo-relative path matches is a test, also inside a `src` folder (`a_test.go`, `a.test.ts`).
+    pub test_files: String,
     pub retired_prefixes: Vec<String>,
+    /// CodeGraph index; empty = `.codegraph/codegraph.db`.
     pub codegraph: String,
     /// Path prefixes under `src[0]` that `uncovered` treats as plumbing.
     pub infra_paths: Vec<String>,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        let v = |xs: &[&str]| xs.iter().map(|s| s.to_string()).collect();
-        Config {
-            specs: "specs".into(),
-            tests: v(&["RunSolo/RunSoloTests", "RunSolo/RunSoloUITests"]),
-            src: v(&["RunSolo/RunSolo"]),
-            ext: v(&["swift"]),
-            comment: v(&["//"]),
-            decl: r"^\s*(?:(?:public|internal|private|fileprivate|final|nonisolated|indirect|static)\s+)*(?:struct|class|enum|actor|protocol|extension|func|typealias)\s+([A-Za-z_]\w*)".into(),
-            assert: r"#expect|#require|XCTAssert|XCTFail|XCTUnwrap|Issue\.record|confirmation\(".into(),
-            off: r"\.disabled\(|\.enabled\(if: false|XCTSkip".into(),
-            retired_prefixes: v(&["BKP", "DRD", "ROLE"]),
-            codegraph: ".codegraph/codegraph.db".into(),
-            infra_paths: v(&["UI/Components/", "UI/DataTypes/", "RunSoloApp.swift"]),
-        }
-    }
 }
 
 impl Config {
@@ -53,5 +38,43 @@ impl Config {
         }
         let text = std::fs::read_to_string(&f).map_err(|e| format!("{}: {e}", f.display()))?;
         serde_json::from_str(&text).map_err(|e| format!("{}: {e}", f.display()))
+    }
+
+    /// Fill what the file left empty from the repo's file list (CodeGraph's, else a walk); what it set stays as it is.
+    /// (SCAN-09)
+    pub fn detect(&mut self, files: &[String]) {
+        if self.codegraph.is_empty() {
+            self.codegraph = ".codegraph/codegraph.db".into();
+        }
+        let Some(Layout { profile: p, src, tests }) = detect::layout(files) else { return self.never() };
+        let v = |xs: &[&str]| xs.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let (explicit_src, explicit_tests) = (!self.src.is_empty(), !self.tests.is_empty());
+        for (field, auto) in [(&mut self.src, src), (&mut self.tests, tests), (&mut self.ext, v(p.ext)), (&mut self.comment, v(p.comment))] {
+            if field.is_empty() {
+                *field = auto;
+            }
+        }
+        // a profile's test regex describes its own layout; a hand-written src/tests list keeps the user's meaning
+        for (field, auto) in [(&mut self.decl, p.decl), (&mut self.assert, p.assert), (&mut self.off, p.off)] {
+            if field.is_empty() {
+                *field = auto.into();
+            }
+        }
+        if self.test_files.is_empty() && !(explicit_src && explicit_tests) {
+            self.test_files = p.test.into();
+        }
+        self.never();
+    }
+
+    /// Regexes that are still empty match nothing (an ecosystem spec11 does not know).
+    fn never(&mut self) {
+        for r in [&mut self.decl, &mut self.assert, &mut self.off] {
+            if r.is_empty() {
+                *r = detect::NEVER.into();
+            }
+        }
+        if self.codegraph.is_empty() {
+            self.codegraph = ".codegraph/codegraph.db".into();
+        }
     }
 }

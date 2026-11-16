@@ -60,16 +60,16 @@ pub fn run(root: Option<&Path>, mcp_port: u16) -> Vec<Check> {
     let mut out = vec![];
     let p = match Project::open(root) {
         Ok(p) => p,
-        Err(e) => return vec![c("repo", "fail", e, Some("run inside a repo with a specs/ folder, or pass --root; other layouts: spec11.json"))],
+        Err(e) => return vec![c("repo", "fail", e, Some("run inside a repo with a specs folder (specs/, spec/, docs/specs/ ...), or pass --root; other layouts: spec11.json"))],
     };
     out.push(c("repo", "ok", p.root.display().to_string(), None));
     let cfg_file = p.root.join("spec11.json");
-    out.push(c("config", "ok", if cfg_file.exists() { "spec11.json".to_string() } else { "no spec11.json: Swift defaults".to_string() }, None));
+    out.push(c("config", "ok", if cfg_file.exists() { "spec11.json".to_string() } else { "no spec11.json: layout detected from the repo".to_string() }, None));
 
     match Analysis::load(Some(&p.root)) {
         Ok(a) => {
             let r = a.report();
-            let (level, hint) = if r.requirements == 0 { ("warn", Some("no `- **ABC-12** MUST — text` bullets found in specs/*.md")) } else { ("ok", None) };
+            let (level, hint) = if r.requirements == 0 { ("warn", Some("no `- **ABC-12** MUST — text` bullets found in the specs folder")) } else { ("ok", None) };
             out.push(c("specs", level, format!("{} requirements in {} spec files", r.requirements, r.spec_files), hint));
             if !r.spec_issues.is_empty() {
                 out.push(c("spec issues", "warn", format!("{} (first: {})", r.spec_issues.len(), r.spec_issues[0]), Some("spec11 status --issues")));
@@ -78,10 +78,10 @@ pub fn run(root: Option<&Path>, mcp_port: u16) -> Vec<Check> {
         Err(e) => out.push(c("specs", "fail", e, None)),
     }
 
-    for (name, dirs) in [("tests", &p.cfg.tests), ("sources", &p.cfg.src)] {
+    for (name, dirs, files) in [("tests", &p.cfg.tests, p.test_files()), ("sources", &p.cfg.src, p.src_files())] {
         let missing: Vec<&String> = dirs.iter().filter(|d| !p.root.join(d).is_dir()).collect();
-        let n = p.files(dirs).len();
-        let list = dirs.join(", ");
+        let n = files.len();
+        let list = if dirs.is_empty() { "the repo".to_string() } else { dirs.join(", ") };
         if !missing.is_empty() {
             out.push(c(name, "warn", format!("not found: {}", missing.iter().map(|d| d.as_str()).collect::<Vec<_>>().join(", ")), Some("set the folders in spec11.json (\"tests\", \"src\", \"ext\")")));
         } else if n == 0 {
@@ -107,7 +107,7 @@ pub fn run(root: Option<&Path>, mcp_port: u16) -> Vec<Check> {
             c("codegraph index", "warn", format!("{} not found: not initialized", p.cfg.codegraph), Some(hint))
         }
         Ok(Some(_)) => {
-            let newest = p.files(&p.cfg.src).into_iter().chain(p.files(&p.cfg.tests)).filter_map(|f| mtime(&p.root.join(f))).max();
+            let newest = p.src_files().into_iter().chain(p.test_files()).filter_map(|f| mtime(&p.root.join(f))).max();
             match (mtime(&db), newest) {
                 (Some(d), Some(n)) if n > d => c("codegraph index", "warn", "initialized, but older than the newest source or test file", Some("run `codegraph sync`")),
                 _ => c("codegraph index", "ok", format!("{} readable, schema supported", p.cfg.codegraph), None),

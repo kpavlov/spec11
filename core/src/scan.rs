@@ -1,10 +1,11 @@
 //! File scanning: spec IDs, test tags `[ABC-12]`, source comment mentions. Port of scripts/common.py (minus SQL).
+use crate::codegraph::Graph;
 use crate::config::Config;
+use crate::detect;
 use indexmap::IndexMap;
 use regex::Regex;
 use serde::Serialize;
 use std::{cell::RefCell, collections::HashMap, path::{Path, PathBuf}, process::Command, rc::Rc};
-use walkdir::WalkDir;
 
 const ID: &str = r"[A-Z]{2,5}-\d{1,3}";
 const DONE: &str = r"[✅✔☑✳]\x{FE0F}?"; // check marks: a hint that the requirement is done
@@ -46,6 +47,7 @@ pub struct Rx {
     pub decl: Regex,
     assert: Regex,
     off: Regex,
+    test: Option<Regex>,
 }
 
 impl Rx {
@@ -65,6 +67,7 @@ impl Rx {
             decl: r(cfg.decl.clone())?,
             assert: r(cfg.assert.clone())?,
             off: r(cfg.off.clone())?,
+            test: if cfg.test_files.is_empty() { None } else { Some(r(cfg.test_files.clone())?) },
         })
     }
 }
@@ -73,12 +76,14 @@ pub struct Project {
     pub root: PathBuf,
     pub cfg: Config,
     pub rx: Rx,
+    /// Where a symlink may point: the root and `ALLOWED_PATHS`.
+    allow: Vec<PathBuf>,
     cache: RefCell<HashMap<String, Rc<Vec<String>>>>,
 }
 
-/// The repo is the nearest ancestor of `from` that has a specs folder.
+/// The repo is the nearest ancestor of `from` that has the `specs` folder, or, when none is configured, any known spec folder.
 pub fn find_root(from: &Path, specs: &str) -> Option<PathBuf> {
-    from.ancestors().find(|d| d.join(specs).is_dir()).map(Path::to_path_buf)
+    from.ancestors().find(|d| if specs.is_empty() { detect::spec_dir(d, &detect::allow_list(d)).is_some() } else { d.join(specs).is_dir() }).map(Path::to_path_buf)
 }
 
 impl Project {
@@ -91,13 +96,21 @@ impl Project {
         // the config can move the specs folder, so look for spec11.json first
         let base = start.ancestors().find(|d| d.join("spec11.json").exists()).unwrap_or(&start);
         let cfg = Config::load(base)?;
-        let root = if root.is_some() { start.clone() } else { find_root(&start, &cfg.specs).ok_or_else(|| format!("spec11: no {}/ folder in {} or above", cfg.specs, start.display()))? };
-        if !root.join(&cfg.specs).is_dir() {
+        let hint = |at: &str| format!("spec11: no specs folder (specs/, spec/, docs/specs/, openspec/specs/ ...) in {at}; set \"specs\" in spec11.json");
+        let root = if root.is_some() { start.clone() } else { find_root(&start, &cfg.specs).ok_or_else(|| hint(&format!("{} or above", start.display())))? };
+        let mut cfg = Config::load(&root)?;
+        let allow = detect::allow_list(&root);
+        if cfg.specs.is_empty() {
+            cfg.specs = detect::spec_dir(&root, &allow).ok_or_else(|| hint(&root.display().to_string()))?;
+        } else if !root.join(&cfg.specs).is_dir() {
             return Err(format!("spec11: no {}/ folder in {}", cfg.specs, root.display()));
         }
-        let cfg = Config::load(&root)?;
+        // (SCAN-09) what spec11.json leaves out comes from the CodeGraph file list, else from a walk of the repo
+        let indexed = Graph::open(&root.join(if cfg.codegraph.is_empty() { ".codegraph/codegraph.db" } else { &cfg.codegraph })).ok().flatten().and_then(|g| g.file_paths().ok());
+        let files = indexed.unwrap_or_else(|| detect::walk(&root, &allow).iter().filter_map(|f| f.strip_prefix(&root).ok()).map(|f| f.to_string_lossy().replace('\\', "/")).collect());
+        cfg.detect(&files);
         let rx = Rx::new(&cfg)?;
-        Ok(Project { root, cfg, rx, cache: RefCell::default() })
+        Ok(Project { root, cfg, rx, allow, cache: RefCell::default() })
     }
 
     pub fn lines(&self, rel: &str) -> Rc<Vec<String>> {
@@ -114,28 +127,39 @@ impl Project {
         p.strip_prefix(&self.root).unwrap_or(p).to_string_lossy().replace('\\', "/")
     }
 
-    /// Files with a configured extension under each dir, sorted per dir.
+    /// Files with a configured extension under each dir, sorted per dir. Symlinks count only inside the root or `ALLOWED_PATHS`.
     pub fn files(&self, dirs: &[String]) -> Vec<String> {
-        let mut out = vec![];
-        for d in dirs {
-            let mut fs: Vec<PathBuf> = WalkDir::new(self.root.join(d))
-                .into_iter()
-                .filter_map(Result::ok)
-                .filter(|e| e.file_type().is_file() && e.path().extension().and_then(|x| x.to_str()).is_some_and(|x| self.cfg.ext.iter().any(|y| y == x)))
-                .map(|e| e.into_path())
-                .collect();
-            fs.sort();
-            out.extend(fs.iter().map(|p| self.rel(p)));
-        }
-        out
+        let ext = |p: &PathBuf| p.extension().and_then(|x| x.to_str()).is_some_and(|x| self.cfg.ext.iter().any(|y| y == x));
+        dirs.iter().flat_map(|d| detect::walk(&if d == "." { self.root.clone() } else { self.root.join(d) }, &self.allow).into_iter().filter(ext).map(|p| self.rel(&p)).collect::<Vec<_>>()).collect()
     }
 
-    fn spec_files(&self) -> Vec<String> {
-        let mut fs: Vec<String> = std::fs::read_dir(self.root.join(&self.cfg.specs))
-            .map(|rd| rd.filter_map(Result::ok).map(|e| e.file_name().to_string_lossy().into_owned()).filter(|n| n.ends_with(".md")).collect())
-            .unwrap_or_default();
-        fs.sort();
-        fs
+    fn is_test(&self, rel: &str) -> bool {
+        self.rx.test.as_ref().is_some_and(|r| r.is_match(rel))
+    }
+
+    /// A file in a tests folder, or one that `test_files` says is a test.
+    pub fn is_test_path(&self, rel: &str) -> bool {
+        self.is_test(rel) || self.cfg.tests.iter().any(|d| d == "." || rel.starts_with(&format!("{d}/")))
+    }
+
+    /// The test files: those under `tests`, plus test-named files that sit in `src` folders.
+    pub fn test_files(&self) -> Vec<String> {
+        let mut v = self.files(&self.cfg.tests);
+        v.extend(self.files(&self.cfg.src).into_iter().filter(|f| self.is_test(f)));
+        let mut seen = std::collections::HashSet::new();
+        v.retain(|f| seen.insert(f.clone()));
+        v
+    }
+
+    /// The source files: those under `src` that are not tests.
+    pub fn src_files(&self) -> Vec<String> {
+        self.files(&self.cfg.src).into_iter().filter(|f| !self.is_test(f)).collect()
+    }
+
+    /// The `*.md` files of the specs folder and its subfolders, relative to it.
+    pub fn spec_files(&self) -> Vec<String> {
+        let dir = self.root.join(&self.cfg.specs);
+        detect::walk(&dir, &self.allow).iter().filter(|p| p.extension().is_some_and(|x| x == "md")).filter_map(|p| p.strip_prefix(&dir).ok()).map(|p| p.to_string_lossy().replace('\\', "/")).collect()
     }
 
     // (SCAN-01)
@@ -202,7 +226,7 @@ impl Project {
     /// {id: [ref]} for every `[ID]` or `[ID, ID]` tag in the test folders.
     pub fn tests(&self) -> Refs {
         let mut found = Refs::new();
-        for rel in self.files(&self.cfg.tests) {
+        for rel in self.test_files() {
             for (i, line) in self.lines(&rel).iter().enumerate() {
                 for id in self.tagged(line) {
                     found.entry(id).or_default().push(Ref { file: rel.clone(), line: i + 1, text: line.trim().to_string() });
@@ -225,7 +249,7 @@ impl Project {
     /// {id: [ref]} for IDs mentioned after a line-comment marker in app sources (block comments are not scanned).
     pub fn sources(&self) -> Refs {
         let mut found = Refs::new();
-        for rel in self.files(&self.cfg.src) {
+        for rel in self.src_files() {
             for (i, line) in self.lines(&rel).iter().enumerate() {
                 if let Some(c) = self.comment_of(line) {
                     for m in self.rx.mention.captures_iter(c) {

@@ -92,7 +92,7 @@ fn config_comes_from_spec11_json_or_defaults() {
     write(&bare, "specs/01-a.md", "- **AAA-01** MUST — one.\n");
     let a = Analysis::load(Some(&bare)).unwrap();
     assert_eq!(a.p.cfg.specs, "specs");
-    assert_eq!(a.p.cfg.ext, vec!["swift".to_string()]); // the defaults
+    assert!(a.p.cfg.ext.is_empty() && a.p.cfg.src.is_empty()); // nothing to detect from
 
     write(&bare, "spec11.json", "{not json");
     let err = Analysis::load(Some(&bare)).err().expect("a broken spec11.json is an error");
@@ -187,4 +187,82 @@ fn codegraph_schema_drift_is_an_error_not_a_panic() {
     }
     let a = Analysis::load(Some(&d)).unwrap(); // the rest still works
     assert!(a.graph.is_none() && a.graph_note.unwrap().contains("schema not supported"));
+}
+
+#[doc = "[SCAN-09]"]
+#[test]
+fn layout_is_detected_when_spec11_json_is_missing() {
+    use spec11_core::detect::{layout, spec_dir};
+    let d = std::env::temp_dir().join(format!("spec11-{}-detect", std::process::id()));
+    let _ = fs::remove_dir_all(&d);
+    write(&d, "docs/specs/01-a.md", "- **AAA-01** MUST — one.\n");
+    write(&d, "docs/guide.md", "no requirements here\n");
+    write(&d, "pkg/mod.py", "# (AAA-01)\ndef f(): pass\n");
+    write(&d, "tests/test_mod.py", "# [AAA\x2D01]\ndef test_f():\n    assert True\n");
+    let a = Analysis::load(Some(&d)).unwrap();
+    let c = &a.p.cfg;
+    assert_eq!((c.specs.as_str(), c.src.clone(), c.tests.clone(), c.ext.clone(), c.comment.clone()), ("docs/specs", vec!["pkg".to_string()], vec!["tests".to_string()], vec!["py".to_string()], vec!["#".to_string()]));
+    assert_eq!(a.s.len(), 1);
+    assert!(a.c.contains_key("AAA-01"));
+
+    // spec folders: a generic docs/ counts only with a requirement bullet; Ruby's spec/ holds tests, not specs
+    let allow = |p: &Path| spec11_core::detect::allow_list(p);
+    let e = std::env::temp_dir().join(format!("spec11-{}-detect2", std::process::id()));
+    let _ = fs::remove_dir_all(&e);
+    write(&e, "docs/guide.md", "prose\n");
+    write(&e, "spec/a_spec.rb", "describe 1\n");
+    assert_eq!(spec_dir(&e, &allow(&e)), None);
+    write(&e, "openspec/specs/auth/spec.md", "- **AUT-01** MUST — x.\n");
+    assert_eq!(spec_dir(&e, &allow(&e)).as_deref(), Some("openspec/specs"));
+
+    // ecosystems, from file lists alone
+    let l = |fs: &[&str]| { let v: Vec<String> = fs.iter().map(|s| s.to_string()).collect(); layout(&v).map(|l| (l.profile.name, l.src, l.tests)) };
+    let s = |xs: &[&str]| xs.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+    assert_eq!(l(&["RunSolo/RunSolo/A.swift", "RunSolo/RunSoloTests/ATests.swift"]), Some(("swift", s(&["RunSolo"]), s(&["RunSolo/RunSoloTests"]))));
+    assert_eq!(l(&["Sources/App/A.swift", "Tests/AppTests/ATests.swift"]), Some(("swift", s(&["Sources"]), s(&["Tests"]))));
+    assert_eq!(l(&["core/src/a.rs", "core/tests/t.rs", "server/src/b.rs", "web/src/x.ts"]), Some(("rust", s(&["core/src", "server/src"]), s(&["core/src", "core/tests", "server/src"]))));
+    assert_eq!(l(&["cmd/x/main.go", "internal/a.go", "internal/a_test.go"]), Some(("go", s(&["cmd", "internal"]), vec![])));
+    assert_eq!(l(&["src/main/java/A.java", "src/test/java/ATest.java"]), Some(("jvm", s(&["src/main"]), s(&["src/test"]))));
+    assert_eq!(l(&["web/src/a.ts", "web/src/a.test.ts", "web/e2e/b.ts", "web/node_modules/x/y.js"]), Some(("typescript", s(&["web/src"]), s(&["web/e2e"]))));
+    assert_eq!(l(&["lib/a.rb", "spec/a_spec.rb", ".hidden/x.rb"]), Some(("ruby", s(&["lib"]), s(&["spec"]))));
+    assert_eq!(l(&["README.md"]), None);
+
+    // colocated tests (Go, TS) are told apart from sources by name, so a citation in a test is not a source citation
+    let g = std::env::temp_dir().join(format!("spec11-{}-detect3", std::process::id()));
+    let _ = fs::remove_dir_all(&g);
+    write(&g, "specs/01.md", "- **GOO-01** MUST — x.\n");
+    write(&g, "internal/a.go", "package a\n// (GOO-01)\nfunc A() {}\n");
+    write(&g, "internal/a_test.go", "package a\n// [GOO\x2D01]\nfunc TestA(t *testing.T) {\n\tt.Fatal(1)\n}\n");
+    let a = Analysis::load(Some(&g)).unwrap();
+    assert_eq!((a.p.src_files(), a.p.test_files()), (vec!["internal/a.go".to_string()], vec!["internal/a_test.go".to_string()]));
+    assert_eq!(a.state["GOO-01"], "tested");
+}
+
+#[cfg(unix)]
+#[doc = "[SCAN-10]"]
+#[test]
+fn symlinks_are_followed_only_inside_root_or_allowed_paths() {
+    let d = std::env::temp_dir().join(format!("spec11-{}-links", std::process::id()));
+    let out = std::env::temp_dir().join(format!("spec11-{}-links-out", std::process::id()));
+    let ok = std::env::temp_dir().join(format!("spec11-{}-links-ok", std::process::id()));
+    for x in [&d, &out, &ok] {
+        let _ = fs::remove_dir_all(x);
+    }
+    write(&d, "specs/01.md", "- **LNK-01** MUST — x.\n");
+    write(&d, "src/a.py", "# (LNK-01)\n");
+    write(&d, "real/b.py", "# (LNK-01)\n");
+    write(&out, "c.py", "# (LNK-01)\n");
+    write(&ok, "e.py", "# (LNK-01)\n");
+    write(&d, "spec11.json", r#"{"src":["src"],"tests":["tests"],"ext":["py"]}"#);
+    let (inside, outside, allowed) = (d.join("src/inside"), d.join("src/outside"), d.join("src/allowed"));
+    std::os::unix::fs::symlink(d.join("real"), &inside).unwrap();
+    std::os::unix::fs::symlink(&out, &outside).unwrap();
+    std::os::unix::fs::symlink(&ok, &allowed).unwrap();
+    std::os::unix::fs::symlink(out.join("c.py"), d.join("src/file.py")).unwrap(); // a file link, too
+    let files = || Analysis::load(Some(&d)).unwrap().p.src_files();
+    unsafe { std::env::remove_var("ALLOWED_PATHS") };
+    assert_eq!(files(), ["src/a.py", "src/inside/b.py"]);
+    unsafe { std::env::set_var("ALLOWED_PATHS", std::env::join_paths([&ok]).unwrap()) };
+    assert_eq!(files(), ["src/a.py", "src/allowed/e.py", "src/inside/b.py"]);
+    unsafe { std::env::remove_var("ALLOWED_PATHS") };
 }

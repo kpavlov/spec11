@@ -1,9 +1,10 @@
 {
-  "specs": "specs",
+  "specs": "docs/specs",
   "tests": ["Tests"],
   "src": ["Sources"],
   "ext": ["swift"],
   "comment": ["//"],
+  "test_files": "(^|/)[^/]*Tests?(/|\\.swift$)",
   "retired_prefixes": [],
   "codegraph": ".codegraph/codegraph.db"
 }

@@ -1,8 +1,5 @@
-# spec11: Rust core + server + Svelte dashboard. Targets the run-solo repo by default.
+# spec11: Rust core + server + Svelte dashboard. Scans the current directory unless ROOT is given.
 SHELL := /bin/bash
-# default target repo: run-solo when it exists on this machine, else the current directory
-RUN_SOLO := /Users/maestro/code/github/itstaffhq/run-solo
-# ROOT ?= $(if $(wildcard $(RUN_SOLO)/specs),$(RUN_SOLO),$(CURDIR))
 ROOT ?= $(CURDIR)
 PORT ?= 7411
 OPEN ?= 1

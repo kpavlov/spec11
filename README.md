@@ -20,7 +20,8 @@ It replaces the earlier Python scripts (output is identical; `make parity` can d
 - Test tags: `[ABC-12]` in test titles; source citations `(ABC-12)` in `//` comments
 - States: `tested`, `src-only`, `none`, `manual`, `later`; check-marked requirements get a verdict `ok`, `NO-TEST`, `NO-LINK`
 - Optional [CodeGraph](https://github.com/colbymchenry/codegraph) index (`.codegraph/codegraph.db`, opened read-only) adds test→code links, overlap and uncovered-code analysis. Without it those are "not checked", never an error.
-- Defaults are Swift/run-solo. Override in `spec11.json` at the repo root (see `spec11.example.json`).
+- No config needed: the specs folder (`specs/`, `spec/`, `docs/specs/`, `openspec/specs/`, `.kiro/specs/`, a `docs/` with requirement bullets ...) and the source and test folders, extensions and regexes (Swift, Rust, TypeScript/JavaScript, Python, Go, Java/Kotlin/Scala, C#, Ruby, PHP, C/C++) are detected, from the CodeGraph file list when `.codegraph/` exists, else from the repo's files. Mixed repos use the dominant language; override any field in `spec11.json` at the repo root (see `spec11.example.json`).
+- Symlinks are followed only when they resolve inside the repo root or a path in the `ALLOWED_PATHS` environment variable (path list, `:`-separated).
 
 ## Run
 
@@ -49,7 +50,7 @@ Tools: `spec_report`, `spec_status`, `spec_trace`, `spec_overlap`, `spec_uncover
 
 ## Dashboard URLs
 
-The URL is the view, so back/forward, reload and shared links work: `/report`, `/requirements/DOC-25?state=none&q=text`, `/specs?file=04-documents.md&id=DOC-25`, `/code?path=RunSolo/RunSolo/A.swift&line=12`, `/overlap`, `/uncovered`, `/setup`. Tests, citations and spec locations link to the file viewer or spec; IDs inside code and markdown link to the requirement.
+The URL is the view, so back/forward, reload and shared links work: `/report`, `/requirements/DOC-25?state=none&q=text`, `/specs?file=04-documents.md&id=DOC-25`, `/code?path=src/main.rs&line=12`, `/overlap`, `/uncovered`, `/setup`. Tests, citations and spec locations link to the file viewer or spec; IDs inside code and markdown link to the requirement.
 
 ## Doctor
 

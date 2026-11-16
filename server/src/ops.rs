@@ -36,7 +36,7 @@ pub fn tools() -> Vec<Tool> {
         Tool { name: "spec_overlap", description: "Code covered by 2+ requirements (CodeGraph index): where two specs may conflict or complement each other. A candidate list, not a verdict.", schema: obj(merge(path.clone(), json!({"all": {"type": "boolean", "description": "also pairs from the same spec file"}}))), ui: false },
         Tool { name: "spec_uncovered", description: "Code no requirement covers (CodeGraph index): candidates for a missing requirement, not proof.", schema: obj(merge(path, json!({"fanin": {"type": "integer"}, "min": {"type": "integer"}}))), ui: false },
         Tool { name: "spec_file", description: "A spec file's markdown (read-only; name is a file in the specs folder, e.g. 04-documents.md). Without name: the list of spec files.", schema: obj(json!({"name": {"type": "string", "description": "spec file name, e.g. 04-documents.md"}})), ui: false },
-        Tool { name: "spec_source", description: "A test or source file's text (read-only; path is one of the scanned test/source files, as in spec_trace output).", schema: obj(json!({"path": {"type": "string", "description": "repo-relative path, e.g. RunSolo/RunSolo/A.swift"}})), ui: false },
+        Tool { name: "spec_source", description: "A test or source file's text (read-only; path is one of the scanned test/source files, as in spec_trace output).", schema: obj(json!({"path": {"type": "string", "description": "repo-relative path, e.g. src/main.rs"}})), ui: false },
         Tool { name: "spec_doctor", description: "Repo setup checks: specs, tests and source folders, git, the codegraph binary and whether the CodeGraph index is initialized, readable and fresh, skill and MCP entry. Only looks; never indexes or installs.", schema: obj(json!({})), ui: false },
         Tool { name: "spec_codegraph", description: "WRITES FILES, SLOW: build (action=init, when there is no .codegraph) or refresh (action=sync) the CodeGraph index by running the codegraph binary. Indexing is the user's decision: call only when the user asked for it. Same as `spec11 doctor --fix`.", schema: required(obj(json!({"action": {"type": "string", "enum": ["init", "sync"]}})), "action"), ui: false },
         Tool { name: "spec_install_status", description: "Whether the spec11 skill and MCP entry are installed for this repo (.agents/skills, .mcp.json) or globally (~/.agents/skills), with what to run if not.", schema: obj(json!({})), ui: true },
@@ -137,8 +137,7 @@ pub fn call(root: Option<&Path>, name: &str, args: &Value, dashboard: &str, mcp_
         }
         "spec_file" => {
             let dir = a.p.root.join(&a.p.cfg.specs);
-            let mut names: Vec<String> = std::fs::read_dir(&dir).map_err(|e| e.to_string())?.filter_map(|e| e.ok()?.file_name().into_string().ok()).filter(|n| n.ends_with(".md")).collect();
-            names.sort();
+            let names = a.p.spec_files();
             let want = txt(args, "name");
             if want.is_empty() {
                 (names.join("\n") + "\n", json!({"files": names}))
@@ -153,7 +152,7 @@ pub fn call(root: Option<&Path>, name: &str, args: &Value, dashboard: &str, mcp_
         "spec_source" => {
             let want = txt(args, "path");
             // only paths the scanner itself lists: no traversal, nothing outside tests/src
-            if !a.p.files(&a.p.cfg.tests).iter().chain(a.p.files(&a.p.cfg.src).iter()).any(|f| f == want) {
+            if !a.p.test_files().iter().chain(a.p.src_files().iter()).any(|f| f == want) {
                 return Err(format!("{want}: not a scanned test or source file"));
             }
             let text = std::fs::read_to_string(a.p.root.join(want)).map_err(|e| e.to_string())?;

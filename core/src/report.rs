@@ -43,7 +43,7 @@ impl Analysis {
         };
         let mut a = Analysis { p, s, t, c, issues, state, graph, graph_note, links: None };
         if let Some(g) = &a.graph {
-            match g.code_links(&a.t, &a.app(), &a.p.cfg.tests) {
+            match g.code_links(&a.t, &a.app(), &|f| a.p.is_test_path(f)) {
                 Ok(l) => a.links = Some(l),
                 Err(e) => a.graph_note = Some(e.to_string()),
             }
@@ -51,9 +51,12 @@ impl Analysis {
         Ok(a)
     }
 
-    /// `RunSolo/RunSolo/`: the first src dir with a trailing slash.
+    /// `core/src/`: the first src dir with a trailing slash (empty for `.`).
     pub fn app(&self) -> String {
-        format!("{}/", self.p.cfg.src.first().map(String::as_str).unwrap_or(""))
+        match self.p.cfg.src.first().map(String::as_str) {
+            None | Some(".") => String::new(),
+            Some(d) => format!("{d}/"),
+        }
     }
 
     pub fn graph_err(&self, e: GraphError) -> String {
@@ -548,7 +551,7 @@ impl Analysis {
             source_cites.push(SourceCite { r, decl });
         }
         let mut defs: IndexMap<String, Vec<String>> = IndexMap::new();
-        for f in self.p.files(&self.p.cfg.src) {
+        for f in self.p.src_files() {
             let mut types = BTreeSet::new();
             for line in self.p.lines(&f).iter() {
                 if let Some(m) = self.p.rx.decl.captures(line) && idents.contains(&m[1]) && kw.is_match(line) {
