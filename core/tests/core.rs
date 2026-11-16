@@ -262,6 +262,58 @@ fn lenient_spec_formats() {
     assert!(a.issues.iter().any(|x| x.starts_with("LEN-06") && x.contains("has no MUST")));
 }
 
+fn scratch(name: &str) -> PathBuf {
+    let d = std::env::temp_dir().join(format!("spec11-{}-{name}", std::process::id()));
+    let _ = fs::remove_dir_all(&d);
+    d
+}
+
+#[doc = "[SCAN-12]"]
+#[test]
+fn specs_in_a_single_file_or_anywhere() {
+    let one = scratch("onefile");
+    write(&one, "SPEC.md", "- REQ-0001 MUST — one.\n");
+    let a = Analysis::load(Some(&one)).unwrap();
+    assert_eq!(a.s.keys().collect::<Vec<_>>(), ["REQ-0001"]);
+    assert_eq!(a.s["REQ-0001"].file, "SPEC.md");
+
+    let named = scratch("namedfile");
+    write(&named, "spec11.json", r#"{"specs":"design/all.md"}"#);
+    write(&named, "design/all.md", "1. NAM-01 SHALL do it.\n");
+    assert_eq!(Analysis::load(Some(&named)).unwrap().s["NAM-01"].file, "design/all.md");
+
+    let any = scratch("anymd");
+    write(&any, "notes/deep/a.md", "- **ANY-01** MUST — somewhere.\n");
+    let a = Analysis::load(Some(&any)).unwrap();
+    assert_eq!(a.s["ANY-01"].file, "notes/deep/a.md");
+}
+
+#[doc = "[SCAN-13]"]
+#[test]
+fn linked_docs_and_adrs_are_reference_docs() {
+    let d = scratch("adr");
+    write(&d, "spec11.json", r#"{"src":["src"],"tests":["tests"],"ext":["kt"],"comment":["//"]}"#);
+    write(&d, "docs/arch/drivers.md", "\
+The fold ([state-machine.md](state-machine.md)) decides nothing; see
+[ADR\x2D0003](../../decisions/0003-patterns.md) \u{a7}5 and [ADR\x2D0009](../../decisions/0009-gone.md).
+Also [site](https://example.com/ADR\x2D0004.md).
+");
+    write(&d, "docs/arch/state-machine.md", "# Fold\n");
+    write(&d, "decisions/0003-patterns.md", "# Architectural patterns\n");
+    write(&d, "decisions/0007-other.md", "# Other\n");
+    write(&d, "src/A.kt", "// (ADR-0003) the driver\nclass A\n");
+    let a = Analysis::load(Some(&d)).unwrap();
+    assert_eq!(a.s.keys().collect::<Vec<_>>(), ["ADR-0003", "ADR-0007"]);
+    let adr = &a.s["ADR-0003"];
+    assert_eq!((adr.file.as_str(), adr.level.as_str(), adr.text.as_str(), a.state["ADR-0003"].as_str()), ("decisions/0003-patterns.md", "DOC", "Architectural patterns", "ref"));
+    assert!(a.issues.iter().any(|x| x.starts_with("ADR-0009") && x.contains("does not exist")), "{:?}", a.issues);
+    let r = a.report();
+    assert_eq!((r.requirements, r.refs, r.due), (0, 2, 0));
+    let t = a.trace("ADR-0003").unwrap();
+    assert_eq!((t.linked_from.len(), t.source_cites.len()), (1, 1));
+    assert_eq!(t.linked_from[0].file, "docs/arch/drivers.md");
+}
+
 #[doc = "[SCAN-10]"]
 #[test]
 fn symlinks_are_followed_only_inside_root_or_allowed_paths() {

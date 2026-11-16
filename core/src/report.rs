@@ -23,6 +23,8 @@ pub struct Analysis {
     /// Why the CodeGraph index is not used (schema drift, unreadable); `None` when it is used or absent.
     pub graph_note: Option<String>,
     pub links: Option<Links>,
+    /// Who links to each ID with `[ID](path.md)`.
+    pub linked: Refs,
 }
 
 pub fn chars(s: &str, n: usize) -> String {
@@ -33,7 +35,9 @@ impl Analysis {
     pub fn load(root: Option<&Path>) -> Result<Analysis, String> {
         let p = Project::open(root)?;
         let mut issues = vec![];
-        let s = p.specs(&mut issues);
+        let mut s = p.specs(&mut issues);
+        let (docs, linked) = p.docs(&s, &mut issues);
+        s.extend(docs.into_iter().map(|d| (d.id.clone(), d)));
         p.check_refs(&s, &mut issues);
         let (t, c) = (p.tests(), p.sources());
         let state = s.iter().map(|(i, sp)| (i.clone(), if !sp.mark.is_empty() { sp.mark.clone() } else if t.contains_key(i) { "tested".into() } else if c.contains_key(i) { "src-only".into() } else { "none".into() })).collect();
@@ -41,7 +45,7 @@ impl Analysis {
             Ok(g) => (g, None),
             Err(e) => (None, Some(e.to_string())),
         };
-        let mut a = Analysis { p, s, t, c, issues, state, graph, graph_note, links: None };
+        let mut a = Analysis { p, s, t, c, issues, state, graph, graph_note, links: None, linked };
         if let Some(g) = &a.graph {
             match g.code_links(&a.t, &a.app(), &|f| a.p.is_test_path(f)) {
                 Ok(l) => a.links = Some(l),
@@ -156,6 +160,8 @@ pub struct Report {
     pub none: usize,
     pub manual: usize,
     pub later: usize,
+    /// Reference docs (linked markdown, decision records): never due.
+    pub refs: usize,
     pub retired: usize,
     pub problems: IndexMap<String, usize>,
     pub total_problems: usize,
@@ -180,6 +186,7 @@ impl Analysis {
         let src_only = by(&|i| self.state[i] == "src-only");
         let n_tested = self.s.keys().filter(|i| self.state[*i] == "tested").count();
         let due = n_tested + none.len() + src_only.len();
+        let refs = self.s.keys().filter(|i| self.state[*i] == "ref").count();
         let built = by(&|i| self.built(i));
         let unproven: Vec<Unproven> = by(&|_| true).into_iter().filter(|i| self.s[i].done && matches!(self.verdict(i), "NO-TEST" | "NO-LINK")).map(|i| {
             let s = &self.s[&i];
@@ -201,8 +208,8 @@ impl Analysis {
             ("specs_to_compare", overlaps.len()),
         ].into_iter().map(|(k, v)| (k.to_string(), v)).collect();
         Report {
-            spec_files: self.s.values().map(|s| &s.file).collect::<HashSet<_>>().len(),
-            requirements: self.s.len(),
+            spec_files: self.s.values().filter(|s| s.mark != "ref").map(|s| &s.file).collect::<HashSet<_>>().len(),
+            requirements: self.s.len() - refs,
             due,
             tested: n_tested,
             tested_pct: if due > 0 { 100 * n_tested / due } else { 0 },
@@ -210,6 +217,7 @@ impl Analysis {
             none: none.len(),
             manual: self.s.keys().filter(|i| self.state[*i] == "manual").count(),
             later: self.s.keys().filter(|i| self.state[*i] == "later").count(),
+            refs,
             retired: self.p.retired().len(),
             total_problems: problems.values().sum(),
             problems,
@@ -248,8 +256,9 @@ impl Report {
         };
         o.push_str("SDD STATUS\n");
         o.push_str(&format!(
-            "specs: {} files, {} requirements | due {}: tested {} ({}%), src-only {}, none {} | manual {} | later {} | retired {}\n",
-            self.spec_files, self.requirements, self.due, self.tested, self.tested_pct, self.src_only, self.none, self.manual, self.later, self.retired
+            "specs: {} files, {} requirements | due {}: tested {} ({}%), src-only {}, none {} | manual {} | later {}{} | retired {}\n",
+            self.spec_files, self.requirements, self.due, self.tested, self.tested_pct, self.src_only, self.none, self.manual, self.later,
+            if self.refs > 0 { format!(" | ref {}", self.refs) } else { String::new() }, self.retired
         ));
         let probs: Vec<String> = self.problems.iter().map(|(k, v)| format!("{} {v}", k.replace('_', " "))).collect();
         o.push_str(&format!("problems: {} | total {}\n", probs.join(" | "), self.total_problems));
@@ -323,6 +332,7 @@ pub struct SpecLine {
     pub none: Vec<String>,
     pub manual: usize,
     pub later: usize,
+    pub refs: usize,
     pub later_built: usize,
 }
 
@@ -338,6 +348,7 @@ pub struct Status {
     pub none: usize,
     pub manual: usize,
     pub later: usize,
+    pub refs: usize,
     pub later_built: usize,
     pub marked: usize,
     pub marked_no_test: Vec<String>,
@@ -373,7 +384,7 @@ impl Analysis {
                 if o.changed.is_some() {
                     let s = &self.s[i];
                     let mut w = vec![];
-                    if diff.get(&format!("{}/{}", self.p.cfg.specs, s.file)).is_some_and(|d| d.iter().any(|(lo, hi)| *lo <= s.end as i64 && *hi >= s.line as i64)) { w.push("spec".to_string()); }
+                    if diff.get(&s.file).is_some_and(|d| d.iter().any(|(lo, hi)| *lo <= s.end as i64 && *hi >= s.line as i64)) { w.push("spec".to_string()); }
                     if self.t.get(i).is_some_and(|r| r.iter().any(|x| diff.contains_key(&x.file))) { w.push("test".into()); }
                     if self.c.get(i).is_some_and(|r| r.iter().any(|x| diff.contains_key(&x.file))) { w.push("src".into()); }
                     if w.is_empty() { continue; }
@@ -390,11 +401,11 @@ impl Analysis {
         let mut by_spec: Vec<SpecLine> = by.into_iter().map(|(f, v)| {
             let owned: Vec<String> = v.iter().map(|x| x.to_string()).collect();
             let of = |k: &str| owned.iter().filter(|i| self.state[*i] == k).cloned().collect::<Vec<_>>();
-            let (manual, later) = (of("manual").len(), of("later"));
-            SpecLine { file: f.to_string(), tested: of("tested").len(), due: owned.len() - manual - later.len(), src_only: of("src-only"), none: of("none"), manual, later: later.len(), later_built: later.iter().filter(|i| self.built(i)).count() }
+            let (manual, later, refs) = (of("manual").len(), of("later"), of("ref").len());
+            SpecLine { file: f.to_string(), tested: of("tested").len(), due: owned.len() - manual - later.len() - refs, src_only: of("src-only"), none: of("none"), manual, later: later.len(), refs, later_built: later.iter().filter(|i| self.built(i)).count() }
         }).collect();
         by_spec.sort_by(|a, b| a.file.cmp(&b.file));
-        let (manual, later) = (count(&ids, "manual"), count(&ids, "later"));
+        let (manual, later, refs) = (count(&ids, "manual"), count(&ids, "later"), count(&ids, "ref"));
         let marked: Vec<&String> = ids.iter().filter(|i| self.s[*i].done).collect();
         Ok(Status {
             listing,
@@ -402,11 +413,12 @@ impl Analysis {
             rows,
             by_spec,
             tested: count(&ids, "tested"),
-            due: ids.len() - manual - later,
+            due: ids.len() - manual - later - refs,
             src_only: count(&ids, "src-only"),
             none: count(&ids, "none"),
             manual,
             later,
+            refs,
             later_built: ids.iter().filter(|i| self.built(i)).count(),
             marked: marked.len(),
             marked_no_test: marked.iter().filter(|i| self.verdict(i) == "NO-TEST").map(|i| i.to_string()).collect(),
@@ -514,6 +526,8 @@ pub struct Trace {
     pub cites: Vec<String>,
     pub tests: Vec<Ref>,
     pub source_cites: Vec<SourceCite>,
+    /// Markdown lines that link the ID with `[ID](path.md)`.
+    pub linked_from: Vec<Ref>,
     pub related: Vec<Related>,
     pub related_total: usize,
     /// `codegraph explore` query to read the real flow.
@@ -526,7 +540,7 @@ impl Analysis {
     pub fn trace(&self, id: &str) -> Option<Trace> {
         let want = id.to_uppercase();
         let spec = self.s.get(&want).cloned();
-        if spec.is_none() && !self.t.contains_key(&want) && !self.c.contains_key(&want) {
+        if spec.is_none() && !self.t.contains_key(&want) && !self.c.contains_key(&want) && !self.linked.contains_key(&want) {
             return None;
         }
         let word = regex::Regex::new(r"\b[A-Za-z_]\w{3,}\b").unwrap();
@@ -566,7 +580,8 @@ impl Analysis {
         let mut order: Vec<&String> = defs.keys().collect();
         order.sort_by_key(|r| (!cited.contains(*r), (*r).clone()));
         let related = order.iter().take(12).map(|r| Related { file: (*r).clone(), types: defs[*r].clone(), cites: cited.contains(*r) }).collect();
-        Some(Trace { id: want, spec, cites, tests, source_cites, related, related_total: defs.len(), query: names.iter().take(8).cloned().collect::<Vec<_>>().join(" ") })
+        let linked_from = self.linked.get(&want).cloned().unwrap_or_default();
+        Some(Trace { id: want, spec, cites, tests, source_cites, linked_from, related, related_total: defs.len(), query: names.iter().take(8).cloned().collect::<Vec<_>>().join(" ") })
     }
 }
 
@@ -586,6 +601,10 @@ impl Trace {
         o += "source cites (file:line  declaration):\n";
         for c in &self.source_cites { o += &format!("  {}:{}  {}  {}\n", c.r.file, c.r.line, if c.decl.is_empty() { "-" } else { &c.decl }, chars(&c.r.text, 90)); }
         if self.source_cites.is_empty() { o += "  none\n"; }
+        if !self.linked_from.is_empty() {
+            o += "linked from:\n";
+            for l in &self.linked_from { o += &format!("  {}:{}  {}\n", l.file, l.line, chars(&l.text, 110)); }
+        }
         o += "related code (types the tests name; * = also cites the ID):\n";
         for r in &self.related { o += &format!("  {} {}  {}\n", if r.cites { '*' } else { ' ' }, r.file, r.types.join(" ")); }
         if self.related.is_empty() { o += "  none found\n"; }

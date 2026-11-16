@@ -14,6 +14,8 @@ Deterministic evidence only: same tree, same text. No LLM in the core.
 - **SCAN-08** MUST — trace one ID to its spec text, tests and code citations.
 - **SCAN-09** SHOULD — detect what `spec11.json` leaves out: the specs folder (`specs/`, `spec/`, `docs/specs/`, `openspec/specs/`, `.kiro/specs/` and the like, a generic `docs/` only with a requirement bullet), and the source and test folders, extensions, comment markers and regexes of the dominant ecosystem, from the CodeGraph file list when an index exists, else from the repo's files.
 - **SCAN-11** SHOULD — also accept the common spec spellings: `*`, `+` and numbered lists, a plain, `**bold**` or `` `code` `` ID with an optional colon, the level anywhere in the line (`MUST`, `SHOULD`, `MAY`, `SHALL`), and `| ID | MUST | text |` table rows.
+- **SCAN-12** SHOULD — find specs beyond a specs folder of bullets: IDs of up to four digits (`REQ-0001`), single-file specs (`SPEC.md`, `REQUIREMENTS.md`, also in `docs/`, or a `specs` setting that names a file), and, when nothing else holds a requirement line, any markdown file of the repo that does.
+- **SCAN-13** SHOULD — treat a markdown link `[ABC-12](path.md)` to an existing markdown file, and a decision-folder file `0003-title.md` (`adr/`, `decisions/` …), as a reference doc with that ID: state `ref`, never due, with the files that link to it in its trace; report a link to a missing file as a spec issue.
 - **SCAN-10** MUST — follow a symlink only when it resolves inside the repo root or a path listed in the `ALLOWED_PATHS` environment variable.
 
 ## CodeGraph

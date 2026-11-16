@@ -6,7 +6,7 @@ description: >
 
 # Spec-driven with spec11
 
-`specs/` is the source of truth: each requirement is `- **ABC-12** MUST|SHOULD|MAY — text` (also `- ABC-12: text … MUST`, `*`/numbered lists, `| ABC-12 | MUST | text |` rows, and `SHALL`), a test proves it by tagging its title with `[ABC-12]`, and source comments cite it as `(ABC-12)`. Change the spec first, then tests and code.
+`specs/` (or `SPEC.md`, or markdown with such lines) is the source of truth: each requirement is `- **ABC-12** MUST|SHOULD|MAY — text` (also `- ABC-12: text … MUST`, `*`/numbered lists, `| ABC-12 | MUST | text |` rows, and `SHALL`), a test proves it by tagging its title with `[ABC-12]`, and source comments cite it as `(ABC-12)`. Change the spec first, then tests and code.
 
 spec11 finds **evidence, not truth**: a tag or citation does not prove a requirement is implemented, nor that its test passes. Relay its output; never rebuild the numbers by reading specs and tests yourself, and never change a spec marker or tag because of the report alone.
 
@@ -80,9 +80,9 @@ If something looks missing ("not checked", no tests found), run `spec_doctor`: i
 
 Verdicts of a check-marked requirement: `NO-TEST` (no `[ID]` test anywhere: strong evidence it is not done), `NO-LINK` (tests exist, but the CodeGraph index cannot follow any of them, through helpers up to 3 hops, to app code, so the test may prove nothing: verify), `ok` (a tagged test reaches app code), `unchecked` (no CodeGraph index). The graph link is a hint too: it shows a test calls the code, not that the test checks the requirement.
 
-States: `tested` (a `[ID]` tag exists; run the suite to know it passes), `src-only`, `none`, `manual` (checked by a person), `later`. A requirement ending in `(later)` or `(deferred)` is `later`; a marker inside struck-through text is ignored.
+States: `tested` (a `[ID]` tag exists; run the suite to know it passes), `src-only`, `none`, `manual` (checked by a person), `later`, `ref` (a reference doc: markdown linked as `[ADR-0003](decisions/0003-x.md)`, or a file in `decisions/`/`adr/`; never due, may be outdated, so read it before relying on it). A requirement ending in `(later)` or `(deferred)` is `later`; a marker inside struck-through text is ignored.
 
-**Spec issues** are: an ID defined twice, a bullet without MUST/SHOULD/MAY (not counted), a `(later)`/`(deferred)`/`(manual)` marker before the end of a requirement (it then counts as due), a requirement citing an ID no spec defines, a check mark together with a `(later)`/`(deferred)`/`(manual)` marker.
+**Spec issues** are: an ID defined twice, a bullet without MUST/SHOULD/MAY (not counted), a `(later)`/`(deferred)`/`(manual)` marker before the end of a requirement (it then counts as due), a requirement citing an ID no spec defines, a `[ID](path.md)` link to a file that does not exist, an ID linked to two files, a check mark together with a `(later)`/`(deferred)`/`(manual)` marker.
 
 Scanned: `specs/*.md` bullets (wrapped lines joined; struck-through bullets are retired); test tags `[ABC-12]`, `[ABC-12][ABC-14]` or `[ABC-12, ABC-14]` anywhere in the test folders; source IDs after the line-comment marker (block comments are not read). Folders and extensions come from `spec11.json`.
 

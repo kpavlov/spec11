@@ -12,6 +12,10 @@ const SPEC_DIRS: [&str; 13] = [
     "openspec/specs", ".specify/specs", ".kiro/specs", "docs", "doc",
 ];
 const GENERIC: [&str; 2] = ["docs", "doc"];
+/// File stems (upper case) of a single-file spec, at the root or in `docs/`.
+const SPEC_STEMS: [&str; 6] = ["SPEC", "SPECS", "SPECIFICATION", "SPECIFICATIONS", "REQUIREMENTS", "PRD"];
+/// Architecture decision records: reference docs, not bullets.
+const DECISION_DIRS: [&str; 9] = ["decisions", "adr", "adrs", "docs/adr", "docs/adrs", "docs/decisions", "doc/adr", "doc/decisions", "architecture/decisions"];
 /// Folders that never hold the project's own code.
 const SKIP: [&str; 12] = ["node_modules", "target", "build", "dist", "vendor", "venv", "site-packages", "__pycache__", "Pods", "DerivedData", "obj", "coverage"];
 /// Matches nothing: the regex of an ecosystem spec11 knows nothing about.
@@ -99,10 +103,59 @@ pub fn walk(dir: &Path, allow: &[PathBuf]) -> Vec<PathBuf> {
     v
 }
 
+fn requirement_line() -> Regex {
+    Regex::new(&format!("{}.*{}", crate::scan::head(), crate::scan::LEVEL)).unwrap()
+}
+
+fn is_md(p: &Path) -> bool {
+    p.extension().is_some_and(|x| x == "md")
+}
+
+fn has_requirement(f: &Path, rx: &Regex) -> bool {
+    std::fs::read(f).is_ok_and(|b| String::from_utf8_lossy(&b).lines().any(|l| rx.is_match(l)))
+}
+
+/// Decision-record folders of `root` that exist.
+pub fn decision_dirs(root: &Path) -> Vec<String> {
+    DECISION_DIRS.iter().filter(|d| root.join(d).is_dir()).map(|d| d.to_string()).collect()
+}
+
+/// Single-file specs (`SPEC.md`, `docs/REQUIREMENTS.md` …) of `root`, whatever the case of the name.
+fn spec_file_names(root: &Path) -> Vec<String> {
+    let mut v = vec![];
+    for dir in ["", "docs"] {
+        let mut names: Vec<String> = std::fs::read_dir(root.join(dir)).into_iter().flatten().filter_map(Result::ok).filter(|e| e.path().is_file() && is_md(&e.path())).filter_map(|e| e.file_name().into_string().ok()).filter(|n| SPEC_STEMS.contains(&n.trim_end_matches(".md").to_uppercase().as_str())).collect();
+        names.sort();
+        v.extend(names.into_iter().map(|n| if dir.is_empty() { n } else { format!("{dir}/{n}") }));
+    }
+    v
+}
+
+/// Cheap check for `find_root`: does `d` look like a repo with specs? No tree walk.
+pub fn has_spec_marker(d: &Path, allow: &[PathBuf]) -> bool {
+    spec_dir(d, allow).is_some() || !spec_file_names(d).is_empty() || !decision_dirs(d).is_empty()
+}
+
+/// Where the requirement lines of `root` are, repo-relative folders or files: the spec folder, single-file specs, and when
+/// none of them holds a requirement line, every markdown file of the repo that does. Empty when the repo has no such place.
+// ponytail: the fallback walks the whole repo's markdown once per load; add a cache if repos get huge.
+pub fn spec_paths(root: &Path, allow: &[PathBuf]) -> Vec<String> {
+    let mut v: Vec<String> = spec_dir(root, allow).into_iter().chain(spec_file_names(root)).collect();
+    let rx = requirement_line();
+    let holds = v.iter().any(|p| {
+        let at = root.join(p);
+        if at.is_file() { has_requirement(&at, &rx) } else { walk(&at, allow).iter().any(|f| is_md(f) && has_requirement(f, &rx)) }
+    });
+    if !holds {
+        v.extend(walk(root, allow).iter().filter(|f| is_md(f) && has_requirement(f, &rx)).filter_map(|f| f.strip_prefix(root).ok()).map(|f| f.to_string_lossy().replace('\\', "/")));
+    }
+    v
+}
+
 /// The first spec folder of `root`: one holding a requirement bullet, else a dedicated-name folder with any markdown,
 /// else a bare `specs/`. `None` when the repo has none of them.
 pub fn spec_dir(root: &Path, allow: &[PathBuf]) -> Option<String> {
-    let bullet = Regex::new(&format!("{}.*{}", crate::scan::head(), crate::scan::LEVEL)).unwrap();
+    let bullet = requirement_line();
     let mds = |d: &str| -> Vec<PathBuf> { walk(&root.join(d), allow).into_iter().filter(|p| p.extension().is_some_and(|x| x == "md")).collect() };
     let found: Vec<(&str, Vec<PathBuf>)> = SPEC_DIRS.iter().filter(|d| root.join(d).is_dir()).map(|d| (*d, mds(d))).collect();
     let has_bullet = |fs: &[PathBuf]| fs.iter().any(|f| std::fs::read(f).is_ok_and(|b| String::from_utf8_lossy(&b).lines().any(|l| bullet.is_match(l))));

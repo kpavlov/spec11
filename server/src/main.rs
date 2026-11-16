@@ -313,7 +313,7 @@ mod tests {
         assert!(st == StatusCode::OK && body.contains("AAA-01"), "{body}");
         let (_, body) = send(&app, post("/api/call/spec_file", "127.0.0.1:7411", "{}")).await;
         assert!(body.contains("01-a.md"), "{body}");
-        let (st, body) = send(&app, post("/api/call/spec_file", "127.0.0.1:7411", r#"{"name":"01-a.md"}"#)).await;
+        let (st, body) = send(&app, post("/api/call/spec_file", "127.0.0.1:7411", r#"{"name":"specs/01-a.md"}"#)).await;
         assert!(st == StatusCode::OK && body.contains("AAA-02"), "{body}");
         for bad in ["../Cargo.toml", "/etc/passwd", "01-a"] {
             let (st, _) = send(&app, post("/api/call/spec_file", "127.0.0.1:7411", &format!(r#"{{"name":"{bad}"}}"#))).await;

@@ -16,7 +16,7 @@ It replaces the earlier Python scripts (output is identical; `make parity` can d
 
 ## Conventions it reads
 
-- Spec bullets: `- **ABC-12** MUST|SHOULD|MAY — text` in `specs/*.md` (also plain/backtick IDs, `ID:`, `*`/numbered lists, `SHALL`, and `| ID | MUST | text |` rows)
+- Spec bullets: `- **ABC-12** MUST|SHOULD|MAY — text` in `specs/*.md` (also single files such as `SPEC.md`, IDs up to 4 digits, links `[ADR-0003](decisions/0003-x.md)` as reference docs, plain/backtick IDs, `ID:`, `*`/numbered lists, `SHALL`, and `| ID | MUST | text |` rows)
 - Test tags: `[ABC-12]` in test titles; source citations `(ABC-12)` in `//` comments
 - States: `tested`, `src-only`, `none`, `manual`, `later`; check-marked requirements get a verdict `ok`, `NO-TEST`, `NO-LINK`
 - Optional [CodeGraph](https://github.com/colbymchenry/codegraph) index (`.codegraph/codegraph.db`, opened read-only) adds test→code links, overlap and uncovered-code analysis. Without it those are "not checked", never an error.

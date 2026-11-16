@@ -24,6 +24,8 @@ spec11: Rust workspace (`core`, `server`) + Svelte dashboard (`web`) + the agent
 
 - `spec11 doctor` (`server/src/doctor.rs`) `run` only reads. The one writer is `doctor::index` (`codegraph init`/`sync`), reached only by an explicit user action: `doctor --fix`, `spec_codegraph`, the Setup tab button (with a confirm). Never call it from a check, a startup path or a scan. Add new checks to `run`; the CLI, `spec_doctor` and the Setup tab share it.
 
+- Spec places (`core/src/detect.rs::spec_paths`): a specs folder, single files (`SPEC.md`), any markdown with a requirement line as a last resort; `Spec.file` is repo-root-relative. `[ID](x.md)` links and decision folders give `ref` docs (`Project::docs`): never due.
+
 - **Dogfooding.** `specs/*.md` are this repo's requirements (`SCAN-`, `GRAPH-`, `API-`, `SETUP-`, `WEB-`), configured by `spec11.json` for Rust. A Rust test is tagged with `#[doc = "[API-02]"]` above its `#[test]` (a `// [ID]` comment would count as comment-only); code cites with `// (API-02)`. Fixture tags in tests must not look real: write `[DEM\x2D01]`. Run `make report`; new behaviour gets a spec bullet first.
 
 ## Sandbox notes

@@ -136,14 +136,13 @@ pub fn call(root: Option<&Path>, name: &str, args: &Value, dashboard: &str, mcp_
             (text, json!(st))
         }
         "spec_file" => {
-            let dir = a.p.root.join(&a.p.cfg.specs);
             let names = a.p.spec_files();
             let want = txt(args, "name");
             if want.is_empty() {
                 (names.join("\n") + "\n", json!({"files": names}))
             } else if names.iter().any(|n| n == want) {
                 // only names read from the folder listing: no path traversal
-                let md = std::fs::read_to_string(dir.join(want)).map_err(|e| e.to_string())?;
+                let md = std::fs::read_to_string(a.p.root.join(want)).map_err(|e| e.to_string())?;
                 (md.clone(), json!({"name": want, "markdown": md}))
             } else {
                 return Err(format!("{want}: not a spec file"));

@@ -164,7 +164,7 @@
   loadSetup().catch(() => {});
 
   // ---- views ----
-  const states = ["all", "tested", "src-only", "none", "manual", "later"];
+  const states = ["all", "tested", "src-only", "none", "manual", "later", "ref"];
   const stateFilter = $derived(route.state ?? "all");
   const query = $derived(route.q ?? "");
   const shown = $derived(rows.filter((r) => (stateFilter === "all" || r.state === stateFilter) && (!query || `${r.id} ${r.text} ${r.file}`.toLowerCase().includes(query.toLowerCase()))));
@@ -251,6 +251,7 @@
         <a href={u({ tab: "requirements" })}>{report.requirements} requirements</a> in {report.spec_files} specs
         {#if report.manual} · <a href={u({ tab: "requirements", state: "manual" })}>{report.manual} manual</a>{/if}
         {#if report.later} · <a href={u({ tab: "requirements", state: "later" })}>{report.later} later</a>{/if}
+        {#if report.refs} · <a href={u({ tab: "requirements", state: "ref" })}>{report.refs} reference docs</a>{/if}
         · <b class={report.total_problems ? "bad" : "ok"}>{report.total_problems ? `${report.total_problems} problems` : "no problems found"}</b>
       </p>
     </section>
@@ -469,7 +470,7 @@
   td a:hover, .refs a:hover, li a:hover { text-decoration: underline; }
   .pill { font-size: 11.5px; padding: 1px 8px; border-radius: 2px; border: 0; margin-right: 4px; white-space: nowrap; background: color-mix(in srgb, currentColor 10%, transparent); }
   .pill.tested { color: var(--ok); } .pill.none { color: var(--bad); } .pill.src-only { color: var(--warn); } .pill.done { color: var(--accent); }
-  .pill.manual, .pill.later { color: var(--muted); }
+  .pill.manual, .pill.later, .pill.ref { color: var(--muted); }
 
   /* requirements */
   .bar { display: flex; gap: 10px; align-items: center; margin-bottom: 14px; flex-wrap: wrap; }

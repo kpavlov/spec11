@@ -69,8 +69,9 @@ pub fn run(root: Option<&Path>, mcp_port: u16) -> Vec<Check> {
     match Analysis::load(Some(&p.root)) {
         Ok(a) => {
             let r = a.report();
-            let (level, hint) = if r.requirements == 0 { ("warn", Some("no requirements found in the specs folder: expected bullets like `- **ABC-12** MUST — text` or `- ABC-12: the system MUST …`")) } else { ("ok", None) };
-            out.push(c("specs", level, format!("{} requirements in {} spec files", r.requirements, r.spec_files), hint));
+            let (level, hint) = if r.requirements + r.refs == 0 { ("warn", Some("no requirements found: expected lines like `- **ABC-12** MUST — text` or `- ABC-12: the system MUST …` in a specs folder or SPEC.md, or links from an ID to a doc (a markdown link whose text is the ID, e.g. to decisions/0003-x.md); set \"specs\" in spec11.json to point at them")) } else { ("ok", None) };
+            let refs = if r.refs > 0 { format!(", {} reference docs", r.refs) } else { String::new() };
+            out.push(c("specs", level, format!("{} requirements in {} spec files{refs}; scanned {}", r.requirements, r.spec_files, a.p.spec_paths().join(", ")), hint));
             if !r.spec_issues.is_empty() {
                 out.push(c("spec issues", "warn", format!("{} (first: {})", r.spec_issues.len(), r.spec_issues[0]), Some("spec11 status --issues")));
             }
