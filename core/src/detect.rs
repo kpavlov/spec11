@@ -128,6 +128,13 @@ impl Ignore {
         Ignore(b.build().unwrap_or_else(|_| ignore::gitignore::Gitignore::empty()))
     }
 
+    /// Modules hidden by an anchored folder line (`/server/`, what `spec_module` writes) in `.spec11ignore`.
+    pub fn hidden_modules(root: &Path) -> Vec<String> {
+        let text = std::fs::read_to_string(root.join(".spec11ignore")).unwrap_or_default();
+        let set: std::collections::BTreeSet<&str> = text.lines().filter_map(|l| l.trim().strip_prefix('/')?.strip_suffix('/')).filter(|m| !m.is_empty() && !m.contains(['*', '?', '[', '\\', '!', '#'])).collect();
+        set.into_iter().map(str::to_owned).collect()
+    }
+
     /// Whether a repo-relative path, or any folder above it, is hidden.
     pub fn hides(&self, rel: &str) -> bool {
         let rel = rel.trim_start_matches("./");

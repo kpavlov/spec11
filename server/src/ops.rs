@@ -42,6 +42,7 @@ pub fn tools() -> Vec<Tool> {
         Tool { name: "spec_install_status", description: "Whether the spec11 skill and MCP entry are installed for this repo (.agents/skills, .mcp.json) or globally (~/.agents/skills), with what to run if not.", schema: obj(json!({})), ui: true },
         Tool { name: "spec_install", description: "WRITES FILES: install the spec11 skill into <repo>/.agents/skills (global=true: ~/.agents/skills) and add the spec11 entry to <repo>/.mcp.json, keeping other servers. Same as `spec11 install`.", schema: obj(json!({"global": {"type": "boolean", "description": "install the skill into ~/.agents/skills instead of this repo"}, "port": {"type": "integer", "description": "MCP port for the .mcp.json entry (default: the port this server runs on)"}})), ui: false },
         Tool { name: "spec_uninstall", description: "WRITES FILES: remove what spec_install added (the skill, and the spec11 entry in .mcp.json), keeping everything else. Same as `spec11 uninstall`.", schema: obj(json!({"global": {"type": "boolean"}})), ui: false },
+        Tool { name: "spec_module", description: "WRITES FILES: set a module hidden (true) or shown (false) by adding or removing its folder line in <repo>/.spec11ignore (gitignore syntax), keeping every other line. To hide, path is a module listed by spec11://modules; to show, one of its `hidden`. Only when the user asked for it.", schema: merge(obj(json!({"path": {"type": "string", "description": "module path, e.g. server"}, "hidden": {"type": "boolean", "description": "true: leave the module out of every scan; false: list it again"}})), json!({"required": ["path", "hidden"]})), ui: false },
         Tool { name: "spec_dashboard", description: "URL of the spec11 web dashboard served by this process.", schema: obj(json!({})), ui: true },
     ]
 }
@@ -169,6 +170,35 @@ pub fn call(root: Option<&Path>, name: &str, args: &Value, dashboard: &str, mcp_
             let u = a.uncovered(txt(args, "path"), num(args, "fanin").unwrap_or(5).max(0) as usize, num(args, "min").unwrap_or(10)).map_err(|e| e.to_string())?.ok_or_else(|| note(&a))?;
             (u.text(), json!(u))
         }
+        // (API-11, API-12)
+        "spec_module" => {
+            let want = txt(args, "path").trim_matches('/');
+            let line = format!("/{want}/");
+            let file = a.p.root.join(".spec11ignore");
+            let mut text = std::fs::read_to_string(&file).unwrap_or_default();
+            let hidden = spec11_core::detect::Ignore::hidden_modules(&a.p.root);
+            let msg = if args["hidden"].as_bool().ok_or("hidden: true or false")? {
+                // only a module the scanner lists, never the root or a glob: the line is that folder and nothing else
+                if want == "." || want.contains(['*', '?', '[', '\\', '\n']) || !a.modules_view().modules.iter().any(|m| m.path == want) {
+                    return Err(format!("{want}: not a module that can be hidden"));
+                }
+                if !hidden.iter().any(|m| m == want) {
+                    if !text.is_empty() && !text.ends_with('\n') {
+                        text.push('\n');
+                    }
+                    text += &format!("{line}\n");
+                }
+                format!("{line} is in .spec11ignore\n")
+            } else {
+                if !hidden.iter().any(|m| m == want) {
+                    return Err(format!("{want}: not a hidden module"));
+                }
+                text = text.lines().filter(|l| l.trim() != line).map(|l| format!("{l}\n")).collect();
+                format!("{line} is not in .spec11ignore\n")
+            };
+            std::fs::write(&file, text).map_err(|e| format!(".spec11ignore: {e}"))?;
+            (msg, json!({"path": want, "hidden": args["hidden"]}))
+        }
         other => return Err(format!("unknown tool {other}")),
     };
     Ok(out)
@@ -279,6 +309,7 @@ pub fn schema(name: &str) -> Option<Value> {
         "source" => shape(json!({"path": {"type": "string"}, "text": {"type": "string"}}), &["path", "text"]),
         "codegraph" => shape(json!({"output": {"type": "string"}}), &["output"]),
         "install" => shape(json!({"status": {"type": "object"}, "suggestions": strs()}), &["status", "suggestions"]),
+        "module" => shape(json!({"path": {"type": "string"}, "hidden": {"type": "boolean"}}), &["path", "hidden"]),
         "dashboard" => shape(json!({"url": {"type": "string"}}), &["url"]),
         _ => return None,
     })
