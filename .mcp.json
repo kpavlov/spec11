@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "codegraph": {
+      "type": "stdio",
+      "command": "codegraph",
+      "args": ["serve", "--mcp"],
+      "env": {
+        "CODEGRAPH_TOOLS": "explore,node,search,callers"
+      },
+      "alwaysLoad": true
+    }
+  }
+}
