@@ -22,6 +22,7 @@ It replaces the earlier Python scripts (output is identical; `make parity` can d
 - Optional [CodeGraph](https://github.com/colbymchenry/codegraph) index (`.codegraph/codegraph.db`, opened read-only) adds test→code links, overlap and uncovered-code analysis. Without it those are "not checked", never an error.
 - No config needed: the specs folder (`specs/`, `spec/`, `docs/specs/`, `openspec/specs/`, `.kiro/specs/`, a `docs/` with requirement bullets ...) and the source and test folders, extensions and regexes (Swift, Rust, TypeScript/JavaScript, Python, Go, Java/Kotlin/Scala, C#, Ruby, PHP, C/C++) are detected, from the CodeGraph file list when `.codegraph/` exists, else from the repo's files. Mixed repos use the dominant language; override any field in `spec11.json` at the repo root (see `spec11.example.json`).
 - Symlinks are followed only when they resolve inside the repo root or a path in the `ALLOWED_PATHS` environment variable (path list, `:`-separated).
+- Paths listed in `.aiignore` or `.spec11ignore` (gitignore syntax, repo root; the second is for spec11 only) are left out of every scan, test list, module and spec search, and so are `.agents` and everything the CodeGraph index lists there.
 
 ## Run
 

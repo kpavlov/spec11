@@ -135,12 +135,12 @@ impl Analysis {
             match (g.symbols_by_file(), g.file_deps()) {
                 (Ok(symbols), Ok(deps)) => {
                     index = true;
-                    for (file, kind, n) in symbols {
+                    for (file, kind, n) in symbols.into_iter().filter(|(f, _, _)| !self.p.ignored(f)) {
                         let m = module(&file, &mut mods);
                         *mods.get_mut(&m).unwrap().symbols.entry(kind).or_default() += n;
                     }
                     let mut edges: BTreeMap<(String, String), i64> = BTreeMap::new();
-                    for (from, to, n) in deps {
+                    for (from, to, n) in deps.into_iter().filter(|(a, b, _)| !self.p.ignored(a) && !self.p.ignored(b)) {
                         let (a, b) = (module(&from, &mut mods), module(&to, &mut mods));
                         if a != b {
                             *edges.entry((a, b)).or_default() += n;

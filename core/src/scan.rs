@@ -102,6 +102,7 @@ pub struct Project {
     doc_dirs: Vec<String>,
     /// Repo-relative files of the repo: the CodeGraph file list, else a walk.
     pub files: Vec<String>,
+    ignore: detect::Ignore,
     cache: RefCell<HashMap<String, Rc<Vec<String>>>>,
 }
 
@@ -160,10 +161,16 @@ impl Project {
         };
         // (SCAN-09) what spec11.json leaves out comes from the CodeGraph file list, else from a walk of the repo
         let indexed = Graph::open(&root.join(if cfg.codegraph.is_empty() { ".codegraph/codegraph.db" } else { &cfg.codegraph })).ok().flatten().and_then(|g| g.file_paths().ok());
-        let files = indexed.unwrap_or_else(|| detect::walk(&root, &allow).iter().filter_map(|f| f.strip_prefix(&root).ok()).map(|f| f.to_string_lossy().replace('\\', "/")).collect());
+        let ignore = detect::Ignore::load(&root);
+        let files: Vec<String> = indexed.map(|v| v.into_iter().filter(|f| !ignore.hides(f)).collect()).unwrap_or_else(|| detect::walk(&root, &allow).iter().filter_map(|f| f.strip_prefix(&root).ok()).map(|f| f.to_string_lossy().replace('\\', "/")).collect());
         cfg.detect(&files);
         let rx = Rx::new(&cfg)?;
-        Ok(Project { root, cfg, rx, allow, spec_paths, doc_dirs, files, cache: RefCell::default() })
+        Ok(Project { root, cfg, rx, allow, spec_paths, doc_dirs, files, ignore, cache: RefCell::default() })
+    }
+
+    /// Whether `.aiignore`, `.spec11ignore` or the built-in `.agents` rule hides this repo-relative path.
+    pub fn ignored(&self, rel: &str) -> bool {
+        self.ignore.hides(rel)
     }
 
     pub fn lines(&self, rel: &str) -> Rc<Vec<String>> {

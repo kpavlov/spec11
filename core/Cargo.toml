@@ -10,6 +10,7 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
+ignore = "0.4"
 indexmap = { version = "2", features = ["serde"] }
 regex = "1"
 rusqlite = { version = "0.43", features = ["bundled"] }

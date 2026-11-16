@@ -148,6 +148,31 @@ fn inside(p: &Path, allow: &[PathBuf]) -> bool {
     p.canonicalize().is_ok_and(|c| allow.iter().any(|a| c.starts_with(a)))
 }
 
+/// Files with gitignore syntax that hide paths from spec11, read from the repo root: `.aiignore` (shared with other agent
+/// tools) and `.spec11ignore` (this tool only). `.agents` (installed skills) is always hidden.
+const IGNORE_FILES: [&str; 2] = [".aiignore", ".spec11ignore"];
+
+pub struct Ignore(ignore::gitignore::Gitignore);
+
+impl Ignore {
+    pub fn load(root: &Path) -> Self {
+        let mut b = ignore::gitignore::GitignoreBuilder::new(root);
+        let _ = b.add_line(None, ".agents");
+        for f in IGNORE_FILES {
+            if root.join(f).is_file() {
+                let _ = b.add(root.join(f)); // a bad line is skipped, the rest still applies
+            }
+        }
+        Ignore(b.build().unwrap_or_else(|_| ignore::gitignore::Gitignore::empty()))
+    }
+
+    /// Whether a repo-relative path, or any folder above it, is hidden.
+    pub fn hides(&self, rel: &str) -> bool {
+        let rel = rel.trim_start_matches("./");
+        !rel.is_empty() && rel != "." && self.0.matched_path_or_any_parents(rel, false).is_ignore()
+    }
+}
+
 fn wanted(e: &DirEntry, allow: &[PathBuf]) -> bool {
     let skip = e.depth() > 0 && e.file_type().is_dir() && {
         let n = e.file_name().to_string_lossy();
@@ -156,9 +181,17 @@ fn wanted(e: &DirEntry, allow: &[PathBuf]) -> bool {
     !skip && (!e.path_is_symlink() || inside(e.path(), allow))
 }
 
-/// Files under `dir`, sorted. Symlinks are followed only when they resolve inside `allow`; junk folders are skipped.
+/// Files under `dir`, sorted. Symlinks are followed only when they resolve inside `allow` (its first entry is the repo root);
+/// junk folders and what the root's `.aiignore` / `.spec11ignore` hide are skipped.
 pub fn walk(dir: &Path, allow: &[PathBuf]) -> Vec<PathBuf> {
-    let mut v: Vec<PathBuf> = WalkDir::new(dir).follow_links(true).into_iter().filter_entry(|e| wanted(e, allow)).filter_map(Result::ok).filter(|e| e.file_type().is_file()).map(DirEntry::into_path).collect();
+    let hidden = allow.first().and_then(|root| {
+        let base = dir.canonicalize().ok()?.strip_prefix(root).ok()?.to_path_buf();
+        Some((Ignore::load(root), base))
+    });
+    let hides = |e: &DirEntry| {
+        hidden.as_ref().is_some_and(|(ig, base)| e.path().strip_prefix(dir).is_ok_and(|r| ig.hides(&base.join(r).to_string_lossy().replace('\\', "/"))))
+    };
+    let mut v: Vec<PathBuf> = WalkDir::new(dir).follow_links(true).into_iter().filter_entry(|e| wanted(e, allow) && !hides(e)).filter_map(Result::ok).filter(|e| e.file_type().is_file()).map(DirEntry::into_path).collect();
     v.sort();
     v
 }

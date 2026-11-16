@@ -386,3 +386,22 @@ fn symlinks_are_followed_only_inside_root_or_allowed_paths() {
     assert_eq!(files(), ["src/a.py", "src/allowed/e.py", "src/inside/b.py"]);
     unsafe { std::env::remove_var("ALLOWED_PATHS") };
 }
+
+#[doc = "[SCAN-15]"]
+#[test]
+fn ignore_files_and_agents_are_left_out() {
+    let d = scratch("ignored");
+    write(&d, "spec11.json", r#"{"src":["src"],"tests":["tests"],"ext":["kt"],"comment":["//"]}"#);
+    write(&d, "specs/a.md", "- AAA-01 MUST — one.\n");
+    write(&d, ".aiignore", "# generated\nsrc/gen/\n");
+    write(&d, ".spec11ignore", "src/skip.kt\n*.tmp.kt\n!src/keep.tmp.kt\n");
+    for f in ["src/a.kt", "src/skip.kt", "src/x.tmp.kt", "src/keep.tmp.kt", "src/gen/g.kt", "src/.agents/s.kt"] {
+        write(&d, f, "class X\n");
+    }
+    let p = spec11_core::scan::Project::open(Some(&d)).unwrap();
+    assert_eq!(p.src_files(), ["src/a.kt", "src/keep.tmp.kt"]);
+    for hidden in ["src/skip.kt", "src/gen/g.kt", ".agents/skills/spec11/SKILL.md", "src/.agents"] {
+        assert!(p.ignored(hidden), "{hidden}");
+    }
+    assert!(!p.ignored("src/a.kt") && !p.ignored("src/keep.tmp.kt"));
+}

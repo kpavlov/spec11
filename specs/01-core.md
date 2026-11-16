@@ -21,6 +21,7 @@ Deterministic evidence only: same tree, same text. No LLM in the core.
 
 ## CodeGraph
 
+- **SCAN-15** MUST — leave out what the repo's `.aiignore` and `.spec11ignore` (gitignore syntax) hide, and always `.agents`, from every file walk and every file the CodeGraph index lists, so they reach no test, source, module or spec list.
 - **GRAPH-01** MUST — open the CodeGraph index read-only, with all SQL in `core/src/codegraph.rs`.
 - **GRAPH-02** MUST — turn a schema the code does not know into a typed error shown as "not checked", never a panic.
 - **GRAPH-03** MUST — treat a missing index as "not checked", not as an error: indexing is the user's decision.
