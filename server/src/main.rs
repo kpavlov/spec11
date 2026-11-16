@@ -6,6 +6,11 @@ mod ops;
 mod skill;
 
 use axum::{Router, extract::State, http::{HeaderMap, StatusCode, header}, middleware::{self, Next}, response::{IntoResponse, Response}};
+// reqwest (dev proxy to Vite) is debug-only and mime_guess (embedded UI) release-only: mark each as used in the other profile so `unused_dependencies` stays quiet.
+#[cfg(not(debug_assertions))]
+use reqwest as _;
+#[cfg(debug_assertions)]
+use mime_guess as _;
 use clap::{Args, Parser, Subcommand};
 use spec11_core::{Analysis, StatusOpts};
 use std::{path::PathBuf, process::ExitCode, sync::Arc};
@@ -24,8 +29,22 @@ pub struct AppState {
     pub http: reqwest::Client,
 }
 
+// clap colors only when stdout/stderr is a terminal and NO_COLOR is unset.
+const STYLES: clap::builder::Styles = clap::builder::Styles::styled()
+    .header(clap::builder::styling::AnsiColor::Yellow.on_default().bold())
+    .usage(clap::builder::styling::AnsiColor::Yellow.on_default().bold())
+    .literal(clap::builder::styling::AnsiColor::Green.on_default().bold())
+    .placeholder(clap::builder::styling::AnsiColor::Cyan.on_default());
+
 #[derive(Parser)]
-#[command(name = "spec11", version, about = "Deterministic spec-driven-development evidence: evidence, not truth.")]
+#[command(
+    name = "spec11",
+    version,
+    about = "Deterministic spec-driven-development evidence: evidence, not truth.",
+    long_version = concat!(env!("CARGO_PKG_VERSION"), "\n© Konstantin Pavlov\n", env!("CARGO_PKG_REPOSITORY")),
+    after_help = concat!("© Konstantin Pavlov · About: ", env!("CARGO_PKG_REPOSITORY")),
+    styles = STYLES
+)]
 struct Cli {
     /// Repo root (default: nearest ancestor with a specs folder).
     #[arg(long, global = true)]

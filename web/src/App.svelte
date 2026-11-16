@@ -623,7 +623,10 @@
   {/if}
 </main>
 
-<footer class="muted">Evidence, not truth: tags and citations do not prove a requirement is implemented or its test passes.</footer>
+<footer class="muted">
+  Evidence, not truth: tags and citations do not prove a requirement is implemented or its test passes.
+  <div>© {new Date().getFullYear()} Konstantin Pavlov · <a href="https://github.com/kpavlov/spec11" target="_blank" rel="noopener noreferrer">About</a> · <a href="https://github.com/kpavlov/spec11/issues" target="_blank" rel="noopener noreferrer">Feedback</a></div>
+</footer>
 
 <style>
   /* layout */
