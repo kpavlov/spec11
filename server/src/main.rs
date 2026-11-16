@@ -239,6 +239,14 @@ mod tests {
         assert!(body.contains("SDD STATUS") && body.contains("\"none\":2"), "{body}");
         let (st, body) = send(&app, post("/api/call/spec_trace", "localhost:7411", r#"{"id":"aaa-01"}"#)).await;
         assert!(st == StatusCode::OK && body.contains("AAA-01"), "{body}");
+        let (_, body) = send(&app, post("/api/call/spec_file", "127.0.0.1:7411", "{}")).await;
+        assert!(body.contains("01-a.md"), "{body}");
+        let (st, body) = send(&app, post("/api/call/spec_file", "127.0.0.1:7411", r#"{"name":"01-a.md"}"#)).await;
+        assert!(st == StatusCode::OK && body.contains("AAA-02"), "{body}");
+        for bad in ["../Cargo.toml", "/etc/passwd", "01-a"] {
+            let (st, _) = send(&app, post("/api/call/spec_file", "127.0.0.1:7411", &format!(r#"{{"name":"{bad}"}}"#))).await;
+            assert_eq!(st, StatusCode::BAD_REQUEST, "{bad}");
+        }
         assert_eq!(send(&app, post("/api/call/nope", "127.0.0.1:7411", "{}")).await.0, StatusCode::BAD_REQUEST);
         assert_eq!(send(&app, post("/api/call/spec_report", "evil.test", "{}")).await.0, StatusCode::FORBIDDEN);
         let mut r = post("/api/call/spec_report", "127.0.0.1:7411", "{}");

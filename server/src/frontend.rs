@@ -36,7 +36,7 @@ pub async fn handler(uri: Uri) -> Response {
 #[cfg(debug_assertions)]
 pub async fn handler(axum::extract::State(s): axum::extract::State<crate::AppState>, uri: Uri) -> Response {
     let pq = uri.path_and_query().map(|p| p.as_str()).unwrap_or("/");
-    match s.http.get(format!("http://localhost:5173{pq}")).send().await {
+    match s.http.get(format!("http://127.0.0.1:5173{pq}")).send().await {
         Ok(r) => {
             let (status, headers) = (r.status(), r.headers().clone());
             let body = r.bytes().await.unwrap_or_default();

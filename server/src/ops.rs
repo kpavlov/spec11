@@ -35,6 +35,7 @@ pub fn tools() -> Vec<Tool> {
         Tool { name: "spec_trace", description: "One requirement in depth: spec text, tests tagged with it, source citations with their declaration, related code. Evidence, not truth.", schema: required(obj(json!({"id": {"type": "string", "description": "requirement ID, e.g. DOC-25"}})), "id"), ui: false },
         Tool { name: "spec_overlap", description: "Code covered by 2+ requirements (CodeGraph index): where two specs may conflict or complement each other. A candidate list, not a verdict.", schema: obj(merge(path.clone(), json!({"all": {"type": "boolean", "description": "also pairs from the same spec file"}}))), ui: false },
         Tool { name: "spec_uncovered", description: "Code no requirement covers (CodeGraph index): candidates for a missing requirement, not proof.", schema: obj(merge(path, json!({"fanin": {"type": "integer"}, "min": {"type": "integer"}}))), ui: false },
+        Tool { name: "spec_file", description: "A spec file's markdown (read-only; name is a file in the specs folder, e.g. 04-documents.md). Without name: the list of spec files.", schema: obj(json!({"name": {"type": "string", "description": "spec file name, e.g. 04-documents.md"}})), ui: false },
         Tool { name: "spec_dashboard", description: "URL of the spec11 web dashboard served by this process.", schema: obj(json!({})), ui: true },
     ]
 }
@@ -95,6 +96,21 @@ pub fn call(root: Option<&Path>, name: &str, args: &Value, dashboard: &str) -> R
                 text = format!("(first {limit} of {} listed; narrow with spec/prefix or raise limit)\n{text}", limit + more);
             }
             (text, json!(st))
+        }
+        "spec_file" => {
+            let dir = a.p.root.join(&a.p.cfg.specs);
+            let mut names: Vec<String> = std::fs::read_dir(&dir).map_err(|e| e.to_string())?.filter_map(|e| e.ok()?.file_name().into_string().ok()).filter(|n| n.ends_with(".md")).collect();
+            names.sort();
+            let want = txt(args, "name");
+            if want.is_empty() {
+                (names.join("\n") + "\n", json!({"files": names}))
+            } else if names.iter().any(|n| n == want) {
+                // only names read from the folder listing: no path traversal
+                let md = std::fs::read_to_string(dir.join(want)).map_err(|e| e.to_string())?;
+                (md.clone(), json!({"name": want, "markdown": md}))
+            } else {
+                return Err(format!("{want}: not a spec file"));
+            }
         }
         "spec_trace" => match a.trace(txt(args, "id")) {
             Some(t) => (t.text(), json!(t)),

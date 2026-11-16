@@ -6,6 +6,6 @@ import { viteSingleFile } from "vite-plugin-singlefile";
 export default defineConfig({
   plugins: [svelte(), viteSingleFile()],
   // Rust proxies plain HTTP to this port; the HMR socket goes straight to Vite.
-  server: { port: 5173, strictPort: true, hmr: { clientPort: 5173 } },
+  server: { host: "127.0.0.1", port: 5173, strictPort: true, hmr: { host: "127.0.0.1", clientPort: 5173 } },
   build: { outDir: "dist", emptyOutDir: true },
 });
