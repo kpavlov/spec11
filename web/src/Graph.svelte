@@ -1,0 +1,259 @@
+<script lang="ts">
+  // Module dependencies as a force-directed graph: d3-force lays it out, a plain 2D canvas draws it.
+  // A node is a module whose area is proportional to its symbols; an arrow is "uses" from one module to another (width by edge count).
+  import { untrack } from "svelte";
+  import { forceCollide, forceLink, forceManyBody, forceSimulation, forceX, forceY, type Simulation, type SimulationNodeDatum } from "d3-force";
+
+  type Mod = { path: string; tests: number; symbols: Record<string, number>; depends_on: { module: string; edges: number }[] };
+  type N = SimulationNodeDatum & { id: string; r: number; n: number; tests: number; deg: number; hue: number; x: number; y: number };
+  type L = { source: string | N; target: string | N; edges: number };
+
+  let { modules, open, q = "" }: { modules: Mod[]; open: (path: string) => void; q?: string } = $props();
+
+  let w = $state(900);
+  let h = $state(600);
+  let canvas: HTMLCanvasElement;
+  let view = { k: 1, x: 0, y: 0 }; // zoom and pan; the origin is the canvas centre
+  let nodes: N[] = [];
+  let links: L[] = [];
+  let hover: N | null = null;
+  let mouse = { x: 0, y: 0 };
+  let sim: Simulation<N, undefined> | undefined;
+  let raf = 0;
+  const pos = new Map<string, { x: number; y: number }>(); // survives a reload, so the layout does not jump
+
+  const symbols = (m: Mod) => Object.values(m.symbols).reduce((a, b) => a + b, 0);
+  // a colour per folder, so modules that live together look alike
+  // green (90–180°) is skipped: it means "tests detected"
+  const hueOf = (path: string) => (180 + ([...(path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : path)].reduce((a, c) => (a * 31 + c.charCodeAt(0)) % 360, 7) * 270) / 360) % 360;
+  const ends = (l: L) => [l.source as N, l.target as N] as const; // d3 swaps the ids for the nodes
+
+  $effect(() => {
+    const sizes = modules.map(symbols);
+    const max = Math.max(1, ...sizes);
+    const rmax = Math.max(14, Math.min(64, 320 / Math.sqrt(modules.length))); // the biggest module; the rest by area
+    const first = untrack(() => pos.size === 0);
+    const ns: N[] = modules.map((m, i) => ({ id: m.path, n: sizes[i], r: Math.max(4, rmax * Math.sqrt(sizes[i] / max)), tests: m.tests, deg: 0, hue: hueOf(m.path), x: 0, y: 0, ...pos.get(m.path) }));
+    ns.sort((a, b) => b.r - a.r); // big first, so small nodes are drawn (and hit) on top
+    const byId = new Map(ns.map((n) => [n.id, n]));
+    const ls: L[] = modules.flatMap((m) => m.depends_on.filter((d) => byId.has(d.module)).map((d) => ({ source: m.path, target: d.module, edges: d.edges })));
+    for (const l of ls) for (const e of [l.source, l.target]) byId.get(e as string)!.deg++;
+    sim?.stop();
+    sim = forceSimulation(ns)
+      .force("link", forceLink<N, L>(ls).id((n) => n.id).distance((l) => 50 + (l.source as N).r + (l.target as N).r).strength(0.5))
+      // like charges repel (more for a bigger module), gravity pulls everything to the middle, collision is a hard core: atoms never overlap
+      .force("charge", forceManyBody<N>().strength((n) => -(80 + 0.5 * n.r * n.r)).distanceMin(20))
+      .force("gravity-x", forceX(0).strength(0.12))
+      .force("gravity-y", forceY(0).strength(0.12))
+      .force("collide", forceCollide<N>((n) => n.r + 12).strength(1).iterations(3))
+      .stop();
+    sim.tick(250); // settled before the first paint: no animation on load
+    nodes = ns;
+    links = ls;
+    const publish = () => { ns.forEach((n) => pos.set(n.id, { x: n.x, y: n.y })); schedule(); };
+    publish();
+    if (first) untrack(fit);
+    sim.on("tick", publish);
+    return () => { sim?.stop(); cancelAnimationFrame(raf); raf = 0; };
+  });
+
+  // a size or filter change repaints, and so does a theme change
+  $effect(() => {
+    void [w, h, q];
+    schedule();
+  });
+  $effect(() => {
+    const repaint = () => schedule();
+    const mq = matchMedia("(prefers-color-scheme: dark)");
+    const mo = new MutationObserver(repaint);
+    mo.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    mq.addEventListener("change", repaint);
+    return () => { mo.disconnect(); mq.removeEventListener("change", repaint); };
+  });
+
+  function schedule() {
+    if (!raf) raf = requestAnimationFrame(() => { raf = 0; draw(); });
+  }
+
+  function fit() {
+    if (!nodes.length) return;
+    let [x0, x1, y0, y1] = [Infinity, -Infinity, Infinity, -Infinity];
+    for (const n of nodes) [x0, x1, y0, y1] = [Math.min(x0, n.x - n.r), Math.max(x1, n.x + n.r), Math.min(y0, n.y - n.r), Math.max(y1, n.y + n.r)];
+    const k = Math.min(2, (w - 80) / Math.max(1, x1 - x0), (h - 140) / Math.max(1, y1 - y0));
+    view = { k, x: (-(x0 + x1) / 2) * k, y: (-(y0 + y1) / 2) * k - 25 };
+    schedule();
+  }
+  function zoom(f: number, px = 0, py = 0) { // around a point relative to the centre
+    const k = Math.min(8, Math.max(0.1, view.k * f));
+    view = { k, x: px - ((px - view.x) * k) / view.k, y: py - ((py - view.y) * k) / view.k };
+    schedule();
+  }
+
+  function neighbours() {
+    if (!hover) return null;
+    const s = new Set([hover]);
+    for (const l of links) { const [a, b] = ends(l); if (a === hover) s.add(b); if (b === hover) s.add(a); }
+    return s;
+  }
+
+  function draw() {
+    const ctx = canvas?.getContext("2d");
+    if (!ctx) return;
+    const dpr = devicePixelRatio || 1;
+    if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) { canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr); }
+    const css = getComputedStyle(canvas);
+    // the theme variables use light-dark(), which canvas cannot parse: let the browser resolve them to rgb()
+    const c = (v: string) => { canvas.style.color = `var(${v})`; return getComputedStyle(canvas).color; };
+    const [fg, muted, accent, ok, card, line] = [c("--fg"), c("--muted"), c("--accent"), c("--ok"), c("--card"), c("--line")];
+    const mono = css.getPropertyValue("--mono").trim() || "monospace";
+    const near = neighbours();
+    const needle = q.toLowerCase();
+    const lit = (n: N) => (near ? near.has(n) : !q || n.id.toLowerCase().includes(needle));
+
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    ctx.translate(w / 2 + view.x, h / 2 + view.y);
+    ctx.scale(view.k, view.k);
+
+    for (const l of links) {
+      const [a, b] = ends(l);
+      const on = !!hover && (a === hover || b === hover);
+      const [dx, dy] = [b.x - a.x, b.y - a.y];
+      const d = Math.hypot(dx, dy) || 1;
+      const [ux, uy] = [dx / d, dy / d];
+      const [px, py, g] = [uy * 3, -ux * 3, 2]; // a pair A→B, B→A runs side by side, not on top of each other
+      const [sx, sy, ex, ey] = [a.x + ux * a.r + px, a.y + uy * a.r + py, b.x - ux * (b.r + g) + px, b.y - uy * (b.r + g) + py];
+      const lw = 0.75 + 0.4 * Math.log2(l.edges);
+      ctx.globalAlpha = hover ? (on ? 0.95 : 0.06) : 0.6;
+      ctx.strokeStyle = ctx.fillStyle = on ? accent : muted;
+      ctx.lineWidth = lw;
+      const hl = 8 + lw * 2; // the head: fixed shape, the shaft stops at its base so nothing pokes out beside it
+      ctx.beginPath();
+      ctx.moveTo(sx, sy);
+      ctx.lineTo(ex - ux * hl * 0.8, ey - uy * hl * 0.8);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(ex, ey);
+      ctx.lineTo(ex - ux * hl + uy * hl * 0.4, ey - uy * hl - ux * hl * 0.4);
+      ctx.lineTo(ex - ux * hl * 0.8, ey - uy * hl * 0.8);
+      ctx.lineTo(ex - ux * hl - uy * hl * 0.4, ey - uy * hl + ux * hl * 0.4);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    ctx.textAlign = "center";
+    ctx.font = `${11 / view.k}px ${mono}`;
+    ctx.lineJoin = "round";
+    for (const n of nodes) {
+      ctx.globalAlpha = lit(n) ? 1 : 0.18;
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, n.r, 0, 2 * Math.PI);
+      ctx.fillStyle = `hsl(${n.hue} 45% 55% / ${n === hover ? 0.5 : 0.26})`;
+      ctx.shadowColor = `hsl(${n.hue} 60% 60%)`;
+      ctx.shadowBlur = n === hover ? 14 : 0;
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = n.tests > 0 ? ok : `hsl(${n.hue} 45% 62% / 0.9)`;
+      ctx.lineWidth = (n.tests > 0 ? 1.75 : 1) / Math.sqrt(view.k);
+      ctx.stroke();
+      if (n.r >= 14 || view.k > 1.3 || (q && lit(n)) || near?.has(n)) {
+        ctx.fillStyle = fg;
+        ctx.globalAlpha *= n === hover ? 1 : 0.85; // light grey on dark, dark grey on light
+        ctx.fillText(n.id, n.x, n.y + n.r + 20 / view.k);
+      }
+    }
+
+    if (hover) { // tooltip, in screen pixels
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.globalAlpha = 1;
+      ctx.font = `12px ${mono}`;
+      ctx.textAlign = "left";
+      const lines = [hover.id, `${hover.n} symbols · ${hover.tests} tests detected · ${hover.deg} links`];
+      const [bw, bh] = [Math.max(...lines.map((t) => ctx.measureText(t).width)) + 16, lines.length * 16 + 10];
+      const [bx, by] = [Math.max(4, Math.min(mouse.x + 14, w - bw - 4)), Math.max(4, Math.min(mouse.y + 14, h - bh - 4))];
+      ctx.fillStyle = card;
+      ctx.strokeStyle = line;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.roundRect(bx, by, bw, bh, 6);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = fg;
+      lines.forEach((t, i) => ctx.fillText(t, bx + 8, by + 18 + i * 16));
+    }
+  }
+
+  // zoom around the cursor; a non-passive listener so the page does not scroll too
+  $effect(() => {
+    const onwheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const r = canvas.getBoundingClientRect();
+      zoom(Math.exp(-e.deltaY * 0.0015), e.clientX - r.left - w / 2, e.clientY - r.top - h / 2);
+    };
+    canvas.addEventListener("wheel", onwheel, { passive: false });
+    return () => canvas.removeEventListener("wheel", onwheel);
+  });
+
+  const rel = (e: PointerEvent) => { const r = canvas.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
+  const at = (p: { x: number; y: number }) => {
+    const [x, y] = [(p.x - w / 2 - view.x) / view.k, (p.y - h / 2 - view.y) / view.k];
+    for (let i = nodes.length - 1; i >= 0; i--) if (Math.hypot(nodes[i].x - x, nodes[i].y - y) <= nodes[i].r + 2) return nodes[i];
+    return null;
+  };
+
+  // drag: a node moves (and pins while held), the background pans; a press that did not move is a click
+  let dragging = false;
+  function down(e: PointerEvent) {
+    if (e.button !== 0) return;
+    const n = at(rel(e));
+    const [sx, sy, vx, vy] = [e.clientX, e.clientY, view.x, view.y];
+    const [nx, ny] = [n?.x ?? 0, n?.y ?? 0];
+    let moved = false;
+    dragging = true;
+    canvas.setPointerCapture(e.pointerId);
+    const move = (m: PointerEvent) => {
+      const [dx, dy] = [m.clientX - sx, m.clientY - sy];
+      if (!moved && Math.hypot(dx, dy) > 3) { moved = true; if (n) sim?.alphaTarget(0.3).restart(); }
+      if (!moved) return;
+      if (n) { n.fx = nx + dx / view.k; n.fy = ny + dy / view.k; } else { view = { ...view, x: vx + dx, y: vy + dy }; schedule(); }
+    };
+    const up = () => {
+      canvas.removeEventListener("pointermove", move);
+      canvas.removeEventListener("pointerup", up);
+      dragging = false;
+      if (n) { n.fx = n.fy = null; sim?.alphaTarget(0); if (!moved) open(n.id); }
+    };
+    canvas.addEventListener("pointermove", move);
+    canvas.addEventListener("pointerup", up);
+  }
+  function over(e: PointerEvent) {
+    if (dragging) return;
+    mouse = rel(e);
+    hover = at(mouse);
+    canvas.style.cursor = hover ? "pointer" : "";
+    schedule();
+  }
+  function leave() {
+    hover = null;
+    schedule();
+  }
+</script>
+
+<div class="graph" bind:clientWidth={w} bind:clientHeight={h}>
+  <canvas bind:this={canvas} style:width="{w}px" style:height="{h}px" aria-label="module dependency graph" onpointerdown={down} onpointermove={over} onpointerleave={leave}></canvas>
+  <p class="legend muted">Arrow: the module uses the one it points to (width: edge count). Area: symbols. Colour: folder. Green ring: tests detected (not run). Scroll to zoom, drag to move, click to open.</p>
+  <div class="zoom">
+    <button type="button" aria-label="zoom in" onclick={() => zoom(1.4)}>+</button>
+    <button type="button" aria-label="zoom out" onclick={() => zoom(1 / 1.4)}>−</button>
+    <button type="button" aria-label="fit to view" onclick={fit}>⤢</button>
+  </div>
+</div>
+
+<style>
+  .graph { position: relative; height: calc(100vh - 220px); min-height: 360px; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+  canvas { display: block; cursor: grab; touch-action: none; user-select: none; }
+  canvas:active { cursor: grabbing; }
+  .legend { position: absolute; left: 10px; bottom: 6px; right: 120px; margin: 0; font-size: 12px; pointer-events: none; }
+  .zoom { position: absolute; right: 10px; bottom: 8px; display: flex; gap: 4px; }
+  .zoom button { width: 28px; height: 28px; padding: 0; font-size: 15px; }
+</style>

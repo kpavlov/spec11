@@ -65,6 +65,8 @@ pub struct ModulesView {
     pub index: bool,
     pub note: Option<String>,
     pub modules: Vec<ModuleInfo>,
+    /// Modules hidden by `.spec11ignore` (API-12): not scanned, so only their paths are known.
+    pub hidden: Vec<String>,
 }
 
 static QUOTED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"["'`]([^"'`]+)["'`]"#).unwrap());
@@ -163,6 +165,6 @@ impl Analysis {
             m.languages = langs.get(&m.path).map(|s| s.iter().map(|x| x.to_string()).collect()).unwrap_or_default();
             m.depends_on.sort_by(|a, b| b.edges.cmp(&a.edges).then_with(|| a.module.cmp(&b.module)));
         }
-        ModulesView { index, note, modules }
+        ModulesView { index, note, modules, hidden: detect::Ignore::hidden_modules(&self.p.root) }
     }
 }

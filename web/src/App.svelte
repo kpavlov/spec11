@@ -3,6 +3,7 @@
   import { call, embedded, read, watch } from "./transport";
   import { TABS, format, parse, type Route } from "./router";
   import Markdown from "./Markdown.svelte";
+  import Graph from "./Graph.svelte";
   import { inline } from "./markdown";
   import { highlightLines } from "./highlight";
 
@@ -118,6 +119,15 @@
     if (!root) fetch("/api/info").then((x) => x.json()).then((i) => (root = i.root ?? "")).catch(() => {});
   }
 
+  // (WEB-10, WEB-11) hide a module (after a confirm) or show it again via .spec11ignore, then rescan
+  async function setHidden(path: string, hidden: boolean) {
+    if (hidden && !confirm(`Add /${path}/ to .spec11ignore? spec11 will leave the module out of every scan.`)) return;
+    try {
+      await guard(call("spec_module", { path, hidden }));
+      await load();
+    } catch { /* guard shows it */ }
+  }
+
   async function loadSetup() {
     const [r, d] = await Promise.all([call("spec_install_status"), call("spec_doctor")]);
     setup = { ...r.data, text: r.text };
@@ -222,6 +232,7 @@
   const invalidN = $derived(report ? Object.values(report.invalid_tests).reduce((n: number, v: any) => n + v.length, 0) : 0);
   const known = $derived(new Set(rows.map((r) => r.id)));
   const mods = $derived<any[]>((modules?.modules ?? []).filter((m: any) => !query || m.path.toLowerCase().includes(query.toLowerCase())));
+  const hiddenMods = $derived<string[]>((modules?.hidden ?? []).filter((m: string) => !query || m.toLowerCase().includes(query.toLowerCase())));
   const modOf = $derived(modules?.modules.find((m: any) => m.path === route.module));
   const usedBy = $derived((modules?.modules ?? []).filter((m: any) => modOf && m.depends_on.some((d: any) => d.module === modOf.path)));
   const testsOf = (path: string) => tests?.modules.find((m: any) => m.module === path);
@@ -278,6 +289,8 @@
   let editor = $state(savedEditor in EDITORS ? savedEditor : "IntelliJ");
   let wrap = $state(stored("spec11.wrap") === "1");
   let copied = $state(false);
+  let showHidden = $state(stored("spec11.hidden") === "1");
+  let modView = $state(stored("spec11.modules") === "graph" ? "graph" : "list");
   const save = (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* storage blocked */ } };
   const copyPath = (path: string) => navigator.clipboard.writeText(path).then(() => { copied = true; setTimeout(() => (copied = false), 1200); }).catch(() => {});
 </script>
@@ -538,11 +551,22 @@
     <div class="bar">
       <input name="filter" aria-label="filter modules" placeholder="Filter modules" value={query} oninput={(e) => filter({ q: e.currentTarget.value })} />
       <span class="muted">{modules?.modules.length ?? 0} modules</span>
+      {#if modView === "list" && modules?.hidden?.length}
+        <label class="muted nowrap"><input type="checkbox" checked={showHidden} onchange={(e) => save("spec11.hidden", (showHidden = e.currentTarget.checked) ? "1" : "0")} /> show hidden ({modules.hidden.length})</label>
+      {/if}
+      <div class="chips" role="group" aria-label="view">
+        {#each ["list", "graph"] as v}<button class="chip" class:on={modView === v} aria-pressed={modView === v} onclick={() => save("spec11.modules", (modView = v))}>{v === "list" ? "📋 list" : "🕸️ graph"}</button>{/each}
+      </div>
     </div>
     {#if modules && !modules.index}<p class="note-line muted">{modules.note}</p>{/if}
-    {#if mods.length}
+    {#if modView === "graph"}
+      {#if !modules}<p class="muted">Loading…</p>
+      {:else if !modules.index}<!-- the note above says why there is no graph -->
+      {:else if !modules.modules.some((m: any) => m.depends_on.length)}<p class="muted empty">No dependencies between modules in the index.</p>
+      {:else}<Graph modules={modules.modules} q={query} open={(p) => navigate({ tab: "modules", module: p })} />{/if}
+    {:else if mods.length || (showHidden && hiddenMods.length)}
       <table>
-        <thead><tr><th>module</th><th>manifest</th><th>languages</th><th class="num">source</th><th class="num">test files</th><th class="num">tests</th><th class="num">symbols</th><th class="num">depends on</th></tr></thead>
+        <thead><tr><th>module</th><th>manifest</th><th>languages</th><th class="num">source</th><th class="num">test files</th><th class="num">tests</th><th class="num">symbols</th><th class="num">depends on</th><th></th></tr></thead>
         <tbody>
           {#each mods as m (m.path)}
             <tr>
@@ -554,8 +578,18 @@
               <td class="num"><a href={u({ tab: "tests", module: m.path })}>{m.tests}</a></td>
               <td class="num">{symbolsOf(m)}</td>
               <td class="num">{m.depends_on.length}</td>
+              <td>{#if m.path !== "."}<button type="button" class="ignore" title="Add /{m.path}/ to .spec11ignore" onclick={() => setHidden(m.path, true)}>ignore</button>{/if}</td>
             </tr>
           {/each}
+          {#if showHidden}
+            {#each hiddenMods as path (path)}
+              <tr class="hidden-row">
+                <td class="mono nowrap">{path}</td>
+                <td class="muted" colspan="7">hidden by .spec11ignore</td>
+                <td><button type="button" class="ignore" title="Remove /{path}/ from .spec11ignore" onclick={() => setHidden(path, false)}>unhide</button></td>
+              </tr>
+            {/each}
+          {/if}
         </tbody>
       </table>
     {:else if modules}<p class="muted empty">No module matches. <a href="/modules">Clear filter</a></p>{/if}
@@ -669,6 +703,8 @@
   .meter i { display: block; height: 100%; background: var(--ok); border-radius: 4px; }
   .facts { margin: 0; font-size: 13px; }
   b.bad { color: var(--bad); } b.ok { color: var(--ok); }
+  tr.hidden-row { opacity: 0.6; }
+  button.ignore { padding: 1px 8px; font-size: 13px; }
   .note-line { font-size: 13px; margin: 0 0 12px; }
   details { background: var(--card); border: 1px solid var(--line); border-left: 4px solid var(--line); border-radius: var(--radius); padding: 10px 14px; margin-bottom: 10px; }
   details.bad { border-left-color: var(--bad); background: color-mix(in srgb, var(--bad) 5%, var(--card)); }
@@ -704,7 +740,9 @@
 
   /* requirements */
   .bar { display: flex; gap: 10px; align-items: center; margin-bottom: 14px; flex-wrap: wrap; }
-  .bar input { flex: 1; min-width: 200px; }
+  .bar input:not([type=checkbox]) { flex: 1; min-width: 200px; }
+  .bar input[type=checkbox] { padding: 0; margin: 0; }
+  .bar label { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; cursor: pointer; }
   .chips { display: flex; gap: 6px; flex-wrap: wrap; }
   .chip { font-size: 13px; padding: 3px 10px; }
   .chip b { font-weight: 600; opacity: 0.75; margin-left: 2px; }

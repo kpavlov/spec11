@@ -418,7 +418,7 @@ mod tests {
             let schema = ops::output_schema(t.name).unwrap_or_else(|| panic!("{} has no output schema", t.name));
             assert_eq!(schema["type"], "object", "{}", t.name);
             // the writing tools are not run here, and overlap/uncovered need an index this fixture lacks
-            if matches!(t.name, "spec_install" | "spec_uninstall" | "spec_codegraph" | "spec_overlap" | "spec_uncovered") {
+            if matches!(t.name, "spec_install" | "spec_uninstall" | "spec_codegraph" | "spec_module" | "spec_overlap" | "spec_uncovered") {
                 continue;
             }
             let (_, data) = ops::call(Some(&d), t.name, &args(t.name), "http://x/", 7411).unwrap();
@@ -479,6 +479,39 @@ mod tests {
         let mut r = tool("spec_report", "{}", "127.0.0.1:7411");
         r.headers_mut().insert("origin", "http://evil.test".parse().unwrap());
         assert_eq!(send(&app, r).await.0, StatusCode::FORBIDDEN);
+    }
+
+    #[doc = "[API-11]"]
+    #[doc = "[API-12]"]
+    #[test]
+    fn module_tool_hides_and_shows_a_module_folder_and_refuses_the_rest() {
+        // its own copy: the shared fixture must keep every file listed for the other tests
+        let d = std::env::temp_dir().join(format!("spec11-ign-{}", std::process::id()));
+        std::fs::create_dir_all(d.join("specs")).unwrap();
+        std::fs::write(d.join("specs/01-a.md"), "- **AAA-01** MUST — one.\n").unwrap();
+        std::fs::create_dir_all(d.join("RunSolo/RunSolo")).unwrap();
+        std::fs::write(d.join("RunSolo/RunSolo/A.swift"), "struct A {}\n").unwrap();
+        let (_, mods) = ops::read_resource(Some(&d), "spec11://modules").unwrap().unwrap();
+        let mods: serde_json::Value = serde_json::from_str(&mods).unwrap();
+        let m = mods["modules"].as_array().unwrap().iter().map(|m| m["path"].as_str().unwrap()).find(|p| *p != ".").expect("a module").to_string();
+        std::fs::write(d.join(".spec11ignore"), "*.tmp").unwrap(); // no trailing newline
+        let (text, _) = ops::call(Some(&d), "spec_module", &json!({"path": m, "hidden": true}), "", 0).unwrap();
+        assert!(text.contains(".spec11ignore"), "{text}");
+        assert_eq!(std::fs::read_to_string(d.join(".spec11ignore")).unwrap(), format!("*.tmp\n/{m}/\n"));
+        let refused = |path: &str, hidden: bool| ops::call(Some(&d), "spec_module", &json!({"path": path, "hidden": hidden}), "", 0).is_err();
+        for (bad, hidden) in [(".", true), ("*", true), ("nope", true)] {
+            assert!(refused(bad, hidden), "{bad}");
+        }
+        // (API-12) the module is listed as hidden, and unignore removes just its line
+        let (_, mods) = ops::read_resource(Some(&d), "spec11://modules").unwrap().unwrap();
+        assert_eq!(serde_json::from_str::<serde_json::Value>(&mods).unwrap()["hidden"], json!([m]));
+        for bad in ["*.tmp", "nope", "."] {
+            assert!(refused(bad, false), "{bad}");
+        }
+        let (text, _) = ops::call(Some(&d), "spec_module", &json!({"path": m, "hidden": false}), "", 0).unwrap();
+        assert!(text.contains(".spec11ignore"), "{text}");
+        assert_eq!(std::fs::read_to_string(d.join(".spec11ignore")).unwrap(), "*.tmp\n");
+        std::fs::remove_dir_all(&d).ok();
     }
 
     #[doc = "[SETUP-01]"]

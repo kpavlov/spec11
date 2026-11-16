@@ -32,6 +32,7 @@ Add it to the client's MCP config if the `spec_*` tools are not available. `spec
 | `spec_dashboard` | none | URL of the web dashboard |
 | `spec_doctor` | none | `spec11 doctor`: repo setup, CodeGraph binary and index |
 | `spec_codegraph` | `action` (init\|sync) | builds/refreshes the CodeGraph index (`doctor --fix`); writes files, slow: only when the user asks |
+| `spec_module` | `path` (a module), `hidden` (true/false) | hides the module (adds its folder to `.spec11ignore` so scans leave it out) or shows it again (removes that line; the path is one of `hidden` in `spec11://modules`); writes a file: only when the user asks |
 | `spec_install_status` | none | whether the skill and MCP entry are installed here or globally |
 | `spec_install`, `spec_uninstall` | `global`, `port` | `spec11 install/uninstall [--global]` (they write files: only when the user asks) |
 
