@@ -7,7 +7,7 @@ const ID = /\b([A-Z]{2,5}-\d{1,4})\b/g; // the core's ID shape
 /** One line of markdown as HTML: code spans, bold, italic, strike, links and requirement-ID links. */
 export function inline(s: string): string {
   const codes: string[] = [];
-  let t = esc(s).replace(/`([^`]+)`/g, (_, c) => `\u0000${codes.push(c) - 1}\u0000`); // code spans: no further formatting
+  let t = esc(s).replace(/(`+)\s?(.+?)\s?\1(?!`)/g, (_, __, c) => `\u0000${codes.push(c) - 1}\u0000`); // code spans: no further formatting
   t = t
     .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
     .replace(/~~(.+?)~~/g, "<s>$1</s>")

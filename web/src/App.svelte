@@ -89,13 +89,13 @@
 
   async function load() {
     error = "";
+    trace = null; // the trace effect below refetches once `rows` is replaced
     const [r, s] = await guard(Promise.all([call("spec_report", { limit: 1000 }), call("spec_status", { all: true, limit: 5000 })]));
     report = r.data;
     rows = s.data.rows;
     // resources go straight to /mcp, which a split-port UI cannot reach: the modules views then stay empty instead of failing the load
     read("spec11://modules").then((m) => (modules = m)).catch(() => (modules = null));
     overlap = uncovered = tests = null;
-    trace = null;
     if (!root) fetch("/api/info").then((x) => x.json()).then((i) => (root = i.root ?? "")).catch(() => {});
   }
 
@@ -134,6 +134,7 @@
   // each view loads what its URL names
   $effect(() => {
     const id = route.id;
+    void rows; // a refresh replaces the rows and must reload the open trace
     if (!id) { trace = null; return; }
     if (untrack(() => trace?.data?.id) === id) return;
     call("spec_trace", { id }).then((r) => (trace = r)).catch((e) => { trace = null; error = e.message; });
@@ -364,7 +365,7 @@
             <tr onclick={() => navigate({ ...route, id: r.id })} class:sel={route.id === r.id} class="st-{r.state}">
               <td class="mono nowrap"><a href={u({ ...route, id: r.id })}>{r.id}</a></td>
               <td><span class="pill {r.state}">{r.state}</span>{#if r.done}<span class="pill done" title="check-marked: {r.verdict}">✓ {r.verdict}</span>{/if}</td>
-              <td class="txt" title={plain(r.text)}>{@html inline(r.text)}</td>
+              <td title={plain(r.text)}><div class="txt">{@html inline(r.text)}</div></td>
               <td class="mono muted nowrap"><a href={u({ tab: "specs", file: r.file, id: r.id })}>{r.file}:{r.line}</a></td>
             </tr>
           {/each}
