@@ -63,7 +63,7 @@
     try { theme === "auto" ? localStorage.removeItem("spec11.theme") : localStorage.setItem("spec11.theme", theme); } catch { /* storage blocked */ }
   });
 
-  // keyboard: `/` focuses the filter (opening the requirements list first), Esc closes the trace panel
+  // keyboard: `/` focuses the filter (opening the requirements list first), ↑/↓ move the selected requirement, Esc closes the trace panel
   $effect(() => {
     const onkey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement;
@@ -72,6 +72,25 @@
         e.preventDefault();
         if (route.tab !== "requirements") navigate({ tab: "requirements" });
         queueMicrotask(() => document.querySelector<HTMLInputElement>("input[name=filter]")?.focus());
+      } else if ((e.key === "ArrowDown" || e.key === "ArrowUp") && route.tab === "requirements" && seq.length) {
+        e.preventDefault();
+        const down = e.key === "ArrowDown", grp = curGroup();
+        let to: Stop | undefined;
+        if (grp) {
+          // from a group: the next/previous group's first/last requirement, or the group itself when collapsed
+          const gi = reqGroups.findIndex((g) => g.prefix === grp);
+          to = down && isOpen(grp) ? { id: reqGroups[gi].rows[0].id } : down ? stopOf(gi + 1, 0) : stopOf(gi - 1, -1);
+        } else {
+          const i = seq.findIndex((x) => x.id === route.id);
+          // up from the first requirement of a group selects the group itself, down from the last one the next group
+          const gi = grouped ? reqGroups.findIndex((g) => g.rows.at(down ? -1 : 0)!.id === route.id) : -1;
+          const edge = gi < 0 ? undefined : reqGroups[down ? gi + 1 : gi];
+          to = edge ? { group: edge.prefix } : seq[down ? Math.min(i + 1, seq.length - 1) : i < 0 ? 0 : Math.max(i - 1, 0)];
+        }
+        if (to) go(to);
+      } else if ((e.key === "ArrowLeft" || e.key === "ArrowRight") && route.tab === "requirements" && curGroup()) {
+        e.preventDefault();
+        setOpen(curGroup()!, e.key === "ArrowRight");
       } else if (e.key === "Escape" && route.id && (route.tab === "requirements" || route.tab === "overlap")) navigate({ ...route, id: undefined });
     };
     document.addEventListener("keydown", onkey);
@@ -197,7 +216,7 @@
 
   // scroll to what the URL points at once it is rendered
   $effect(() => {
-    void [specMd, code, rows.length, route.id, route.line];
+    void [specMd, code, rows.length, route.id, route.line, selGroup];
     queueMicrotask(() => {
       const el = route.tab === "code" ? document.getElementById(`L${route.line}`) : route.tab === "specs" && route.id ? document.querySelector(`article a[data-id="${route.id}"]`) : route.tab === "requirements" ? document.querySelector("tr.sel") : null;
       el?.scrollIntoView({ block: "center" });
@@ -227,11 +246,63 @@
   const states = ["all", "tested", "src-only", "none", "manual", "later", "ref"];
   const stateFilter = $derived(route.state ?? "all");
   const query = $derived(route.q ?? "");
-  const shown = $derived(rows.filter((r) => (stateFilter === "all" || r.state === stateFilter) && (!query || `${r.id} ${r.text} ${r.file}`.toLowerCase().includes(query.toLowerCase()))));
+  const levels = ["MUST", "SHOULD", "MAY"];
+  const levelFilter = $derived(route.level ?? "");
+  const shown = $derived(rows.filter((r) => (stateFilter === "all" || r.state === stateFilter) && (!levelFilter || r.level === levelFilter) && (!query || `${r.id} ${r.text} ${r.file}`.toLowerCase().includes(query.toLowerCase()))));
+  // sortable column headers (click: ascending, descending, back to file order); requirements are grouped by ID prefix when there are several
+  type Sort = { key: string; dir: 1 | -1 };
+  let reqSort = $state<Sort>({ key: "", dir: 1 });
+  let modSort = $state<Sort>({ key: "", dir: 1 });
+  const toggleSort = (st: Sort, key: string) => {
+    if (st.key !== key) { st.key = key; st.dir = 1; } else if (st.dir === 1) st.dir = -1; else st.key = "";
+  };
+  const sorted = <T,>(list: T[], st: Sort, val: (x: T, k: string) => string | number): T[] =>
+    !st.key ? list : [...list].sort((a, b) => {
+      const x = val(a, st.key), y = val(b, st.key);
+      return st.dir * (typeof x === "number" && typeof y === "number" ? x - y : String(x).localeCompare(String(y), undefined, { numeric: true }));
+    });
+  const reqVal = (r: Row, k: string) => (k === "file" ? `${r.file}:${String(r.line).padStart(6, "0")}` : (r as any)[k]);
+  const modVal = (m: any, k: string) => (k === "languages" ? m.languages.join(", ") : k === "symbols" ? symbolsOf(m) : k === "depends" ? m.depends_on.length : (m[k] ?? ""));
+  const prefixOf = (id: string) => id.replace(/-.*$/, "");
+  const REQ_CAP = 500;
+  const reqGroups = $derived.by(() => {
+    const out: { prefix: string; rows: Row[] }[] = [];
+    for (const r of sorted(shown, reqSort, reqVal).slice(0, REQ_CAP)) {
+      const p = prefixOf(r.id);
+      (out.find((g) => g.prefix === p) ?? out[out.push({ prefix: p, rows: [] }) - 1]).rows.push(r);
+    }
+    return out;
+  });
+  const grouped = $derived(reqGroups.length > 1);
+  // collapsed groups are remembered per browser; everything starts expanded
+  const loadCollapsed = (): string[] => { try { return JSON.parse(localStorage.getItem("spec11.collapsed") ?? "[]"); } catch { return []; } };
+  let collapsed = $state<string[]>(loadCollapsed());
+  const isOpen = (p: string) => !grouped || !collapsed.includes(p);
+  const setOpen = (p: string, open: boolean) => {
+    if (open === isOpen(p)) return;
+    collapsed = open ? collapsed.filter((x) => x !== p) : [...collapsed, p];
+    try { localStorage.setItem("spec11.collapsed", JSON.stringify(collapsed)); } catch { /* storage blocked */ }
+  };
+  // the selection is a requirement (`route.id`) or a group header (`selGroup`, only while no requirement is selected)
+  type Stop = { id?: string; group?: string };
+  let selGroup = $state<string | null>(null);
+  const curGroup = () => (grouped && !route.id && reqGroups.some((g) => g.prefix === selGroup) ? selGroup : null);
+  const go = (s: Stop) => {
+    selGroup = s.group ?? null;
+    navigate({ ...route, id: s.id }, true);
+  };
+  const pick = (p: string) => { selGroup = p; navigate({ ...route, id: undefined }, true); setOpen(p, !isOpen(p)); };
+  // the arrow-key order: every requirement of an expanded group, a collapsed group as one stop
+  const seq = $derived<Stop[]>(reqGroups.flatMap((g) => (isOpen(g.prefix) ? g.rows.map((r): Stop => ({ id: r.id })) : [{ group: g.prefix } as Stop])));
+  // the stop at an end of group `i` (0 first, -1 last); undefined past the ends
+  const stopOf = (i: number, end: 0 | -1): Stop | undefined => {
+    const g = reqGroups[i];
+    return !g ? undefined : isOpen(g.prefix) ? { id: g.rows.at(end)!.id } : { group: g.prefix };
+  };
   const counts = $derived(rows.reduce<Record<string, number>>((m, r) => ((m[r.state] = (m[r.state] ?? 0) + 1), m), { all: rows.length }));
   const invalidN = $derived(report ? Object.values(report.invalid_tests).reduce((n: number, v: any) => n + v.length, 0) : 0);
   const known = $derived(new Set(rows.map((r) => r.id)));
-  const mods = $derived<any[]>((modules?.modules ?? []).filter((m: any) => !query || m.path.toLowerCase().includes(query.toLowerCase())));
+  const mods = $derived<any[]>(sorted((modules?.modules ?? []).filter((m: any) => !query || m.path.toLowerCase().includes(query.toLowerCase())), modSort, modVal));
   const hiddenMods = $derived<string[]>((modules?.hidden ?? []).filter((m: string) => !query || m.toLowerCase().includes(query.toLowerCase())));
   const modOf = $derived(modules?.modules.find((m: any) => m.path === route.module));
   const usedBy = $derived((modules?.modules ?? []).filter((m: any) => modOf && m.depends_on.some((d: any) => d.module === modOf.path)));
@@ -297,6 +368,12 @@
 
 {#snippet idlink(id: string, to: Route)}
   <a class="id" href={u(to)}>{id}</a>
+{/snippet}
+
+{#snippet th(label: string, key: string, st: Sort, cls = "")}
+  <th class={cls} aria-sort={st.key === key ? (st.dir === 1 ? "ascending" : "descending") : "none"}>
+    <button type="button" class="sort" onclick={() => toggleSort(st, key)}>{label}<span class="arrow">{st.key === key ? (st.dir === 1 ? "▲" : "▼") : ""}</span></button>
+  </th>
 {/snippet}
 
 {#snippet cases(files: any[])}
@@ -447,12 +524,21 @@
       <div class="chips" role="group" aria-label="state">
         {#each states as st}{#if st === "all" || counts[st]}<button class="chip {st}" class:on={stateFilter === st} aria-pressed={stateFilter === st} onclick={() => filter({ state: st })}>{st} <b>{counts[st] ?? 0}</b></button>{/if}{/each}
       </div>
+      <div class="chips" role="group" aria-label="level">
+        {#each levels as l}<button class="chip" class:on={levelFilter === l} aria-pressed={levelFilter === l} onclick={() => filter({ level: levelFilter === l ? undefined : l })}>{l} <b>{rows.filter((r) => r.level === l).length}</b></button>{/each}
+      </div>
       <input name="filter" aria-label="filter" placeholder="Filter ID, text, file   ( / )" value={query} oninput={(e) => filter({ q: e.currentTarget.value })} />
     </div>
     <div class="split">
       <table>
+        <thead><tr>{@render th("ID", "id", reqSort)}{@render th("level", "level", reqSort)}{@render th("state", "state", reqSort)}{@render th("requirement", "text", reqSort)}{@render th("location", "file", reqSort)}</tr></thead>
         <tbody>
-          {#each shown.slice(0, 500) as r (r.id)}
+          {#each reqGroups as g (g.prefix)}
+            {#if grouped}
+              <tr class="grp" class:sel={curGroup() === g.prefix}><td colspan="5"><button type="button" aria-expanded={isOpen(g.prefix)} onclick={() => pick(g.prefix)}><span class="caret">{isOpen(g.prefix) ? "▾" : "▸"}</span> <b class="mono">{g.prefix}</b> <span class="muted">{g.rows.length}</span></button></td></tr>
+            {/if}
+            {#if isOpen(g.prefix)}
+          {#each g.rows as r (r.id)}
             <tr onclick={() => navigate({ ...route, id: r.id })} class:sel={route.id === r.id} class="st-{r.state}">
               <td class="mono nowrap"><a href={u({ ...route, id: r.id })}>{r.id}</a></td>
               <td class="nowrap">{#if /^(MUST|SHOULD|MAY)$/.test(r.level)}<span class="rfc {r.level.toLowerCase()}">{r.level}</span>{/if}</td>
@@ -461,12 +547,14 @@
               <td class="mono muted nowrap"><a href={u({ tab: "specs", file: r.file, id: r.id })}>{r.file}:{r.line}</a></td>
             </tr>
           {/each}
+            {/if}
+          {/each}
         </tbody>
       </table>
       {@render tracePanel()}
     </div>
     {#if !shown.length}<p class="muted empty">No requirement matches. <a href={u({ tab: "requirements" })}>Clear filters</a></p>{/if}
-    {#if shown.length > 500}<p class="muted">First 500 shown; narrow the filter.</p>{/if}
+    {#if shown.length > REQ_CAP}<p class="muted">First {REQ_CAP} shown; narrow the filter.</p>{/if}
   {:else if route.tab === "code"}
     {#if !route.path}<p class="muted">No file selected: open one from a requirement's tests or citations.</p>
     {:else if !code || code.path !== route.path}<p class="muted">Loading {route.path}…</p>
@@ -566,7 +654,7 @@
       {:else}<Graph modules={modules.modules} q={query} open={(p) => navigate({ tab: "modules", module: p })} />{/if}
     {:else if mods.length || (showHidden && hiddenMods.length)}
       <table>
-        <thead><tr><th>module</th><th>manifest</th><th>languages</th><th class="num">source</th><th class="num">test files</th><th class="num">tests</th><th class="num">symbols</th><th class="num">depends on</th><th></th></tr></thead>
+        <thead><tr>{@render th("module", "path", modSort)}{@render th("manifest", "manifest", modSort)}{@render th("languages", "languages", modSort)}{@render th("source", "src_files", modSort, "num")}{@render th("test files", "test_files", modSort, "num")}{@render th("tests", "tests", modSort, "num")}{@render th("symbols", "symbols", modSort, "num")}{@render th("depends on", "depends", modSort, "num")}<th></th></tr></thead>
         <tbody>
           {#each mods as m (m.path)}
             <tr>
@@ -723,6 +811,14 @@
   h2.modh .muted { font-size: 13px; font-weight: 400; font-family: var(--sans, inherit); }
   details.plain { margin: 12px 0 0; padding: 6px 10px; }
   th { text-align: left; font-size: 12px; font-weight: 600; color: var(--muted); padding: 7px 10px; border-bottom: 1px solid var(--line); }
+  th button.sort { all: unset; cursor: pointer; display: inline-flex; gap: 4px; align-items: baseline; }
+  th button.sort:hover, th button.sort:focus-visible { color: var(--fg, inherit); }
+  th .arrow { font-size: 9px; min-width: 9px; }
+  th.num button.sort { flex-direction: row-reverse; }
+  tr.grp td { padding: 0; background: color-mix(in srgb, var(--accent) 5%, transparent); }
+  tr.grp button { all: unset; box-sizing: border-box; width: 100%; padding: 6px 10px; cursor: pointer; display: flex; gap: 8px; align-items: baseline; }
+  tr.grp button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  tr.grp .caret { width: 10px; color: var(--muted); }
   .num { text-align: right; font-variant-numeric: tabular-nums; }
   a.more { font-size: 13px; font-weight: 400; margin-left: 8px; }
   select { font: inherit; }
