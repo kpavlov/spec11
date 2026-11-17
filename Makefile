@@ -10,7 +10,7 @@ ARCH := $(shell uname -m | sed s/arm64/aarch64/)
 OPENER := $(shell command -v open || command -v xdg-open)
 VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
 
-.PHONY: help dev serve web build run install uninstall dist report test parity clean mcp-inspector
+.PHONY: help dev serve web build run install uninstall dist report test parity upgrade clean mcp-inspector
 
 help:
 	@echo "make dev      Vite (HMR, :5173) + Rust server on :$(PORT) proxying to it, scanning $(ROOT)"
@@ -21,6 +21,7 @@ help:
 	@echo "make dist      dist/spec11-$(VERSION)-$(OS)-$(ARCH).tar.gz for this machine (macOS or Linux)"
 	@echo "make report   print the text report for $(ROOT)"
 	@echo "make test     cargo tests; make parity compares with the old Python scripts if vendored in $(ROOT)"
+	@echo "make upgrade   bump web (pnpm, to latest) and Rust (cargo update; cargo upgrade --incompatible if cargo-edit is installed) dependencies"
 	@echo "override: make dev ROOT=/path/to/repo PORT=7500 OPEN=0   (OPEN=0: don't open the browser)"
 
 web/node_modules: web/package.json
@@ -76,6 +77,14 @@ parity:
 	  py=$${a%%|*}; rs=$${a##*|}; \
 	  if diff <(python3 -B $$S/$$py 2>&1 | norm) <($$R $$rs 2>&1) >/dev/null; then echo "OK   $$rs"; else echo "DIFF $$rs"; exit 1; fi; \
 	done
+
+# pnpm goes to latest, past the ranges in package.json; plain cargo only updates Cargo.lock within Cargo.toml ranges, so
+# major bumps need cargo-edit (cargo install cargo-edit). Run `make test` and `cd web && pnpm run check` after.
+upgrade:
+	cd web && pnpm update --latest
+	cargo update
+	@if cargo upgrade --help >/dev/null 2>&1; then cargo upgrade --incompatible && cargo update; \
+	else echo "cargo-edit not installed: Cargo.toml ranges kept (cargo install cargo-edit for major bumps)"; fi
 
 clean:
 	cargo clean
