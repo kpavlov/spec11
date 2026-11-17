@@ -25,7 +25,7 @@ jobs:
           cache-dependency-path: web/pnpm-lock.yaml
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cd web && pnpm install --frozen-lockfile && pnpm exec svelte-check
+      - run: cd web && pnpm install --frozen-lockfile && pnpm run check
       - run: cargo test --workspace --locked
       # release build embeds web/dist (build.rs runs pnpm); the release-only embedded-UI test runs here too
       - run: cargo test --release --workspace --locked
