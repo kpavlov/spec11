@@ -40,12 +40,12 @@ pub type Refs = HashMap<String, Vec<Ref>>;
 pub type Diff = IndexMap<String, Vec<(i64, i64)>>;
 
 pub struct Rx {
-    head: Regex,
-    level: Regex,
+    pub(crate) head: Regex,
+    pub(crate) level: Regex,
     link: Regex,
     adr: Regex,
     code_span: Regex,
-    block_end: Regex,
+    pub(crate) block_end: Regex,
     tag: Regex,
     pub mention: Regex,
     mark: Regex,
@@ -85,7 +85,7 @@ impl Rx {
 }
 
 /// The text of a requirement's first line: what follows the ID, minus separators and a level that opens it.
-fn lead(rest: &str, level: &str) -> String {
+pub(crate) fn lead(rest: &str, level: &str) -> String {
     let sep = |c: char| c.is_whitespace() || "|:—–-".contains(c);
     let rest = rest.trim_start_matches(sep);
     rest.strip_prefix(level).unwrap_or(rest).trim_start_matches(sep).trim_end_matches(|c: char| c.is_whitespace() || c == '|').to_string()
@@ -364,7 +364,7 @@ impl Project {
     }
 
     /// The text after the first line-comment marker of `line`.
-    fn comment_of<'a>(&self, line: &'a str) -> Option<&'a str> {
+    pub(crate) fn comment_of<'a>(&self, line: &'a str) -> Option<&'a str> {
         self.cfg.comment.iter().filter_map(|c| line.find(c.as_str()).map(|p| (p, c.len()))).min().map(|(p, l)| &line[p + l..])
     }
 
@@ -485,87 +485,14 @@ impl Project {
         .unwrap_or_default()
     }
 
-    fn git(&self, args: &[&str]) -> Result<String, String> {
+    pub(crate) fn git(&self, args: &[&str]) -> Result<String, String> {
         let r = Command::new("git").args(args).current_dir(&self.root).output().map_err(|e| format!("git: {e}"))?;
         if !r.status.success() {
             return Err(format!("spec11: git {} failed: {}", args.join(" "), String::from_utf8_lossy(&r.stderr).trim()));
         }
         Ok(String::from_utf8_lossy(&r.stdout).into_owned())
     }
-
-    // (SCAN-16, SCAN-18)
-    /// Files changed in the working tree since `reference` (staged, unstaged, untracked), with their changed line ranges.
-    /// `staged_only` looks at the index alone; `untracked` adds the untracked files as changed in full.
-    pub fn changed(&self, reference: &str, staged_only: bool, untracked: bool) -> Result<Diff, String> {
-        let mut args = vec!["diff", "-U0", "--no-color", "--no-ext-diff"];
-        if staged_only {
-            args.push("--cached");
-        }
-        args.extend([reference, "--"]);
-        let mut out = parse_diff(&self.git(&args)?);
-        out.retain(|p, _| !self.ignored(p));
-        if untracked && !staged_only {
-            for p in self.git(&["ls-files", "--others", "--exclude-standard"])?.lines().filter(|p| !self.ignored(p)) {
-                out.insert(p.to_string(), vec![(1, 1_000_000_000)]);
-            }
-        }
-        Ok(out)
-    }
-
-    // (SCAN-18)
-    /// Every file `git status` lists, as (path, change, stage): the change against HEAD is `added`, `modified`, `deleted` or `renamed`;
-    /// the stage is `staged`, `unstaged`, `both` (staged with more edits on top) or `untracked`. Ignored paths are left out.
-    // ponytail: porcelain without -z, so a path with a newline or quotes is not matched; use -z if that ever shows.
-    pub fn change_files(&self, staged_only: bool, untracked: bool) -> Result<Vec<(String, &'static str, &'static str)>, String> {
-        let mut out = vec![];
-        for l in self.git(&["status", "--porcelain", "-uall"])?.lines().filter(|l| l.len() > 3) {
-            let (xy, path) = (&l[..2], l[3..].rsplit(" -> ").next().unwrap_or("").trim_matches('"'));
-            let (x, y) = (xy.as_bytes()[0], xy.as_bytes()[1]);
-            let change = match (x, y) {
-                (b'?', _) | (b'A', _) | (_, b'A') => "added",
-                (b'D', _) | (_, b'D') => "deleted",
-                (b'R', _) | (b'C', _) => "renamed",
-                _ => "modified",
-            };
-            let stage = match (x, y) {
-                (b'?', _) => "untracked",
-                (b' ', _) => "unstaged",
-                (_, b' ') => "staged",
-                _ => "both",
-            };
-            if self.ignored(path) || (stage == "untracked" && !untracked) || (staged_only && matches!(stage, "untracked" | "unstaged")) {
-                continue;
-            }
-            out.push((path.to_string(), change, stage));
-        }
-        out.sort();
-        Ok(out)
-    }
-
-    // (SCAN-19)
-    /// (change, unified diff against HEAD) of a file `change_files` lists, staged and unstaged together; an untracked file is all additions.
-    /// Anything else is refused, so the diff cannot be used to read other files. Cut at `DIFF_LINES` lines.
-    pub fn file_diff(&self, path: &str) -> Result<(&'static str, String), String> {
-        let (_, change, stage) = self.change_files(false, true)?.into_iter().find(|(p, ..)| p == path).ok_or_else(|| format!("{path}: not a changed file"))?;
-        let text = if stage == "untracked" {
-            match std::fs::read_to_string(self.root.join(path)) {
-                Ok(t) => format!("--- /dev/null\n+++ b/{path}\n@@ -0,0 +1,{} @@\n{}", t.lines().count(), t.lines().map(|l| format!("+{l}\n")).collect::<String>()),
-                Err(_) => format!("Binary or unreadable file {path}\n"),
-            }
-        } else {
-            self.git(&["diff", "--no-color", "--no-ext-diff", "HEAD", "--", path])?
-        };
-        let more = text.lines().count().saturating_sub(DIFF_LINES);
-        let mut text = text.lines().take(DIFF_LINES).map(|l| format!("{l}\n")).collect::<String>();
-        if more > 0 {
-            text += &format!("… {more} more lines\n");
-        }
-        Ok((change, text))
-    }
 }
-
-/// The longest diff `file_diff` returns.
-pub const DIFF_LINES: usize = 3000;
 
 pub fn prefix(id: &str) -> String {
     id.split('-').next().unwrap_or("").to_string()

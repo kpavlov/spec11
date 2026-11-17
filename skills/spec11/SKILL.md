@@ -24,8 +24,9 @@ Add it to the client's MCP config if the spec11 tools are not available. `spec11
 |---|---|---|
 | `report` | `limit` | `spec11 report [--limit N]` |
 | `status` | `spec`, `prefix`, `all`, `missing`, `changed` (git ref), `staged`, `include_untracked`, `built`, `done`, `unproven`, `issues`, `effort`, `limit` | `spec11 status [flags]` |
-| `changes` | `staged`, `include_untracked` | `spec11 status --changed [--staged] [--no-untracked]`, plus the changed files: every file the working tree changed against HEAD (change: added, modified, deleted or renamed; stage; kind) and the requirements it may affect |
-| `diff` | `path` (a file `changes` lists) | `git diff HEAD -- PATH`: what exactly changed in one file (staged and unstaged; an untracked file is all additions) |
+| `changes` | `ref`, `commit`, `staged`, `include_untracked`, `ignore_whitespace`, `show_ignored`, `show_all` | `spec11 status --changed [--staged] [--no-untracked]`, plus the changed files (change: added, modified, deleted or renamed with `old_path`; stage: staged, unstaged, both, untracked or committed; kind) and the requirements the changed lines touch, with a note per file saying what happened (bullet edited or removed, test tag added or changed, citation added or removed). `ref=main` shows everything on a branch since main (committed and not); `commit=<sha>` explains one commit; `show_all` adds files spec11 does not scan |
+| `diff` | `path` (a file `changes` lists) and the arguments of `changes` | `git diff REF -- PATH`: what exactly changed in one file, with a line under each hunk naming the requirements it touches |
+| `history` | `base`, `head`, `limit` | `git log BASE..HEAD`: the commits not on the base branch (main or master by default), newest first, and how many files are uncommitted; explain one with `changes commit=<sha>` |
 | `trace` | `id` | `spec11 trace ID [--codegraph]` |
 | `overlap` | `path`, `all` | `spec11 overlap [PATH]` |
 | `uncovered` | `path`, `fanin`, `min` | `spec11 uncovered [PATH]` |
@@ -75,7 +76,7 @@ If something looks missing ("not checked", no tests found), run `doctor`: it rep
 |---|---|
 | `all` | every requirement, in ID order |
 | `missing` | due requirements with no test: state `src-only` or `none`. `later`, `deferred` and `manual` ones are not due |
-| `changed` | requirements touched by the working tree against a git ref (default `HEAD`; staged, unstaged and untracked files count): `spec` = its bullet was edited, `test` = a test file that tags it was edited, `src` = a source file that cites it was edited. `staged` narrows it to the index, `include_untracked=false` leaves untracked files out. Matching is per file: "may be affected", not "its lines changed" |
+| `changed` | requirements touched by the working tree against a git ref (default `HEAD`; staged, unstaged and untracked files count): `spec` = its bullet was edited, `test` = a test file that tags it was edited, `src` = a source file that cites it was edited. `staged` narrows it to the index, `include_untracked=false` leaves untracked files out, `ignore_whitespace` drops whitespace-only edits. Matching is by line: the edited bullet, the tagged test, the code unit that carries the citation (the whole file in a language without braces). "May be affected", not "changed for the better"; use `changes` for the files and what happened to each |
 | `built` | requirements marked `later`/`deferred` that already have a `[ID]` test or a source citation, flagged `[built?: N tests, M src]`. Evidence only: the state still needs assessing (below) |
 | `done` | requirements carrying a check mark (✅ ✔ ☑ ✳) before the ID or anywhere in the bullet outside struck text. A hint, not proof. Each line gets `[DONE: verdict]` |
 | `unproven` | check-marked requirements whose verdict is `NO-TEST` or `NO-LINK` |

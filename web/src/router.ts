@@ -2,12 +2,12 @@
 //   /  (the dashboard; /report still works)   /requirements[/DOC-25][?state=none&level=MUST&q=text]   /modules[?module=core&q=text]   /tests[?module=core&state=untagged&q=text]
 //   /specs[?file=04-documents.md&id=DOC-25]            /code?path=RunSolo/RunSolo/A.swift&line=12
 //   /overlap[?id=DOC-25]   /uncovered[?id=…]   /setup
-//   /changes[?staged=1&untracked=0]      ?changed=1 on requirements, tests, specs and modules: only what the working tree changed
+//   /changes[?staged=1&untracked=0&ref=main&commit=SHA&ws=1&ignored=1&all=1]      ?changed=1 on requirements, tests, specs and modules: only what the working tree changed
 // File names go in the query, not the path, so a dev server never mistakes `x.md` or `A.swift` for a static file.
 export const TABS = ["dashboard", "changes", "requirements", "modules", "tests", "specs", "overlap", "uncovered", "setup"] as const;
 export type Tab = (typeof TABS)[number] | "code";
 
-export type Route = { tab: Tab; id?: string; file?: string; path?: string; line?: number; state?: string; level?: string; q?: string; module?: string; changed?: string; staged?: string; untracked?: string };
+export type Route = { tab: Tab; id?: string; file?: string; path?: string; line?: number; state?: string; level?: string; q?: string; module?: string; changed?: string; staged?: string; untracked?: string; ref?: string; commit?: string; ws?: string; ignored?: string; all?: string };
 
 export function parse(url: URL): Route {
   const [first, second] = url.pathname.split("/").filter(Boolean).map(decodeURIComponent);
@@ -27,6 +27,11 @@ export function parse(url: URL): Route {
     changed: p.get("changed") ?? undefined,
     staged: p.get("staged") ?? undefined,
     untracked: p.get("untracked") ?? undefined,
+    ref: p.get("ref") ?? undefined,
+    commit: p.get("commit") ?? undefined,
+    ws: p.get("ws") ?? undefined,
+    ignored: p.get("ignored") ?? undefined,
+    all: p.get("all") ?? undefined,
   };
 }
 
@@ -44,6 +49,11 @@ export function format(r: Route): string {
   put("changed", r.changed);
   put("staged", r.staged);
   put("untracked", r.untracked);
+  put("ref", r.ref);
+  put("commit", r.commit);
+  put("ws", r.ws);
+  put("ignored", r.ignored);
+  put("all", r.all);
   const path = (r.tab === "dashboard" ? "/" : `/${r.tab}`) + (r.tab === "requirements" && r.id ? `/${encodeURIComponent(r.id)}` : "");
   const s = q.toString();
   return s ? `${path}?${s}` : path;

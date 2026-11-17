@@ -474,13 +474,112 @@ fn changes_split_staged_unstaged_and_untracked() {
     assert_eq!(states(&staged), ["src/a.kt:modified:staged:src"]);
     assert_eq!(staged.requirements.len(), 1);
     let a = Analysis::load(Some(&d)).unwrap();
-    let (change, diff) = a.p.file_diff("src/c.kt").unwrap();
-    assert!(change == "added" && diff.contains("+class C") && diff.contains("@@ -0,0 +1,2 @@"), "{diff}");
-    assert!(a.p.file_diff("src/a.kt").unwrap().1.contains("+class A2"));
-    assert!(a.p.file_diff("src/b.kt").is_err() && a.p.file_diff("../x").is_err());
+    let o = ChangeOpts::default();
+    let c = a.file_diff("src/c.kt", &o).unwrap();
+    assert!(c.change == "added" && c.diff.contains("+class C") && c.diff.contains("@@ -0,0 +1,2 @@"), "{}", c.diff);
+    assert!(a.file_diff("src/a.kt", &o).unwrap().diff.contains("+class A2"));
+    assert!(a.file_diff("src/b.kt", &o).is_err() && a.file_diff("../x", &o).is_err());
     // status takes the same switches
     let o = StatusOpts { staged: true, ..Default::default() };
     assert_eq!(Analysis::load(Some(&d)).unwrap().status(&o).unwrap().rows.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), ["AAA-01"]);
     let o = StatusOpts { changed: Some("HEAD".into()), no_untracked: true, ..Default::default() };
     assert_eq!(Analysis::load(Some(&d)).unwrap().status(&o).unwrap().rows.len(), 2);
+}
+
+#[doc = "[SCAN-18, SCAN-19, SCAN-20]"]
+#[test]
+fn changes_by_ref_commit_rename_delete_whitespace_and_history() {
+    use spec11_core::ChangeOpts;
+    let d = scratch("changes2");
+    write(&d, "spec11.json", r#"{"src":["src"],"tests":["tests"],"ext":["kt"],"comment":["//"]}"#);
+    write(&d, ".spec11ignore", "hidden/\n");
+    write(&d, "specs/a.md", "- **AAA-01** MUST — one.\n- **AAA-02** MUST — two.\n- **AAA-03** MUST — three.\n");
+    write(&d, "tests/AT.kt", "// [AAA\x2D01]\nfun t1() {\n    check(1)\n}\n\n// [AAA\x2D02]\nfun t2() {\n    check(2)\n}\n");
+    write(&d, "src/old.kt", "// (AAA-01)\nfun f() {\n    1\n}\n");
+    write(&d, "notes.txt", "n\n");
+    write(&d, "hidden/h.kt", "x\n");
+    let git = |a: &[&str]| {
+        let r = std::process::Command::new("git").args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(a).current_dir(&d).output().unwrap();
+        assert!(r.status.success(), "{a:?}");
+        String::from_utf8_lossy(&r.stdout).trim().to_string()
+    };
+    git(&["init", "-q", "-b", "main"]);
+    git(&["add", "."]);
+    git(&["commit", "-qm", "base"]);
+    git(&["checkout", "-qb", "feature"]);
+    // commit 1: edit the AAA-02 test only, drop AAA-03, rename old.kt
+    write(&d, "tests/AT.kt", "// [AAA\x2D01]\nfun t1() {\n    check(1)\n}\n\n// [AAA\x2D02]\nfun t2() {\n    check(22)\n}\n");
+    write(&d, "specs/a.md", "- **AAA-01** MUST — one.\n- **AAA-02** MUST — two.\n");
+    git(&["mv", "src/old.kt", "src/new.kt"]);
+    write(&d, "notes.txt", "n2\n");
+    write(&d, "hidden/h.kt", "y\n");
+    git(&["add", "."]);
+    git(&["commit", "-qm", "work"]);
+    let sha = git(&["rev-parse", "HEAD"]);
+    // working tree: whitespace-only edit
+    write(&d, "src/new.kt", "// (AAA-01)\nfun f() {\n      1\n}\n");
+    let a = Analysis::load(Some(&d)).unwrap();
+    let ids = |c: &spec11_core::Changes| c.requirements.iter().map(|r| format!("{}:{}", r.id, r.changed.join("+"))).collect::<Vec<_>>();
+    let paths = |c: &spec11_core::Changes| c.files.iter().map(|f| format!("{}:{}:{}", f.path, f.change, f.stage)).collect::<Vec<_>>();
+
+    // against HEAD: only the whitespace edit; ignoring whitespace leaves nothing
+    let head = a.changes(&ChangeOpts::default()).unwrap();
+    assert_eq!(paths(&head), ["src/new.kt:modified:unstaged"]);
+    assert!(a.changes(&ChangeOpts { ignore_whitespace: true, ..Default::default() }).unwrap().files.is_empty());
+
+    // against main: committed + working tree; renames, deleted requirement, one test touched (not the other)
+    let o = ChangeOpts { reference: "main".into(), ..Default::default() };
+    let c = a.changes(&o).unwrap();
+    assert_eq!(paths(&c), ["specs/a.md:modified:committed", "src/new.kt:renamed:unstaged", "tests/AT.kt:modified:committed"]);
+    assert_eq!(c.files[1].old_path.as_deref(), Some("src/old.kt"));
+    assert_eq!(ids(&c), ["AAA-01:src", "AAA-02:test", "AAA-03:spec"], "{c:?}");
+    let gone = c.requirements.iter().find(|r| r.id == "AAA-03").unwrap();
+    assert!(gone.deleted && gone.state == "deleted" && gone.text.contains("three"), "{gone:?}");
+    assert!(c.text().contains("(from src/old.kt)"));
+    // show_ignored and show_all widen the list
+    let wide = a.changes(&ChangeOpts { show_ignored: true, show_all: true, ..o.clone() }).unwrap();
+    assert!(paths(&wide).contains(&"hidden/h.kt:modified:committed".to_string()) && paths(&wide).contains(&"notes.txt:modified:committed".to_string()), "{:?}", paths(&wide));
+    assert!(!paths(&c).iter().any(|p| p.starts_with("notes.txt") || p.starts_with("hidden")));
+
+    // the diff of the test file says which requirement each hunk touches
+    let fd = a.file_diff("tests/AT.kt", &o).unwrap();
+    assert!(fd.diff.contains("+    check(22)") && fd.hunks.len() == 1, "{}", fd.diff);
+    assert_eq!(fd.hunks[0].requirements.iter().map(|r| format!("{}:{}", r.id, r.role)).collect::<Vec<_>>(), ["AAA-02:test"]);
+    assert!(fd.text().contains("↳ AAA-02 test changed"), "{}", fd.text());
+    assert!(a.file_diff("src/new.kt", &o).unwrap().diff.contains("rename from src/old.kt"));
+    assert!(a.file_diff("notes.txt", &o).is_err(), "an unlisted (non-scanned) file is refused");
+
+    // one commit explained
+    let one = a.changes(&ChangeOpts { commit: sha.clone(), ..Default::default() }).unwrap();
+    assert_eq!(one.commit.as_deref(), Some(sha.as_str()));
+    assert_eq!(ids(&one), ["AAA-02:test", "AAA-03:spec"]);
+    assert!(one.files.iter().all(|f| f.stage == "committed"));
+    assert!(a.changes(&ChangeOpts { commit: "--output=x".into(), ..Default::default() }).is_err());
+
+    // history: the branch commit is not on main
+    let h = a.p.history("", "", 10).unwrap();
+    assert_eq!((h.base.as_deref(), h.on_base, h.commits.len(), h.commits[0].subject.as_str()), (Some("main"), false, 1, "work"));
+    assert_eq!(h.uncommitted, 1);
+    git(&["checkout", "-qf", "main"]);
+    let h = Analysis::load(Some(&d)).unwrap().p.history("", "", 10).unwrap();
+    assert!(h.on_base && h.commits[0].subject == "base");
+}
+
+#[doc = "[SCAN-18]"]
+#[test]
+fn braces_in_strings_do_not_stretch_a_unit() {
+    use spec11_core::ChangeOpts;
+    let d = scratch("braces");
+    write(&d, "spec11.json", r#"{"src":["src"],"tests":["tests"],"ext":["kt"],"comment":["//"]}"#);
+    write(&d, "specs/a.md", "- **AAA-01** MUST — one.\n- **AAA-02** MUST — two.\n");
+    // the first test opens a brace inside a string and never closes it in code
+    let t = |b: &str| format!("// [AAA\\x2D01]\nfun t1() {{\n    check(\"{{\")  // {{\n}}\n\n// [AAA\\x2D02]\nfun t2() {{\n    check({b})\n}}\n").replace("\\x2D", "-");
+    write(&d, "tests/AT.kt", &t("1"));
+    let git = |a: &[&str]| assert!(std::process::Command::new("git").args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(a).current_dir(&d).output().unwrap().status.success(), "{a:?}");
+    git(&["init", "-q"]);
+    git(&["add", "."]);
+    git(&["commit", "-qm", "x"]);
+    write(&d, "tests/AT.kt", &t("2"));
+    let c = Analysis::load(Some(&d)).unwrap().changes(&ChangeOpts::default()).unwrap();
+    assert_eq!(c.requirements.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), ["AAA-02"], "{c:?}");
 }

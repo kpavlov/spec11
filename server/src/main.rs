@@ -139,6 +139,9 @@ struct StatusArgs {
     /// With --changed: leave untracked files out.
     #[arg(long)]
     no_untracked: bool,
+    /// With --changed: leave out changes that only touch whitespace.
+    #[arg(long)]
+    ignore_whitespace: bool,
     #[arg(long)]
     built: bool,
     #[arg(long)]
@@ -268,7 +271,7 @@ fn run(cli: Cli) -> Result<u8, String> {
                 let u = a.uncovered(p, 5, 10).map_err(|e| e.to_string())?.ok_or_else(no_index)?;
                 out(cli.json, &u, || u.text());
             } else {
-                let o = StatusOpts { spec: s.spec, prefix: s.prefix, all: s.all, missing: s.missing, changed: s.changed, staged: s.staged, no_untracked: s.no_untracked, built: s.built, done: s.done, unproven: s.unproven, issues: s.issues, effort: s.effort };
+                let o = StatusOpts { spec: s.spec, prefix: s.prefix, all: s.all, missing: s.missing, changed: s.changed, staged: s.staged, no_untracked: s.no_untracked, ignore_whitespace: s.ignore_whitespace, built: s.built, done: s.done, unproven: s.unproven, issues: s.issues, effort: s.effort };
                 let st = a.status(&o)?;
                 out(cli.json, &st, || st.text(&o));
             }
@@ -426,7 +429,7 @@ mod tests {
             // portable: nullable fields are `anyOf` of single types, never `"type": [.., "null"]`
             assert!(!schema.to_string().contains(r#""type":["#), "{}: {schema}", t.name);
             // the writing tools are not run here, and overlap/uncovered need an index this fixture lacks
-            if matches!(t.name, "install" | "uninstall" | "codegraph" | "module" | "overlap" | "uncovered" | "changes" | "diff") {
+            if matches!(t.name, "install" | "uninstall" | "codegraph" | "module" | "overlap" | "uncovered" | "changes" | "diff" | "history") {
                 continue;
             }
             let (_, data) = ops::call(Some(&d), t.name, &args(t.name), "http://x/", 7411).unwrap();
@@ -455,13 +458,17 @@ mod tests {
         std::fs::write(d.join("specs/01-a.md"), "- **AAA-01** MUST — one, edited.\n").unwrap();
         std::fs::write(d.join("new.txt"), "x\n").unwrap();
         let (_, body) = send(&app, tool("changes", "{}", "127.0.0.1:7411")).await;
-        assert!(body.contains("untracked") && body.contains("added") && body.contains("AAA-01") && body.contains("modified"), "{body}");
-        let (_, body) = send(&app, tool("changes", r#"{"include_untracked":false}"#, "127.0.0.1:7411")).await;
+        assert!(!body.contains("new.txt") && body.contains("AAA-01") && body.contains("modified"), "files spec11 does not scan stay hidden: {body}");
+        let (_, body) = send(&app, tool("changes", r#"{"show_all":true}"#, "127.0.0.1:7411")).await;
+        assert!(body.contains("untracked") && body.contains("added") && body.contains("new.txt"), "{body}");
+        let (_, body) = send(&app, tool("changes", r#"{"show_all":true,"include_untracked":false}"#, "127.0.0.1:7411")).await;
         assert!(!body.contains("new.txt") && body.contains("specs/01-a.md"), "{body}");
         let (_, body) = send(&app, tool("diff", r#"{"path":"specs/01-a.md"}"#, "127.0.0.1:7411")).await;
         assert!(body.contains("-- **AAA-01** MUST — one.") && body.contains("+- **AAA-01** MUST — one, edited."), "{body}");
-        let (_, body) = send(&app, tool("diff", r#"{"path":"new.txt"}"#, "127.0.0.1:7411")).await;
+        let (_, body) = send(&app, tool("diff", r#"{"path":"new.txt","show_all":true}"#, "127.0.0.1:7411")).await;
         assert!(body.contains("+x") && body.contains("added"), "{body}");
+        let (_, body) = send(&app, tool("history", "{}", "127.0.0.1:7411")).await;
+        assert!(body.contains("commits") && body.contains("uncommitted"), "{body}");
         let (_, body) = send(&app, tool("diff", r#"{"path":"/etc/passwd"}"#, "127.0.0.1:7411")).await;
         assert!(body.contains("not a changed file"), "{body}");
         let (_, body) = send(&app, tool("changes", r#"{"staged":true}"#, "127.0.0.1:7411")).await;
