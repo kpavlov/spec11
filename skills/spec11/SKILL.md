@@ -23,13 +23,15 @@ Add it to the client's MCP config if the spec11 tools are not available. `spec11
 | Tool | Arguments | Same as CLI |
 |---|---|---|
 | `report` | `limit` | `spec11 report [--limit N]` |
-| `status` | `spec`, `prefix`, `all`, `missing`, `changed` (git ref), `built`, `done`, `unproven`, `issues`, `effort`, `limit` | `spec11 status [flags]` |
+| `status` | `spec`, `prefix`, `all`, `missing`, `changed` (git ref), `staged`, `include_untracked`, `built`, `done`, `unproven`, `issues`, `effort`, `limit` | `spec11 status [flags]` |
+| `changes` | `staged`, `include_untracked` | `spec11 status --changed [--staged] [--no-untracked]`, plus the changed files: every file the working tree changed against HEAD (change: added, modified, deleted or renamed; stage; kind) and the requirements it may affect |
+| `diff` | `path` (a file `changes` lists) | `git diff HEAD -- PATH`: what exactly changed in one file (staged and unstaged; an untracked file is all additions) |
 | `trace` | `id` | `spec11 trace ID [--codegraph]` |
 | `overlap` | `path`, `all` | `spec11 overlap [PATH]` |
 | `uncovered` | `path`, `fanin`, `min` | `spec11 uncovered [PATH]` |
 | `file` | `name` (omit to list) | read `specs/NAME` |
 | `source` | `path` | read a scanned test or source file |
-| `dashboard` | `view` (optional page, e.g. `modules`, `requirements/DOC-25`) | URL of the web dashboard (at that page) |
+| `dashboard` | `view` (optional page, e.g. `modules`, `changes`, `requirements/DOC-25`) | URL of the web dashboard (at that page) |
 | `doctor` | none | `spec11 doctor`: repo setup, CodeGraph binary and index |
 | `codegraph` | `action` (init\|sync) | builds/refreshes the CodeGraph index (`doctor --fix`); writes files, slow: only when the user asks |
 | `module` | `path` (a module), `hidden` (true/false) | hides the module (adds its folder to `.spec11ignore` so scans leave it out) or shows it again (removes that line; the path is one of `hidden` in `spec11://modules`); writes a file: only when the user asks |
@@ -73,7 +75,7 @@ If something looks missing ("not checked", no tests found), run `doctor`: it rep
 |---|---|
 | `all` | every requirement, in ID order |
 | `missing` | due requirements with no test: state `src-only` or `none`. `later`, `deferred` and `manual` ones are not due |
-| `changed` | requirements touched by the working tree against a git ref (default `HEAD`; staged, unstaged and untracked files count): `spec` = its bullet was edited, `test` = a test file that tags it was edited, `src` = a source file that cites it was edited. Matching is per file: "may be affected", not "its lines changed" |
+| `changed` | requirements touched by the working tree against a git ref (default `HEAD`; staged, unstaged and untracked files count): `spec` = its bullet was edited, `test` = a test file that tags it was edited, `src` = a source file that cites it was edited. `staged` narrows it to the index, `include_untracked=false` leaves untracked files out. Matching is per file: "may be affected", not "its lines changed" |
 | `built` | requirements marked `later`/`deferred` that already have a `[ID]` test or a source citation, flagged `[built?: N tests, M src]`. Evidence only: the state still needs assessing (below) |
 | `done` | requirements carrying a check mark (✅ ✔ ☑ ✳) before the ID or anywhere in the bullet outside struck text. A hint, not proof. Each line gets `[DONE: verdict]` |
 | `unproven` | check-marked requirements whose verdict is `NO-TEST` or `NO-LINK` |
@@ -165,7 +167,7 @@ Then relay the verdicts to the user. A conflict is reported with both bullets qu
 ## Workflow
 
 0. Specs marked `(later)` may already be built (`built`) and check-marked specs may not be (`unproven`): assess per effort (above).
-1. Starting work: `status changed=HEAD` shows which requirements the current changes already touch; `missing=true prefix=X` shows what an area still lacks.
+1. Starting work: `changes` (or `status changed=HEAD`) shows which requirements the current changes already touch; `missing=true prefix=X` shows what an area still lacks.
 2. Behaviour change: `trace`, read the spec and its tests, edit the spec first.
 3. New requirement: add the bullet, write the tests, and cite `(ID)` in a comment at the code that implements it.
 4. Writing or changing a test: it must name the requirement it proves, in the form spec11 reads, square brackets with the ID:

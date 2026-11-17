@@ -315,12 +315,23 @@ pub struct StatusOpts {
     pub missing: bool,
     /// Git ref to diff the working tree against; `Some` turns the filter on.
     pub changed: Option<String>,
+    /// With `changed` (HEAD when it is not given): only what is staged.
+    pub staged: bool,
+    /// With `changed`: leave untracked files out (they count by default).
+    pub no_untracked: bool,
     pub built: bool,
     pub done: bool,
     pub unproven: bool,
     pub issues: bool,
     /// low | medium | high
     pub effort: String,
+}
+
+impl StatusOpts {
+    /// The ref to diff against: `changed`, or HEAD when only `staged` is asked for.
+    fn reference(&self) -> Option<&str> {
+        self.changed.as_deref().or(self.staged.then_some("HEAD"))
+    }
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
@@ -362,15 +373,25 @@ pub struct Status {
 }
 
 impl Analysis {
+    /// How a diff touches a requirement: `spec` (its bullet was edited), `test` (a test file tagging it) or `src` (a file citing it). Per file for the last two.
+    fn affected(&self, i: &str, diff: &crate::scan::Diff) -> Vec<String> {
+        let s = &self.s[i];
+        let mut w = vec![];
+        if diff.get(&s.file).is_some_and(|d| d.iter().any(|(lo, hi)| *lo <= s.end as i64 && *hi >= s.line as i64)) { w.push("spec".to_string()); }
+        if self.t.get(i).is_some_and(|r| r.iter().any(|x| diff.contains_key(&x.file))) { w.push("test".into()); }
+        if self.c.get(i).is_some_and(|r| r.iter().any(|x| diff.contains_key(&x.file))) { w.push("src".into()); }
+        w
+    }
+
     pub fn status(&self, o: &StatusOpts) -> Result<Status, String> {
         let mut ids: Vec<String> = self.s.iter().filter(|(i, s)| !(o.spec.as_ref().is_some_and(|x| !s.file.contains(x.as_str())) || o.prefix.as_ref().is_some_and(|x| !i.starts_with(&format!("{x}-"))))).map(|(i, _)| i.clone()).collect();
         if ids.is_empty() {
             return Err("spec11: no requirement matches --spec/--prefix".into());
         }
         ids.sort_by_key(|i| id_key(i));
-        let listing = o.all || o.missing || o.issues || o.changed.is_some() || o.built || o.done || o.unproven;
+        let listing = o.all || o.missing || o.issues || o.reference().is_some() || o.built || o.done || o.unproven;
         let issue_ids: HashSet<&str> = self.issues.iter().filter_map(|x| x.split_whitespace().next()).collect();
-        let diff = match &o.changed { Some(r) => self.p.changed(r)?, None => Default::default() };
+        let diff = match o.reference() { Some(r) => self.p.changed(r, o.staged, !o.no_untracked)?, None => Default::default() };
         let mut rows = vec![];
         if listing {
             for i in &ids {
@@ -381,14 +402,9 @@ impl Analysis {
                 if o.built && !row.built { continue; }
                 if (o.done || o.unproven) && !row.done { continue; }
                 if o.unproven && matches!(verdict, "ok" | "unchecked") { continue; }
-                if o.changed.is_some() {
-                    let s = &self.s[i];
-                    let mut w = vec![];
-                    if diff.get(&s.file).is_some_and(|d| d.iter().any(|(lo, hi)| *lo <= s.end as i64 && *hi >= s.line as i64)) { w.push("spec".to_string()); }
-                    if self.t.get(i).is_some_and(|r| r.iter().any(|x| diff.contains_key(&x.file))) { w.push("test".into()); }
-                    if self.c.get(i).is_some_and(|r| r.iter().any(|x| diff.contains_key(&x.file))) { w.push("src".into()); }
-                    if w.is_empty() { continue; }
-                    row.changed = w;
+                if o.reference().is_some() {
+                    row.changed = self.affected(i, &diff);
+                    if row.changed.is_empty() { continue; }
                 }
                 rows.push(row);
             }
@@ -432,6 +448,70 @@ impl Analysis {
     }
 }
 
+// ───────────────────────────── Changes ─────────────────────────────
+
+#[derive(Debug, Default, Clone, Deserialize)]
+#[serde(default)]
+pub struct ChangeOpts {
+    pub staged: bool,
+    pub no_untracked: bool,
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct ChangedFile {
+    pub path: String,
+    /// What happened to it against HEAD: added | modified | deleted | renamed
+    pub change: String,
+    /// Where: staged | unstaged | both (staged, then edited again) | untracked
+    pub stage: String,
+    /// spec | test | src | other
+    pub kind: String,
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct Changes {
+    pub staged_only: bool,
+    pub untracked: bool,
+    pub files: Vec<ChangedFile>,
+    /// Requirements the changed files may affect (`changed` says how: spec, test, src), not proof they changed.
+    pub requirements: Vec<Row>,
+}
+
+impl Analysis {
+    // (SCAN-18)
+    /// What the working tree touched against HEAD: the changed files and the requirements they may affect.
+    pub fn changes(&self, o: &ChangeOpts) -> Result<Changes, String> {
+        let (specs, tests) = (self.p.spec_files(), self.p.test_files());
+        let src = self.p.src_files();
+        let has = |v: &[String], p: &str| v.iter().any(|f| f == p);
+        let files = self.p.change_files(o.staged, !o.no_untracked)?.into_iter().map(|(path, change, stage)| {
+            let kind = if has(&specs, &path) { "spec" } else if has(&tests, &path) { "test" } else if has(&src, &path) { "src" } else { "other" };
+            ChangedFile { path, change: change.into(), stage: stage.into(), kind: kind.into() }
+        }).collect();
+        let diff = self.p.changed("HEAD", o.staged, !o.no_untracked)?;
+        let requirements = sorted_ids(self.s.keys()).into_iter().filter_map(|i| {
+            let changed = self.affected(&i, &diff);
+            (!changed.is_empty()).then(|| Row { changed, ..self.requirement_row(&i) })
+        }).collect();
+        Ok(Changes { staged_only: o.staged, untracked: !o.no_untracked && !o.staged, files, requirements })
+    }
+}
+
+impl Changes {
+    pub fn text(&self) -> String {
+        let scope = if self.staged_only { "staged" } else if self.untracked { "staged, unstaged and untracked" } else { "staged and unstaged" };
+        let mut out = format!("changes vs HEAD ({scope}): {} files, {} requirements may be affected\n", self.files.len(), self.requirements.len());
+        for f in &self.files {
+            out += &format!("  {:<8} {:<9} {:<5} {}\n", f.change, f.stage, f.kind, f.path);
+        }
+        for r in &self.requirements {
+            out += &format!("{} {:<8} {}:{} [changed: {}]  {}\n", r.id, r.state, r.file, r.line, r.changed.join(","), chars(&r.text, 100));
+        }
+        out += "Evidence, not truth: a changed file may affect a requirement; it does not say the requirement is done.\n";
+        out
+    }
+}
+
 impl Status {
     pub fn text(&self, o: &StatusOpts) -> String {
         let mut out = String::new();
@@ -450,7 +530,7 @@ impl Status {
                     for c in r.cites.iter().take(5) { out += &format!("    cite: {}:{}\n", c.file, c.line); }
                     if !r.graph.is_empty() { out += &format!("    graph: tests reach {}\n", r.graph.iter().take(8).cloned().collect::<Vec<_>>().join(", ")); }
                 }
-                if o.issues || o.changed.is_some() {
+                if o.issues || o.reference().is_some() {
                     for x in &r.issues { out += &format!("    issue: {x}\n"); }
                 }
             }

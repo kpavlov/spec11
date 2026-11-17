@@ -20,6 +20,8 @@ Deterministic evidence only: same tree, same text. No LLM in the core.
 - **SCAN-10** MUST — follow a symlink only when it resolves inside the repo root or a path listed in the `ALLOWED_PATHS` environment variable.
 - **SCAN-16** SHOULD — list the requirements a git diff touches (`status --changed <ref>`): staged, unstaged and untracked files, mapped from their changed line ranges to the spec lines and cited code they hit. A pure deletion marks the line it sat before.
 - **SCAN-17** SHOULD — print consecutive IDs of a list as one range (`DOC-01..03`), with the others separated by commas, in the summary and problem lines.
+- **SCAN-19** SHOULD — give the unified diff of one changed file against HEAD (staged and unstaged together, an untracked file as all additions, cut at 3000 lines) for the files `changes` lists, and refuse any other path.
+- **SCAN-18** SHOULD — narrow the changes of SCAN-16 to the index only (`--staged`: `git diff --cached`) and leave untracked files out (`--no-untracked`; they are in by default), and list what the working tree touched as `changes`: every changed file with what happened to it (`added`, `modified`, `deleted`, `renamed`), where (`staged`, `unstaged`, `both`, `untracked`) and its kind (`spec`, `test`, `src`, `other`), plus the requirements those files may affect. Evidence of what was edited, not that it is done.
 
 ## CodeGraph
 
