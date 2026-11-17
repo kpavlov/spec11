@@ -31,4 +31,7 @@ export const sideBySide = () => layout.split === "v" && matchMedia("(min-width: 
 
 // What the preview of a changed item shows: the item as it is, or what changed against HEAD. One choice for every preview.
 export const preview = $state<{ view: "actual" | "diff" }>({ view: read("spec11.view") === "diff" ? "diff" : "actual" });
+// Whether long diff lines wrap or scroll sideways; remembered.
+export const diffWrap = $state({ on: read("spec11.diffwrap") === "1" });
+export const setDiffWrap = (on: boolean) => { diffWrap.on = on; write("spec11.diffwrap", on ? "1" : null); };
 export const setView = (v: string) => { preview.view = v === "diff" ? "diff" : "actual"; write("spec11.view", preview.view); };

@@ -119,7 +119,8 @@
   let custom = $state<any>(undefined);
   // commits not on the base branch, for the Changes page
   let history = $state<any>(null);
-  let diffPath = $state<string | undefined>();
+  let openDiffs = $state<string[]>([]);
+  const toggleDiff = (p: string) => (openDiffs = openDiffs.includes(p) ? openDiffs.filter((x) => x !== p) : [...openDiffs, p]);
   let modules = $state<any>(null);
   let tests = $state<any>(null);
   let rows = $state<Row[]>([]);
@@ -235,7 +236,7 @@
   $effect(() => {
     if (route.tab !== "changes") return;
     void gen;
-    call("history").then((r) => (history = r.data)).catch(() => (history = null));
+    call("history", { ignore_whitespace: scope.ignore_whitespace, show_ignored: scope.show_ignored, show_all: scope.show_all }).then((r) => (history = r.data)).catch(() => (history = null));
     if (defaultScope) return;
     call("changes", scope).then((r) => (custom = r.data)).catch(() => (custom = null));
   });
@@ -838,9 +839,10 @@
     {/if}
     {#if view === undefined}<p class="muted">Loading…</p>
     {:else if view === null}<p class="muted empty">Not checked: this is not a git work tree, or git is not available.</p>
-    {:else if !view.files.length}<p class="muted empty">{view.commit ? "This commit changed no scanned file." : `Nothing ${scope.staged ? "staged" : "changed"} against ${view.reference}.`}</p>
+    {:else if !view.files.length}<p class="muted empty">{view.commit ? "This commit changed no scanned file." : `Nothing ${scope.staged ? "staged" : "changed"} against ${view.reference}.`}{#if !scope.show_all} Lockfiles, CI and build files are not scanned: <a href={u({ ...route, all: "1" })}>show unscanned files</a>.{/if}</p>
     {:else}
       <Section title="Files" count={view.files.length} tone="accent">
+        <p class="note"><button onclick={() => (openDiffs = view.files.map((f: any) => f.path))}>Expand all diffs</button> <button onclick={() => (openDiffs = [])} disabled={!openDiffs.length}>Collapse all diffs</button></p>
         <table>
           <tbody>
             {#each view.files as f (f.path)}
@@ -854,12 +856,12 @@
                   {:else}<a href={u({ tab: "code", path: f.path })}>{f.path}</a>{/if}
                   {#if f.old_path}<span class="muted"> ← {f.old_path}</span>{/if}
                 </td>
-                <td class="nowrap"><button class="icon" class:on={diffPath === f.path} aria-pressed={diffPath === f.path} title={diffPath === f.path ? "Hide the diff" : "Show the diff"} aria-label="{diffPath === f.path ? 'Hide' : 'Show'} the diff of {f.path}" onclick={() => { diffPath = diffPath === f.path ? undefined : f.path; setTimeout(() => document.getElementById("file-diff")?.scrollIntoView({ block: "nearest", behavior: "smooth" }), 50); }}>±</button></td>
+                <td class="nowrap"><button class="icon" class:on={openDiffs.includes(f.path)} aria-pressed={openDiffs.includes(f.path)} title={openDiffs.includes(f.path) ? "Hide the diff" : "Show the diff"} aria-label="{openDiffs.includes(f.path) ? 'Hide' : 'Show'} the diff of {f.path}" onclick={() => toggleDiff(f.path)}>±</button></td>
               </tr>
+              {#if openDiffs.includes(f.path)}<tr class="diffrow"><td colspan="5"><button class="hidediff" onclick={() => toggleDiff(f.path)}>Hide diff ✕</button><DiffView paths={[f.path]} {gen} {scope} /></td></tr>{/if}
             {/each}
           </tbody>
         </table>
-        {#if diffPath && view.files.some((f: any) => f.path === diffPath)}<div id="file-diff"><DiffView paths={[diffPath]} {gen} scope={scope} /></div>{/if}
       </Section>
       <Section title="Requirements that may be affected" count={view.requirements.length} tone={view.requirements.length ? "accent" : undefined}>
         {#if !view.requirements.length}<p class="muted">No requirement's bullet, tagged test or cited code is among the changed lines.</p>
@@ -954,6 +956,8 @@
   .badge { display: inline-block; min-width: 18px; margin-left: 6px; padding: 0 5px; border-radius: 2px; font-size: 11px; font-weight: 700; line-height: 18px; text-align: center; color: var(--card); background: var(--tone); }
   a.tab.on .badge { outline: 1px solid var(--raised); }
   .icon { padding: 5px 9px; line-height: 1.2; }
+  .diffrow > td { max-width: 0; }
+  .hidediff { position: sticky; top: 0; float: right; z-index: 1; }
   a.tab.icon .badge { margin-left: 3px; }
   .lbl { margin-left: 7px; }
   /* narrow: icons only, except the current tab keeps its name */

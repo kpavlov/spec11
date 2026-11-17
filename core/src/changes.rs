@@ -455,6 +455,18 @@ impl Analysis {
         self.notes_of(o, &files, &Kinds::of(&self.p))
     }
 
+    // (SCAN-20)
+    /// `Project::history` without the commits that change no file the filters in `o` show (whitespace, ignored, unscanned), as `changes` lists them.
+    pub fn history(&self, base: &str, head: &str, limit: usize, o: &ChangeOpts) -> Result<History, String> {
+        let mut h = self.p.history(base, head, limit)?;
+        let kinds = Kinds::of(&self.p);
+        h.commits.retain(|c| {
+            let o = ChangeOpts { commit: c.sha.clone(), ..o.clone() };
+            self.p.file_changes(&o).is_ok_and(|fs| fs.iter().any(|f| o.show_all || !kinds.roles(&f.path).is_empty()))
+        });
+        Ok(h)
+    }
+
     // (SCAN-18)
     /// What the working tree (or one commit) changed: the files, and the requirements the changed lines touch.
     pub fn changes(&self, o: &ChangeOpts) -> Result<Changes, String> {
