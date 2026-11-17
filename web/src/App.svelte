@@ -127,7 +127,7 @@
   async function load() {
     error = "";
     const me = ++loadId;
-    const [r, s] = await guard(Promise.all([call("spec_report", { limit: 1000 }), call("spec_status", { all: true, limit: 5000 })]));
+    const [r, s] = await guard(Promise.all([call("report", { limit: 1000 }), call("status", { all: true, limit: 5000 })]));
     if (me !== loadId) return; // a newer load started meanwhile: its answer wins
     report = r.data;
     rows = s.data.rows;
@@ -142,13 +142,13 @@
   async function setHidden(path: string, hidden: boolean) {
     if (hidden && !confirm(`Add /${path}/ to .spec11ignore? spec11 will leave the module out of every scan.`)) return;
     try {
-      await guard(call("spec_module", { path, hidden }));
+      await guard(call("module", { path, hidden }));
       await load();
     } catch { /* guard shows it */ }
   }
 
   async function loadSetup() {
-    const [r, d] = await Promise.all([call("spec_install_status"), call("spec_doctor")]);
+    const [r, d] = await Promise.all([call("install_status"), call("doctor")]);
     setup = { ...r.data, text: r.text };
     checks = d.data.checks;
     indexAction = d.data.index_action;
@@ -160,7 +160,7 @@
     busy = true;
     indexLog = `codegraph ${action} running…`;
     try {
-      indexLog = (await call("spec_codegraph", { action })).text;
+      indexLog = (await call("codegraph", { action })).text;
       await Promise.all([loadSetup(), load()]);
     } catch (e: any) {
       indexLog = String(e.message ?? e);
@@ -169,7 +169,7 @@
     }
   }
 
-  async function runSetup(tool: "spec_install" | "spec_uninstall", global = false) {
+  async function runSetup(tool: "install" | "uninstall", global = false) {
     busy = true;
     try {
       const r = await guard(call(tool, { global }));
@@ -185,19 +185,19 @@
     void rows; // a refresh replaces the rows and must reload the open trace
     if (!id) { trace = null; return; }
     // the previous trace stays (dimmed) until the new one lands, so the preview pane never collapses and reopens
-    call("spec_trace", { id }).then((r) => { if (route.id === id) { trace = r; document.querySelector(".split .preview")?.scrollTo(0, 0); } }).catch((e) => { trace = null; error = e.message; });
+    call("trace", { id }).then((r) => { if (route.id === id) { trace = r; document.querySelector(".split .preview")?.scrollTo(0, 0); } }).catch((e) => { trace = null; error = e.message; });
   });
 
   $effect(() => {
     if (route.tab !== "specs") return;
-    if (specFiles === null) { call("spec_file").then((r) => (specFiles = r.data.files)).catch((e) => (error = e.message)); return; }
+    if (specFiles === null) { call("file").then((r) => (specFiles = r.data.files)).catch((e) => (error = e.message)); return; }
     const f = route.file ?? specFiles[0];
-    if (f && f !== untrack(() => specLoaded)) call("spec_file", { name: f }).then((r) => { specLoaded = f; specMd = r.data.markdown; document.querySelector(".split .preview")?.scrollTo(0, 0); }).catch((e) => (error = e.message));
+    if (f && f !== untrack(() => specLoaded)) call("file", { name: f }).then((r) => { specLoaded = f; specMd = r.data.markdown; document.querySelector(".split .preview")?.scrollTo(0, 0); }).catch((e) => (error = e.message));
   });
 
   $effect(() => {
     const path = route.tab === "code" || route.tab === "tests" ? route.path : undefined;
-    if (path && untrack(() => code?.path) !== path) call("spec_source", { path }).then((r) => (code = r.data)).catch((e) => { code = null; error = e.message; });
+    if (path && untrack(() => code?.path) !== path) call("source", { path }).then((r) => (code = r.data)).catch((e) => { code = null; error = e.message; });
   });
 
   // fetched once per load generation, when its tab is open
@@ -208,9 +208,9 @@
     get().catch((e) => { fetched[key] = -1; error = e.message; });
   };
   $effect(() => {
-    if (route.tab === "overlap") fetchOnce("overlap", () => call("spec_overlap").then((r) => void (overlap = r.data.rows)));
+    if (route.tab === "overlap") fetchOnce("overlap", () => call("overlap").then((r) => void (overlap = r.data.rows)));
     if (route.tab === "tests" || (route.tab === "modules" && route.module)) fetchOnce("tests", () => read("spec11://tests").then((r) => void (tests = r)));
-    if (route.tab === "uncovered") fetchOnce("uncovered", () => call("spec_uncovered").then((r) => void (uncovered = r.data)));
+    if (route.tab === "uncovered") fetchOnce("uncovered", () => call("uncovered").then((r) => void (uncovered = r.data)));
   });
 
   // scroll to what the URL points at once it is rendered (the lists scroll their own selection: DataTable)
@@ -235,7 +235,7 @@
   $effect(() => {
     const t = setInterval(async () => {
       if (document.hidden) return;
-      try { if (JSON.stringify((await call("spec_report", { limit: 1000 })).data) !== JSON.stringify(untrack(() => report))) await load(); up = true; } catch { up = false; /* the next tick retries */ }
+      try { if (JSON.stringify((await call("report", { limit: 1000 })).data) !== JSON.stringify(untrack(() => report))) await load(); up = true; } catch { up = false; /* the next tick retries */ }
     }, 30_000);
     return () => clearInterval(t);
   });
@@ -447,7 +447,7 @@
   <p class="banner">
     <span>spec11 is not fully set up for this repo: {setup.suggestions[0]}</span>
     <span class="grow"></span>
-    <button disabled={busy} class="primary" onclick={() => runSetup("spec_install")}>Install here</button>
+    <button disabled={busy} class="primary" onclick={() => runSetup("install")}>Install here</button>
     <a class="tab" href="/setup">Details</a>
     <button aria-label="dismiss" title="Hide until the message changes" onclick={() => dismiss(setup!.suggestions[0])}>✕</button>
   </p>
@@ -577,8 +577,8 @@
           <p><Pill tone={where.skill === "current" ? "ok" : where.skill === "outdated" ? "warn" : "bad"}>skill {where.skill}</Pill> <span class="mono muted">{where.skill_path}</span></p>
           <p><Pill tone={where.mcp === "ok" ? "ok" : where.mcp === "other" ? "warn" : "bad"}>mcp {where.mcp === "ok" ? "installed" : where.mcp === "other" ? "other port" : "missing"}</Pill> <span class="mono muted">{where.mcp_path ?? "~/.claude.json (user scope, read-only here)"}</span></p>
           <p>
-            <button disabled={busy} onclick={() => runSetup("spec_install", global)}>{where.skill === "missing" ? "Install" : "Reinstall"}{global ? " skill globally" : " in this repo"}</button>
-            <button disabled={busy || (where.skill === "missing" && where.mcp !== "ok")} onclick={() => runSetup("spec_uninstall", global)}>Uninstall</button>
+            <button disabled={busy} onclick={() => runSetup("install", global)}>{where.skill === "missing" ? "Install" : "Reinstall"}{global ? " skill globally" : " in this repo"}</button>
+            <button disabled={busy || (where.skill === "missing" && where.mcp !== "ok")} onclick={() => runSetup("uninstall", global)}>Uninstall</button>
           </p>
         </div>
       {/snippet}

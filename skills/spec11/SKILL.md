@@ -18,23 +18,23 @@ spec11 finds **evidence, not truth**: a tag or citation does not prove a require
 {"mcpServers": {"spec11": {"type": "http", "url": "http://127.0.0.1:7411/mcp"}}}
 ```
 
-Add it to the client's MCP config if the `spec_*` tools are not available. `spec11 --root DIR serve` picks the repo; without it the server uses the directory it was started in.
+Add it to the client's MCP config if the spec11 tools are not available. `spec11 --root DIR serve` picks the repo; without it the server uses the directory it was started in.
 
 | Tool | Arguments | Same as CLI |
 |---|---|---|
-| `spec_report` | `limit` | `spec11 report [--limit N]` |
-| `spec_status` | `spec`, `prefix`, `all`, `missing`, `changed` (git ref), `built`, `done`, `unproven`, `issues`, `effort`, `limit` | `spec11 status [flags]` |
-| `spec_trace` | `id` | `spec11 trace ID [--codegraph]` |
-| `spec_overlap` | `path`, `all` | `spec11 overlap [PATH]` |
-| `spec_uncovered` | `path`, `fanin`, `min` | `spec11 uncovered [PATH]` |
-| `spec_file` | `name` (omit to list) | read `specs/NAME` |
-| `spec_source` | `path` | read a scanned test or source file |
-| `spec_dashboard` | none | URL of the web dashboard |
-| `spec_doctor` | none | `spec11 doctor`: repo setup, CodeGraph binary and index |
-| `spec_codegraph` | `action` (init\|sync) | builds/refreshes the CodeGraph index (`doctor --fix`); writes files, slow: only when the user asks |
-| `spec_module` | `path` (a module), `hidden` (true/false) | hides the module (adds its folder to `.spec11ignore` so scans leave it out) or shows it again (removes that line; the path is one of `hidden` in `spec11://modules`); writes a file: only when the user asks |
-| `spec_install_status` | none | whether the skill and MCP entry are installed here or globally |
-| `spec_install`, `spec_uninstall` | `global`, `port` | `spec11 install/uninstall [--global]` (they write files: only when the user asks) |
+| `report` | `limit` | `spec11 report [--limit N]` |
+| `status` | `spec`, `prefix`, `all`, `missing`, `changed` (git ref), `built`, `done`, `unproven`, `issues`, `effort`, `limit` | `spec11 status [flags]` |
+| `trace` | `id` | `spec11 trace ID [--codegraph]` |
+| `overlap` | `path`, `all` | `spec11 overlap [PATH]` |
+| `uncovered` | `path`, `fanin`, `min` | `spec11 uncovered [PATH]` |
+| `file` | `name` (omit to list) | read `specs/NAME` |
+| `source` | `path` | read a scanned test or source file |
+| `dashboard` | none | URL of the web dashboard |
+| `doctor` | none | `spec11 doctor`: repo setup, CodeGraph binary and index |
+| `codegraph` | `action` (init\|sync) | builds/refreshes the CodeGraph index (`doctor --fix`); writes files, slow: only when the user asks |
+| `module` | `path` (a module), `hidden` (true/false) | hides the module (adds its folder to `.spec11ignore` so scans leave it out) or shows it again (removes that line; the path is one of `hidden` in `spec11://modules`); writes a file: only when the user asks |
+| `install_status` | none | whether the skill and MCP entry are installed here or globally |
+| `install`, `uninstall` | `global`, `port` | `spec11 install/uninstall [--global]` (they write files: only when the user asks) |
 
 **CLI (no server needed).** `spec11 [--root DIR] [--json] report|status|trace|overlap|uncovered`. Output is plain text, identical on every run for the same tree.
 
@@ -42,7 +42,7 @@ Add it to the client's MCP config if the `spec_*` tools are not available. `spec
 
 ## Exploring the project status
 
-When asked to explore, audit or report the SDD status, call `spec_report` and relay it. It prints a headline, a one-line problem tally, and one section per problem kind (an empty one says `none`):
+When asked to explore, audit or report the SDD status, call `report` and relay it. It prints a headline, a one-line problem tally, and one section per problem kind (an empty one says `none`):
 
 | Section | Meaning |
 |---|---|
@@ -54,16 +54,16 @@ When asked to explore, audit or report the SDD status, call `spec_report` and re
 | spec issues | duplicate IDs, bullets without MUST/SHOULD/MAY, misplaced markers, citations of undefined IDs, a check mark with `(later)` |
 | dangling citations | IDs cited by tests or source that no spec defines |
 | specs to compare | declarations covered by two or more requirements whose specs do not cite each other: possible conflict (needs the CodeGraph index) |
-| code with no requirement | the top of `spec_uncovered` (needs the CodeGraph index) |
+| code with no requirement | the top of `uncovered` (needs the CodeGraph index) |
 
 Then:
 1. Give the user the report (the headline, tally and every non-empty section), then your reading of it: the two or three problems that matter most and why. Counts and ID lists come only from spec11.
-2. Drill down with `spec_status` flags, `spec_trace`, `spec_overlap`, `spec_uncovered`, never by grepping.
+2. Drill down with `status` flags, `trace`, `overlap`, `uncovered`, never by grepping.
 3. Ask which effort the user wants for judgement calls (`low`, `medium`, `high`, below); default `low` is the report as it stands. Never call two requirements conflicting from the report: see "Asked for conflicting requirements".
 
-If something looks missing ("not checked", no tests found), run `spec_doctor`: it reports the repo layout, whether the `codegraph` binary exists and its index is initialized and fresh, and what to run. The CodeGraph index (`.codegraph/codegraph.db`, opened read-only) adds test-to-code links, overlap and uncovered code. Without one those parts say "not checked": indexing is the user's decision, so do not create the index on your own.
+If something looks missing ("not checked", no tests found), run `doctor`: it reports the repo layout, whether the `codegraph` binary exists and its index is initialized and fresh, and what to run. The CodeGraph index (`.codegraph/codegraph.db`, opened read-only) adds test-to-code links, overlap and uncovered code. Without one those parts say "not checked": indexing is the user's decision, so do not create the index on your own.
 
-## spec_status — what is implemented
+## status — what is implemented
 
 **Summary (no list flag):** one line per spec file, `tested/due`, then `src-only` (cited in source, no test), `none` (neither), and counts of `manual` and `later`, the latter with how many already have tests or code, e.g. `later: 15 (3 with tests/code)`. Consecutive IDs print as ranges (`DOC-01..05`). A `TOTAL` line closes it, followed by spec issues and a hint.
 
@@ -87,7 +87,7 @@ States: `tested` (a `[ID]` tag exists; run the suite to know it passes), `src-on
 
 Scanned: `specs/*.md` bullets (wrapped lines joined; struck-through bullets are retired); test tags `[ABC-12]`, `[ABC-12][ABC-14]` or `[ABC-12, ABC-14]` anywhere in the test folders; source IDs after the line-comment marker (block comments are not read). Folders and extensions come from `spec11.json`.
 
-## spec_trace — what a requirement touches
+## trace — what a requirement touches
 
 For one ID: the full spec text and the IDs it cites, the tests tagged with it, each source comment citing it with the declaration it sits in, and related code: types named in the tagged tests' bodies (`*` = the file also cites the ID). The last line is a `codegraph explore` query. Use the output as a starting set, then read the real flow with `codegraph_explore`; name matching misses code a test reaches only indirectly. An ID unknown everywhere is an error.
 
@@ -102,8 +102,8 @@ Effort sets who judges and how deep. Use `low` unless the user asks for more; "d
 | Effort | Who | What |
 |---|---|---|
 | `low` (default) | spec11 | Report the lists and verdicts as they are. No judgement, no claim that anything is implemented. |
-| `medium` | one assessor at Sonnet level or above (Agent tool, `model: "sonnet"`; never `haiku`), or you if you are that capable | Split each requirement into clauses; per clause name the code (`file:line`) and the tagged test; read the code with `codegraph_explore`, not only comments. Batches of up to 5 requirements per assessor, one assessor per spec file, each given `spec_status ... effort=medium` and `spec_trace` output. |
-| `high` | the strongest model available (`model: "opus"`), one requirement per assessor | Everything in `medium`, plus: read each tagged test and say what it really asserts; for `NO-LINK` decide whether the test exercises app code at all (the graph misses dynamic dispatch and UI tests); for `NO-TEST` look for the behaviour in code anyway and say what test is missing; run the tagged tests and report pass or fail; never infer from names or comments alone. Input: `spec_status ... effort=high` (full spec text, test and code locations, graph links). |
+| `medium` | one assessor at Sonnet level or above (Agent tool, `model: "sonnet"`; never `haiku`), or you if you are that capable | Split each requirement into clauses; per clause name the code (`file:line`) and the tagged test; read the code with `codegraph_explore`, not only comments. Batches of up to 5 requirements per assessor, one assessor per spec file, each given `status ... effort=medium` and `trace` output. |
+| `high` | the strongest model available (`model: "opus"`), one requirement per assessor | Everything in `medium`, plus: read each tagged test and say what it really asserts; for `NO-LINK` decide whether the test exercises app code at all (the graph misses dynamic dispatch and UI tests); for `NO-TEST` look for the behaviour in code anyway and say what test is missing; run the tagged tests and report pass or fail; never infer from names or comments alone. Input: `status ... effort=high` (full spec text, test and code locations, graph links). |
 
 The assessor does not edit. It returns, per requirement: `implemented` (every clause has working code and a test), `partial` (list the missing clauses), `stub` (cited or tagged, behaviour absent) or `not-built`, plus the evidence in one or two lines. Then act on it yourself, spec first:
 
@@ -113,7 +113,7 @@ The assessor does not edit. It returns, per requirement: `implemented` (every cl
 - Marked later and `partial`, `stub` or `not-built`: keep the marker; remove a misleading tag or citation.
 - Edit specs on your own only for `implemented` marked later; confirm every other change with the user. Report one table: ID, verdict, one line of evidence.
 
-## spec_uncovered — code with no requirement
+## uncovered — code with no requirement
 
 Reads the CodeGraph index and lists top-level types and functions in the source folders that no requirement covers, grouped by file and sorted by size, as `Name:first-last` line ranges. These are candidates for a **missing requirement**, not proof.
 
@@ -135,13 +135,13 @@ The first line shows how many units each rule skipped. The index follows file ed
 
 Read the MCP resource `spec11://modules` for the repo's module structure (nearest build manifest; with a CodeGraph index also symbols per kind and which modules each depends on) and `spec11://tests` for the test cases found in the test files, grouped by module and file, each with the `[ID]` tags on it. Tests are detected by marker (`#[test]`, `@Test`, `def test_`, `it(` …), not run: a listed test does not say it passes. Set `case` in `spec11.json` for an unusual marker.
 
-## spec_overlap — code several requirements cover
+## overlap — code several requirements cover
 
 Lists declarations (method, function, type, property) that two or more requirements cover, from the CodeGraph index. A requirement covers a declaration when its ID is cited in a comment inside it or in the doc comment right above it. Each pair of IDs is marked:
 - `linked`: one spec's text cites the other, or both cite a third ID. The specs already know each other, so they are probably complementary.
 - `UNLINKED`: no declared relation. Read these first; the specs may conflict, repeat each other, or share code only by accident.
 
-Pairs from the same spec file are hidden unless `all`. spec11 finds the overlap; deciding what it means is a judgement (`medium` for `complementary`, `duplicate` and `incidental`; any claim of `conflicting` needs the strong-model review below). For each `UNLINKED` pair read both requirements (`spec_trace`) and the declaration (`codegraph_explore "<Name>"`), then classify:
+Pairs from the same spec file are hidden unless `all`. spec11 finds the overlap; deciding what it means is a judgement (`medium` for `complementary`, `duplicate` and `incidental`; any claim of `conflicting` needs the strong-model review below). For each `UNLINKED` pair read both requirements (`trace`) and the declaration (`codegraph_explore "<Name>"`), then classify:
 
 | Verdict | Test | Action |
 |---|---|---|
@@ -154,7 +154,7 @@ Pairs from the same spec file are hidden unless `all`. spec11 finds the overlap;
 
 An `UNLINKED` pair is a candidate, not a finding: two IDs on one declaration only prove that someone cited both. When the user asks which requirements conflict, or when you are about to call a pair `conflicting`, do not answer from the tool output or from the spec texts alone. Hand each candidate pair to the strongest model available (Agent tool, `model: "opus"`, one pair per assessor; a Sonnet-level or smaller model is not enough, and if no strong model can be used, say so and report the pair only as an unverified candidate). The reviewer, who does not edit anything, must:
 
-1. **Understand the current code first.** Read the declaration and what it does (`codegraph_explore "<Name>"`), its callers and callees, the tests tagged with either ID (`spec_trace`), and any other code that cites either ID. Say in a few lines what the code does today for each requirement: implements A only, B only, both, or neither.
+1. **Understand the current code first.** Read the declaration and what it does (`codegraph_explore "<Name>"`), its callers and callees, the tests tagged with either ID (`trace`), and any other code that cites either ID. Say in a few lines what the code does today for each requirement: implements A only, B only, both, or neither.
 2. **Read both requirements in full** and extract their conditions: which entity, state, input, version or phase each one applies to, and whether either is `(later)`, `(deferred)`, struck or "after 1.0".
 3. **Try to reconcile them.** Look for a reading in which both hold: disjoint conditions, one a refinement or exception of the other, different layers (storage vs display), different moments (on save vs on read).
 4. **Only if no reading reconciles them, write the contradiction as a concrete case**: one input or situation, and the two outputs the specs demand from it. No such case, no conflict.
@@ -165,15 +165,15 @@ Then relay the verdicts to the user. A conflict is reported with both bullets qu
 ## Workflow
 
 0. Specs marked `(later)` may already be built (`built`) and check-marked specs may not be (`unproven`): assess per effort (above).
-1. Starting work: `spec_status changed=HEAD` shows which requirements the current changes already touch; `missing=true prefix=X` shows what an area still lacks.
-2. Behaviour change: `spec_trace`, read the spec and its tests, edit the spec first.
+1. Starting work: `status changed=HEAD` shows which requirements the current changes already touch; `missing=true prefix=X` shows what an area still lacks.
+2. Behaviour change: `trace`, read the spec and its tests, edit the spec first.
 3. New requirement: add the bullet, write the tests, and cite `(ID)` in a comment at the code that implements it.
 4. Writing or changing a test: it must name the requirement it proves, in the form spec11 reads, square brackets with the ID:
    - Title: e.g. `@Test("[ABC-12] what holds")` (Swift Testing; use the test framework's own title or name). One test per behaviour; list several IDs as `[ABC-12][ABC-14]` or `[ABC-12, ABC-14]` only when one assertion set really proves both.
    - Comment: in the body, a `// [ABC-13] why this line proves it` beside each assertion or setup that proves a *different* requirement than the title, and above a test helper or fixture that exists for one. A bare `(ABC-12)` in a test comment is not read.
    - No ID fits: the behaviour is unspecified. Write the requirement first (step 3), then the test. Never tag a test with a nearby ID that does not say what it checks.
-   - After editing tests, `spec_status changed=HEAD` should list the requirement as `tested` with `[changed: test]`.
-5. Several specs on one piece of code: `spec_overlap`, classify per the table above.
-6. Cleaning up: `spec_uncovered path=Domain/` finds behaviour nobody specified; triage as above.
-7. Before finishing: `spec_status changed=HEAD missing=true` should be empty (nothing you touched is untested) and `spec_status issues=true` clean.
-8. For a visual overview open the dashboard (`spec_dashboard` returns its URL).
+   - After editing tests, `status changed=HEAD` should list the requirement as `tested` with `[changed: test]`.
+5. Several specs on one piece of code: `overlap`, classify per the table above.
+6. Cleaning up: `uncovered path=Domain/` finds behaviour nobody specified; triage as above.
+7. Before finishing: `status changed=HEAD missing=true` should be empty (nothing you touched is untested) and `status issues=true` clean.
+8. For a visual overview open the dashboard (`dashboard` returns its URL).

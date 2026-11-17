@@ -30,20 +30,20 @@ pub fn tools() -> Vec<Tool> {
     });
     let path = json!({"path": {"type": "string", "description": "only files whose path contains this"}});
     vec![
-        Tool { name: "spec_report", description: "Whole-project spec-driven status: coverage headline, problem tally and one section per problem kind. Deterministic. Evidence, not truth.", schema: obj(json!({"limit": {"type": "integer", "description": "lines per problem section (default 12)"}})), ui: true },
-        Tool { name: "spec_status", description: "Per-spec-file summary, or one line per requirement when a list filter is given (missing, changed, built, done, unproven, issues, all). Deterministic. Evidence, not truth.", schema: obj(status_props), ui: true },
-        Tool { name: "spec_trace", description: "One requirement in depth: spec text, tests tagged with it, source citations with their declaration, related code. Evidence, not truth.", schema: required(obj(json!({"id": {"type": "string", "description": "requirement ID, e.g. DOC-25"}})), "id"), ui: false },
-        Tool { name: "spec_overlap", description: "Code covered by 2+ requirements (CodeGraph index): where two specs may conflict or complement each other. A candidate list, not a verdict.", schema: obj(merge(path.clone(), json!({"all": {"type": "boolean", "description": "also pairs from the same spec file"}}))), ui: false },
-        Tool { name: "spec_uncovered", description: "Code no requirement covers (CodeGraph index): candidates for a missing requirement, not proof.", schema: obj(merge(path, json!({"fanin": {"type": "integer"}, "min": {"type": "integer"}}))), ui: false },
-        Tool { name: "spec_file", description: "A spec file's markdown (read-only; name is a file in the specs folder, e.g. 04-documents.md). Without name: the list of spec files.", schema: obj(json!({"name": {"type": "string", "description": "spec file name, e.g. 04-documents.md"}})), ui: false },
-        Tool { name: "spec_source", description: "A test or source file's text (read-only; path is one of the scanned test/source files, as in spec_trace output).", schema: obj(json!({"path": {"type": "string", "description": "repo-relative path, e.g. src/main.rs"}})), ui: false },
-        Tool { name: "spec_doctor", description: "Repo setup checks: specs, tests and source folders, git, the codegraph binary and whether the CodeGraph index is initialized, readable and fresh, skill and MCP entry. Only looks; never indexes or installs.", schema: obj(json!({})), ui: false },
-        Tool { name: "spec_codegraph", description: "WRITES FILES, SLOW: build (action=init, when there is no .codegraph) or refresh (action=sync) the CodeGraph index by running the codegraph binary. Indexing is the user's decision: call only when the user asked for it. Same as `spec11 doctor --fix`.", schema: required(obj(json!({"action": {"type": "string", "enum": ["init", "sync"]}})), "action"), ui: false },
-        Tool { name: "spec_install_status", description: "Whether the spec11 skill and MCP entry are installed for this repo (.agents/skills, .mcp.json) or globally (~/.agents/skills), with what to run if not.", schema: obj(json!({})), ui: true },
-        Tool { name: "spec_install", description: "WRITES FILES: install the spec11 skill into <repo>/.agents/skills (global=true: ~/.agents/skills) and add the spec11 entry to <repo>/.mcp.json, keeping other servers. Same as `spec11 install`.", schema: obj(json!({"global": {"type": "boolean", "description": "install the skill into ~/.agents/skills instead of this repo"}, "port": {"type": "integer", "description": "MCP port for the .mcp.json entry (default: the port this server runs on)"}})), ui: false },
-        Tool { name: "spec_uninstall", description: "WRITES FILES: remove what spec_install added (the skill, and the spec11 entry in .mcp.json), keeping everything else. Same as `spec11 uninstall`.", schema: obj(json!({"global": {"type": "boolean"}})), ui: false },
-        Tool { name: "spec_module", description: "WRITES FILES: set a module hidden (true) or shown (false) by adding or removing its folder line in <repo>/.spec11ignore (gitignore syntax), keeping every other line. To hide, path is a module listed by spec11://modules; to show, one of its `hidden`. Only when the user asked for it.", schema: merge(obj(json!({"path": {"type": "string", "description": "module path, e.g. server"}, "hidden": {"type": "boolean", "description": "true: leave the module out of every scan; false: list it again"}})), json!({"required": ["path", "hidden"]})), ui: false },
-        Tool { name: "spec_dashboard", description: "URL of the spec11 web dashboard served by this process.", schema: obj(json!({})), ui: true },
+        Tool { name: "report", description: "Whole-project spec-driven status: coverage headline, problem tally and one section per problem kind. Deterministic. Evidence, not truth.", schema: obj(json!({"limit": {"type": "integer", "description": "lines per problem section (default 12)"}})), ui: true },
+        Tool { name: "status", description: "Per-spec-file summary, or one line per requirement when a list filter is given (missing, changed, built, done, unproven, issues, all). Deterministic. Evidence, not truth.", schema: obj(status_props), ui: true },
+        Tool { name: "trace", description: "One requirement in depth: spec text, tests tagged with it, source citations with their declaration, related code. Evidence, not truth.", schema: required(obj(json!({"id": {"type": "string", "description": "requirement ID, e.g. DOC-25"}})), "id"), ui: false },
+        Tool { name: "overlap", description: "Code covered by 2+ requirements (CodeGraph index): where two specs may conflict or complement each other. A candidate list, not a verdict.", schema: obj(merge(path.clone(), json!({"all": {"type": "boolean", "description": "also pairs from the same spec file"}}))), ui: false },
+        Tool { name: "uncovered", description: "Code no requirement covers (CodeGraph index): candidates for a missing requirement, not proof.", schema: obj(merge(path, json!({"fanin": {"type": "integer"}, "min": {"type": "integer"}}))), ui: false },
+        Tool { name: "file", description: "A spec file's markdown (read-only; name is a file in the specs folder, e.g. 04-documents.md). Without name: the list of spec files.", schema: obj(json!({"name": {"type": "string", "description": "spec file name, e.g. 04-documents.md"}})), ui: false },
+        Tool { name: "source", description: "A test or source file's text (read-only; path is one of the scanned test/source files, as in trace output).", schema: obj(json!({"path": {"type": "string", "description": "repo-relative path, e.g. src/main.rs"}})), ui: false },
+        Tool { name: "doctor", description: "Repo setup checks: specs, tests and source folders, git, the codegraph binary and whether the CodeGraph index is initialized, readable and fresh, skill and MCP entry. Only looks; never indexes or installs.", schema: obj(json!({})), ui: false },
+        Tool { name: "codegraph", description: "WRITES FILES, SLOW: build (action=init, when there is no .codegraph) or refresh (action=sync) the CodeGraph index by running the codegraph binary. Indexing is the user's decision: call only when the user asked for it. Same as `spec11 doctor --fix`.", schema: required(obj(json!({"action": {"type": "string", "enum": ["init", "sync"]}})), "action"), ui: false },
+        Tool { name: "install_status", description: "Whether the spec11 skill and MCP entry are installed for this repo (.agents/skills, .mcp.json) or globally (~/.agents/skills), with what to run if not.", schema: obj(json!({})), ui: true },
+        Tool { name: "install", description: "WRITES FILES: install the spec11 skill into <repo>/.agents/skills (global=true: ~/.agents/skills) and add the spec11 entry to <repo>/.mcp.json, keeping other servers. Same as `spec11 install`.", schema: obj(json!({"global": {"type": "boolean", "description": "install the skill into ~/.agents/skills instead of this repo"}, "port": {"type": "integer", "description": "MCP port for the .mcp.json entry (default: the port this server runs on)"}})), ui: false },
+        Tool { name: "uninstall", description: "WRITES FILES: remove what install added (the skill, and the spec11 entry in .mcp.json), keeping everything else. Same as `spec11 uninstall`.", schema: obj(json!({"global": {"type": "boolean"}})), ui: false },
+        Tool { name: "module", description: "WRITES FILES: set a module hidden (true) or shown (false) by adding or removing its folder line in <repo>/.spec11ignore (gitignore syntax), keeping every other line. To hide, path is a module listed by spec11://modules; to show, one of its `hidden`. Only when the user asked for it.", schema: merge(obj(json!({"path": {"type": "string", "description": "module path, e.g. server"}, "hidden": {"type": "boolean", "description": "true: leave the module out of every scan; false: list it again"}})), json!({"required": ["path", "hidden"]})), ui: false },
+        Tool { name: "dashboard", description: "URL of the spec11 web dashboard served by this process.", schema: obj(json!({})), ui: true },
     ]
 }
 
@@ -52,9 +52,9 @@ fn setup(root: Option<&Path>, name: &str, args: &Value, mcp_port: u16) -> Option
     use crate::skill;
     let global = args["global"].as_bool().unwrap_or(false);
     let changes = match name {
-        "spec_install_status" => None,
-        "spec_install" => Some(skill::apply(root, global, Some(num(args, "port").map_or(mcp_port, |p| p as u16)))),
-        "spec_uninstall" => Some(skill::apply(root, global, None)),
+        "install_status" => None,
+        "install" => Some(skill::apply(root, global, Some(num(args, "port").map_or(mcp_port, |p| p as u16)))),
+        "uninstall" => Some(skill::apply(root, global, None)),
         _ => return None,
     };
     Some((|| {
@@ -92,14 +92,14 @@ fn txt<'a>(args: &'a Value, k: &str) -> &'a str {
 // (API-01)
 /// Run one tool against the repo at `root` (or the nearest ancestor of the cwd with a specs folder). Blocking.
 pub fn call(root: Option<&Path>, name: &str, args: &Value, dashboard: &str, mcp_port: u16) -> Result<(String, Value), String> {
-    if name == "spec_dashboard" {
+    if name == "dashboard" {
         return Ok((format!("{dashboard}\n"), json!({"url": dashboard})));
     }
-    if name == "spec_doctor" {
+    if name == "doctor" {
         let checks = crate::doctor::run(root, mcp_port);
         return Ok((crate::doctor::text(&checks), json!({"checks": checks, "index_action": crate::doctor::suggested(&checks)})));
     }
-    if name == "spec_codegraph" {
+    if name == "codegraph" {
         let text = crate::doctor::index(root, txt(args, "action"))?;
         return Ok((text.clone(), json!({"output": text})));
     }
@@ -109,11 +109,11 @@ pub fn call(root: Option<&Path>, name: &str, args: &Value, dashboard: &str, mcp_
     let a = Analysis::load(root)?;
     let note = |a: &Analysis| a.graph_note.clone().unwrap_or_else(|| "no .codegraph index here; the user decides about indexing".into());
     let out = match name {
-        "spec_report" => {
+        "report" => {
             let r = a.report();
             (r.text(&a, num(args, "limit").unwrap_or(12).max(0) as usize), json!(r))
         }
-        "spec_status" => {
+        "status" => {
             let o = StatusOpts {
                 spec: args.get("spec").and_then(Value::as_str).map(str::to_owned),
                 prefix: args.get("prefix").and_then(Value::as_str).map(str::to_owned),
@@ -136,7 +136,7 @@ pub fn call(root: Option<&Path>, name: &str, args: &Value, dashboard: &str, mcp_
             }
             (text, json!(st))
         }
-        "spec_file" => {
+        "file" => {
             let names = a.p.spec_files();
             let want = txt(args, "name");
             if want.is_empty() {
@@ -149,7 +149,7 @@ pub fn call(root: Option<&Path>, name: &str, args: &Value, dashboard: &str, mcp_
                 return Err(format!("{want}: not a spec file"));
             }
         }
-        "spec_source" => {
+        "source" => {
             let want = txt(args, "path");
             // only paths the scanner itself lists: no traversal, nothing outside tests/src
             if !a.p.test_files().iter().chain(a.p.src_files().iter()).any(|f| f == want) {
@@ -158,20 +158,20 @@ pub fn call(root: Option<&Path>, name: &str, args: &Value, dashboard: &str, mcp_
             let text = std::fs::read_to_string(a.p.root.join(want)).map_err(|e| e.to_string())?;
             (text.clone(), json!({"path": want, "text": text}))
         }
-        "spec_trace" => match a.trace(txt(args, "id")) {
+        "trace" => match a.trace(txt(args, "id")) {
             Some(t) => (t.text(), json!(t)),
             None => return Err(format!("{}: not in specs, tests or sources", txt(args, "id").to_uppercase())),
         },
-        "spec_overlap" => {
+        "overlap" => {
             let rows = a.overlap(txt(args, "path"), args["all"].as_bool().unwrap_or(false)).map_err(|e| e.to_string())?.ok_or_else(|| note(&a))?;
             (a.overlap_text(&rows, 25), json!({"rows": rows}))
         }
-        "spec_uncovered" => {
+        "uncovered" => {
             let u = a.uncovered(txt(args, "path"), num(args, "fanin").unwrap_or(5).max(0) as usize, num(args, "min").unwrap_or(10)).map_err(|e| e.to_string())?.ok_or_else(|| note(&a))?;
             (u.text(), json!(u))
         }
         // (API-11, API-12)
-        "spec_module" => {
+        "module" => {
             let want = txt(args, "path").trim_matches('/');
             let line = format!("/{want}/");
             let file = a.p.root.join(".spec11ignore");
@@ -211,22 +211,22 @@ pub const RESOURCES: [(&str, &str, &str, fn(&Analysis) -> serde_json::Result<Str
 ];
 
 /// The read-only tools that take no argument, also as plain-text MCP resources: (uri, name, tool). The text is what the CLI prints.
-/// The description is the tool's. Tools with arguments (`spec_trace`, status filters) and the writing ones stay tools only.
+/// The description is the tool's. Tools with arguments (`trace`, status filters) and the writing ones stay tools only.
 pub const VIEWS: [(&str, &str, &str); 4] = [
-    ("spec11://report", "spec11 report", "spec_report"),
-    ("spec11://status", "spec11 status", "spec_status"),
-    ("spec11://uncovered", "spec11 uncovered", "spec_uncovered"),
-    ("spec11://overlap", "spec11 overlap", "spec_overlap"),
+    ("spec11://report", "spec11 report", "report"),
+    ("spec11://status", "spec11 status", "status"),
+    ("spec11://uncovered", "spec11 uncovered", "uncovered"),
+    ("spec11://overlap", "spec11 overlap", "overlap"),
 ];
 
 /// The same tools as JSON resources, `<view uri>.json`: (uri, name, tool). The JSON is the tool's `structuredContent`, typed by
 /// the schema at `spec11://schemas/<name>`. Without a CodeGraph index `uncovered` and `overlap` cannot be typed data: reading
 /// them is an error that says why.
 pub const DATA: [(&str, &str, &str); 4] = [
-    ("spec11://report.json", "spec11 report (JSON)", "spec_report"),
-    ("spec11://status.json", "spec11 status (JSON)", "spec_status"),
-    ("spec11://uncovered.json", "spec11 uncovered (JSON)", "spec_uncovered"),
-    ("spec11://overlap.json", "spec11 overlap (JSON)", "spec_overlap"),
+    ("spec11://report.json", "spec11 report (JSON)", "report"),
+    ("spec11://status.json", "spec11 status (JSON)", "status"),
+    ("spec11://uncovered.json", "spec11 uncovered (JSON)", "uncovered"),
+    ("spec11://overlap.json", "spec11 overlap (JSON)", "overlap"),
 ];
 
 pub const SCHEMA_PREFIX: &str = "spec11://schemas/";
@@ -261,6 +261,21 @@ fn of<T: schemars::JsonSchema>() -> Value {
             Value::Object(m) => {
                 if m.get("format").and_then(Value::as_str).is_some_and(|f| f.starts_with("uint") || f.starts_with("int") || f.starts_with("double") || f.starts_with("float")) {
                     m.remove("format");
+                }
+                // `"type": ["string", "null"]` is legal but less portable (Gemini/OpenAPI-style clients): use `anyOf` of single types.
+                let nullable = match m.get("type").and_then(Value::as_array).map(Vec::as_slice) {
+                    Some([t, n]) if t.is_string() && n == "null" => Some(t.clone()),
+                    _ => None,
+                };
+                if let Some(t) = nullable {
+                    let mut branch = std::mem::take(m);
+                    for k in ["title", "description", "default"] {
+                        if let Some(x) = branch.remove(k) {
+                            m.insert(k.into(), x);
+                        }
+                    }
+                    branch.insert("type".into(), t);
+                    m.insert("anyOf".into(), json!([branch, {"type": "null"}]));
                 }
                 m.values_mut().for_each(plain);
             }
@@ -317,8 +332,7 @@ pub fn schema(name: &str) -> Option<Value> {
 
 /// The `outputSchema` of a tool: its result's `structuredContent`.
 pub fn output_schema(tool: &str) -> Option<Value> {
-    let name = tool.strip_prefix("spec_")?;
-    schema(if name.starts_with("install") || name == "uninstall" { "install" } else { name })
+    schema(if tool.starts_with("install") || tool == "uninstall" { "install" } else { tool })
 }
 
 // (API-07, API-08)
@@ -328,7 +342,7 @@ pub fn read_resource(root: Option<&Path>, uri: &str) -> Result<Option<(&'static 
         return match call(root, tool, &json!({}), "", 0) {
             Ok((text, _)) => Ok(Some((TEXT_MIME, text))),
             // "not checked" (no usable CodeGraph index) is content here, not an error: indexing is the user's decision
-            Err(e) if matches!(*tool, "spec_overlap" | "spec_uncovered") && Analysis::load(root).is_ok_and(|a| a.graph.is_none()) => Ok(Some((TEXT_MIME, e))),
+            Err(e) if matches!(*tool, "overlap" | "uncovered") && Analysis::load(root).is_ok_and(|a| a.graph.is_none()) => Ok(Some((TEXT_MIME, e))),
             Err(e) => Err(e),
         };
     }

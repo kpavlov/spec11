@@ -409,16 +409,18 @@ mod tests {
     fn tools_declare_an_output_schema_whose_required_keys_their_results_have() {
         let d = repo();
         let args = |n: &str| match n {
-            "spec_trace" => json!({"id": "AAA-01"}),
-            "spec_source" => json!({"path": "RunSolo/RunSolo/A.swift"}),
+            "trace" => json!({"id": "AAA-01"}),
+            "source" => json!({"path": "RunSolo/RunSolo/A.swift"}),
             _ => json!({}),
         };
         let mut checked = 0;
         for t in ops::tools() {
             let schema = ops::output_schema(t.name).unwrap_or_else(|| panic!("{} has no output schema", t.name));
             assert_eq!(schema["type"], "object", "{}", t.name);
+            // portable: nullable fields are `anyOf` of single types, never `"type": [.., "null"]`
+            assert!(!schema.to_string().contains(r#""type":["#), "{}: {schema}", t.name);
             // the writing tools are not run here, and overlap/uncovered need an index this fixture lacks
-            if matches!(t.name, "spec_install" | "spec_uninstall" | "spec_codegraph" | "spec_module" | "spec_overlap" | "spec_uncovered") {
+            if matches!(t.name, "install" | "uninstall" | "codegraph" | "module" | "overlap" | "uncovered") {
                 continue;
             }
             let (_, data) = ops::call(Some(&d), t.name, &args(t.name), "http://x/", 7411).unwrap();
@@ -455,28 +457,28 @@ mod tests {
     async fn api_and_guard() {
         let (app, ui) = routers(app_state(Some(repo()), &[7411]));
         assert!(ui.is_none());
-        let (st, body) = send(&app, tool("spec_report", "{}", "127.0.0.1:7411")).await;
+        let (st, body) = send(&app, tool("report", "{}", "127.0.0.1:7411")).await;
         assert_eq!(st, StatusCode::OK, "{body}");
         assert!(body.contains("SDD STATUS") && body.contains("\"none\":2"), "{body}");
-        let (st, body) = send(&app, tool("spec_trace", r#"{"id":"aaa-01"}"#, "localhost:7411")).await;
+        let (st, body) = send(&app, tool("trace", r#"{"id":"aaa-01"}"#, "localhost:7411")).await;
         assert!(st == StatusCode::OK && body.contains("AAA-01"), "{body}");
-        let (_, body) = send(&app, tool("spec_file", "{}", "127.0.0.1:7411")).await;
+        let (_, body) = send(&app, tool("file", "{}", "127.0.0.1:7411")).await;
         assert!(body.contains("01-a.md"), "{body}");
-        let (st, body) = send(&app, tool("spec_file", r#"{"name":"specs/01-a.md"}"#, "127.0.0.1:7411")).await;
+        let (st, body) = send(&app, tool("file", r#"{"name":"specs/01-a.md"}"#, "127.0.0.1:7411")).await;
         assert!(st == StatusCode::OK && body.contains("AAA-02"), "{body}");
         for bad in ["../Cargo.toml", "/etc/passwd", "01-a"] {
-            let (_, body) = send(&app, tool("spec_file", &format!(r#"{{"name":"{bad}"}}"#), "127.0.0.1:7411")).await;
+            let (_, body) = send(&app, tool("file", &format!(r#"{{"name":"{bad}"}}"#), "127.0.0.1:7411")).await;
             assert!(body.contains(r#""isError":true"#), "{bad}: {body}");
         }
-        let (st, body) = send(&app, tool("spec_source", r#"{"path":"RunSolo/RunSolo/A.swift"}"#, "127.0.0.1:7411")).await;
+        let (st, body) = send(&app, tool("source", r#"{"path":"RunSolo/RunSolo/A.swift"}"#, "127.0.0.1:7411")).await;
         assert!(st == StatusCode::OK && body.contains("struct A"), "{body}");
         for bad in ["../Cargo.toml", "/etc/passwd", "specs/01-a.md", "RunSolo/RunSolo/../../specs/01-a.md"] {
-            let (_, body) = send(&app, tool("spec_source", &format!(r#"{{"path":"{bad}"}}"#), "127.0.0.1:7411")).await;
+            let (_, body) = send(&app, tool("source", &format!(r#"{{"path":"{bad}"}}"#), "127.0.0.1:7411")).await;
             assert!(body.contains(r#""isError":true"#), "{bad}: {body}");
         }
         assert!(send(&app, tool("nope", "{}", "127.0.0.1:7411")).await.1.contains(r#""isError":true"#));
-        assert_eq!(send(&app, tool("spec_report", "{}", "evil.test")).await.0, StatusCode::FORBIDDEN);
-        let mut r = tool("spec_report", "{}", "127.0.0.1:7411");
+        assert_eq!(send(&app, tool("report", "{}", "evil.test")).await.0, StatusCode::FORBIDDEN);
+        let mut r = tool("report", "{}", "127.0.0.1:7411");
         r.headers_mut().insert("origin", "http://evil.test".parse().unwrap());
         assert_eq!(send(&app, r).await.0, StatusCode::FORBIDDEN);
     }
@@ -495,10 +497,10 @@ mod tests {
         let mods: serde_json::Value = serde_json::from_str(&mods).unwrap();
         let m = mods["modules"].as_array().unwrap().iter().map(|m| m["path"].as_str().unwrap()).find(|p| *p != ".").expect("a module").to_string();
         std::fs::write(d.join(".spec11ignore"), "*.tmp").unwrap(); // no trailing newline
-        let (text, _) = ops::call(Some(&d), "spec_module", &json!({"path": m, "hidden": true}), "", 0).unwrap();
+        let (text, _) = ops::call(Some(&d), "module", &json!({"path": m, "hidden": true}), "", 0).unwrap();
         assert!(text.contains(".spec11ignore"), "{text}");
         assert_eq!(std::fs::read_to_string(d.join(".spec11ignore")).unwrap(), format!("*.tmp\n/{m}/\n"));
-        let refused = |path: &str, hidden: bool| ops::call(Some(&d), "spec_module", &json!({"path": path, "hidden": hidden}), "", 0).is_err();
+        let refused = |path: &str, hidden: bool| ops::call(Some(&d), "module", &json!({"path": path, "hidden": hidden}), "", 0).is_err();
         for (bad, hidden) in [(".", true), ("*", true), ("nope", true)] {
             assert!(refused(bad, hidden), "{bad}");
         }
@@ -508,7 +510,7 @@ mod tests {
         for bad in ["*.tmp", "nope", "."] {
             assert!(refused(bad, false), "{bad}");
         }
-        let (text, _) = ops::call(Some(&d), "spec_module", &json!({"path": m, "hidden": false}), "", 0).unwrap();
+        let (text, _) = ops::call(Some(&d), "module", &json!({"path": m, "hidden": false}), "", 0).unwrap();
         assert!(text.contains(".spec11ignore"), "{text}");
         assert_eq!(std::fs::read_to_string(d.join(".spec11ignore")).unwrap(), "*.tmp\n");
         std::fs::remove_dir_all(&d).ok();
@@ -520,16 +522,16 @@ mod tests {
         let repo = repo();
         let (app, _) = routers(app_state(Some(repo.clone()), &[7411]));
         let call = |n: &str, a: &str| tool(n, a, "127.0.0.1:7411");
-        let (_, body) = send(&app, call("spec_install_status", "{}")).await;
+        let (_, body) = send(&app, call("install_status", "{}")).await;
         assert!(body.contains(r#""skill":"missing""#) && body.contains("spec11 install"), "{body}");
         std::fs::write(repo.join(".mcp.json"), r#"{"mcpServers":{"other":{"command":"x"}}}"#).unwrap();
-        let (st, body) = send(&app, call("spec_install", "{}")).await;
+        let (st, body) = send(&app, call("install", "{}")).await;
         assert_eq!(st, StatusCode::OK, "{body}");
         assert!(body.contains(r#""skill":"current""#) && body.contains(r#""mcp":"ok""#), "{body}");
         let mcp = std::fs::read_to_string(repo.join(".mcp.json")).unwrap();
         assert!(mcp.contains("\"other\"") && mcp.contains("127.0.0.1:7411/mcp"), "{mcp}");
         assert!(repo.join(".agents/skills/spec11/SKILL.md").exists());
-        let (_, body) = send(&app, call("spec_uninstall", "{}")).await;
+        let (_, body) = send(&app, call("uninstall", "{}")).await;
         assert!(body.contains(r#""skill":"missing""#), "{body}");
         assert!(!repo.join(".agents/skills/spec11/SKILL.md").exists());
         assert!(std::fs::read_to_string(repo.join(".mcp.json")).unwrap().contains("\"other\""));
@@ -544,8 +546,8 @@ mod tests {
         let (st, body) = send(&app, rpc(1, "initialize", init)).await;
         assert_eq!(st, StatusCode::OK, "{body}");
         let (_, body) = send(&app, rpc(2, "tools/list", "{}")).await;
-        assert!(body.contains("spec_report") && body.contains("ui://spec11/dashboard"), "{body}");
-        let (_, body) = send(&app, rpc(3, "tools/call", r#"{"name":"spec_status","arguments":{"missing":true}}"#)).await;
+        assert!(body.contains("report") && body.contains("ui://spec11/dashboard"), "{body}");
+        let (_, body) = send(&app, rpc(3, "tools/call", r#"{"name":"status","arguments":{"missing":true}}"#)).await;
         assert!(body.contains("AAA-02"), "{body}");
         let (_, body) = send(&app, rpc(4, "resources/read", r#"{"uri":"ui://spec11/dashboard"}"#)).await;
         assert!(body.contains("text/html;profile=mcp-app"), "{body}");
@@ -571,10 +573,10 @@ mod tests {
         // the UI port serves the info route and MCP (the dashboard talks MCP); the main port serves MCP only
         let get = |host: &str| Request::get("/api/info").header("host", host).body(Body::empty()).unwrap();
         assert_eq!(send(&ui, get("127.0.0.1:7412")).await.0, StatusCode::OK);
-        let (st, body) = send(&ui, tool("spec_report", "{}", "127.0.0.1:7412")).await;
+        let (st, body) = send(&ui, tool("report", "{}", "127.0.0.1:7412")).await;
         assert!(st == StatusCode::OK && body.contains("SDD STATUS"), "{body}");
         assert_eq!(send(&mcp_app, get("127.0.0.1:7411")).await.0, StatusCode::NOT_FOUND);
-        assert!(send(&mcp_app, tool("spec_report", "{}", "127.0.0.1:7411")).await.1.contains("SDD STATUS"));
+        assert!(send(&mcp_app, tool("report", "{}", "127.0.0.1:7411")).await.1.contains("SDD STATUS"));
     }
 
     /// Release builds only: the embedded UI, SPA fallback, 404 for a missing asset.
