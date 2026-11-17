@@ -560,9 +560,38 @@ fn changes_by_ref_commit_rename_delete_whitespace_and_history() {
     let h = a.p.history("", "", 10).unwrap();
     assert_eq!((h.base.as_deref(), h.on_base, h.commits.len(), h.commits[0].subject.as_str()), (Some("main"), false, 1, "work"));
     assert_eq!(h.uncommitted, 1);
+    // the filters apply: the branch commit touches scanned files, so it stays
+    let h = a.history("", "", 10, &ChangeOpts::default()).unwrap();
+    assert_eq!(h.commits.len(), 1);
     git(&["checkout", "-qf", "main"]);
     let h = Analysis::load(Some(&d)).unwrap().p.history("", "", 10).unwrap();
     assert!(h.on_base && h.commits[0].subject == "base");
+}
+
+#[doc = "[SCAN-20]"]
+#[test]
+fn history_leaves_out_commits_the_filters_hide() {
+    use spec11_core::ChangeOpts;
+    let d = scratch("history_filters");
+    write(&d, "spec11.json", r#"{"src":["src"],"tests":["tests"],"ext":["kt"],"comment":["//"]}"#);
+    write(&d, "specs/a.md", "- **AAA-01** MUST — one.\n");
+    write(&d, "notes.txt", "n\n");
+    let git = |a: &[&str]| {
+        let r = std::process::Command::new("git").args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(a).current_dir(&d).output().unwrap();
+        assert!(r.status.success(), "{a:?}");
+    };
+    git(&["init", "-q", "-b", "main"]);
+    git(&["add", "."]);
+    git(&["commit", "-qm", "base"]);
+    git(&["checkout", "-qb", "feature"]);
+    write(&d, "notes.txt", "n2\n");
+    git(&["commit", "-qam", "notes only"]);
+    write(&d, "specs/a.md", "- **AAA-01** MUST — one!\n");
+    git(&["commit", "-qam", "spec"]);
+    let a = Analysis::load(Some(&d)).unwrap();
+    let subjects = |o: &ChangeOpts| a.history("", "", 10, o).unwrap().commits.into_iter().map(|c| c.subject).collect::<Vec<_>>();
+    assert_eq!(subjects(&ChangeOpts::default()), ["spec"]);
+    assert_eq!(subjects(&ChangeOpts { show_all: true, ..Default::default() }), ["spec", "notes only"]);
 }
 
 #[doc = "[SCAN-18]"]
