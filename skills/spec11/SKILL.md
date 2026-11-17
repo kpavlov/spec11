@@ -29,7 +29,7 @@ Add it to the client's MCP config if the spec11 tools are not available. `spec11
 | `uncovered` | `path`, `fanin`, `min` | `spec11 uncovered [PATH]` |
 | `file` | `name` (omit to list) | read `specs/NAME` |
 | `source` | `path` | read a scanned test or source file |
-| `dashboard` | none | URL of the web dashboard |
+| `dashboard` | `view` (optional page, e.g. `modules`, `requirements/DOC-25`) | URL of the web dashboard (at that page) |
 | `doctor` | none | `spec11 doctor`: repo setup, CodeGraph binary and index |
 | `codegraph` | `action` (init\|sync) | builds/refreshes the CodeGraph index (`doctor --fix`); writes files, slow: only when the user asks |
 | `module` | `path` (a module), `hidden` (true/false) | hides the module (adds its folder to `.spec11ignore` so scans leave it out) or shows it again (removes that line; the path is one of `hidden` in `spec11://modules`); writes a file: only when the user asks |

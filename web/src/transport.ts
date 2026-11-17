@@ -16,12 +16,24 @@ function rpc(method: string, params: unknown): Promise<any> {
   });
 }
 
+// The host sends the arguments of the tool call that opened this app (`dashboard`'s `view`) as `ui/notifications/tool-input`.
+let toolInput: ((args: Record<string, unknown>) => void) | undefined;
+let opened: Record<string, unknown> | undefined;
+export function onToolInput(cb: (args: Record<string, unknown>) => void) {
+  if (!embedded) return;
+  toolInput = cb;
+  if (opened) cb(opened);
+  void initBridge();
+}
+
 let ready: Promise<unknown> | undefined;
 function initBridge() {
   ready ??= (() => {
     window.addEventListener("message", (e) => {
       const m = e.data;
-      if (e.source !== window.parent || !m || m.jsonrpc !== "2.0" || !pending.has(m.id)) return;
+      if (e.source !== window.parent || !m || m.jsonrpc !== "2.0") return;
+      if (m.method === "ui/notifications/tool-input") toolInput?.((opened = m.params?.arguments ?? {}));
+      if (!pending.has(m.id)) return;
       const p = pending.get(m.id)!;
       pending.delete(m.id);
       m.error ? p.fail(new Error(m.error.message ?? "host error")) : p.ok(m.result);

@@ -547,6 +547,9 @@ mod tests {
         assert_eq!(st, StatusCode::OK, "{body}");
         let (_, body) = send(&app, rpc(2, "tools/list", "{}")).await;
         assert!(body.contains("report") && body.contains("ui://spec11/dashboard"), "{body}");
+        assert_eq!(body.matches("ui://spec11/dashboard").count(), 1, "only `dashboard` opens the app: {body}");
+        let (_, body) = send(&app, rpc(5, "tools/call", r#"{"name":"dashboard","arguments":{"view":"/modules?module=core"}}"#)).await;
+        assert!(body.contains("127.0.0.1:7411/modules?module=core"), "{body}");
         let (_, body) = send(&app, rpc(3, "tools/call", r#"{"name":"status","arguments":{"missing":true}}"#)).await;
         assert!(body.contains("AAA-02"), "{body}");
         let (_, body) = send(&app, rpc(4, "resources/read", r#"{"uri":"ui://spec11/dashboard"}"#)).await;
