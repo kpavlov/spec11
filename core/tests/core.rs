@@ -62,8 +62,8 @@ fn states_and_issues() {
     assert_eq!(a.s["DEM-09"].mark, "later");
     assert_eq!(a.s["DEM-09"].text, "wraps onto a second line (later)");
     assert!(!a.s.contains_key("DEM-07") && !a.s.contains_key("DEM-10"));
-    assert!(a.issues.iter().any(|x| x.starts_with("DEM-06 is defined twice")));
-    assert!(a.issues.iter().any(|x| x.starts_with("DEM-07 ") && x.contains("no MUST/SHOULD/MAY")));
+    assert!(a.issues.iter().any(|x| x.to_string().starts_with("DEM-06 is defined twice")));
+    assert!(a.issues.iter().any(|x| x.id == "DEM-07" && x.uncounted));
     assert_eq!(a.verdict("DEM-08"), "NO-TEST");
     assert!(a.built("DEM-05"));
 }
@@ -93,6 +93,10 @@ fn config_comes_from_spec11_json_or_defaults() {
     let a = Analysis::load(Some(&bare)).unwrap();
     assert_eq!(a.p.cfg.specs, "specs");
     assert!(a.p.cfg.ext.is_empty() && a.p.cfg.src.is_empty()); // nothing to detect from
+
+    write(&bare, "spec11.json", r#"{"case": "("}"#);
+    let err = Analysis::load(Some(&bare)).err().expect("a bad case regex is an error");
+    assert!(err.contains("bad regex"), "{err}");
 
     write(&bare, "spec11.json", "{not json");
     let err = Analysis::load(Some(&bare)).err().expect("a broken spec11.json is an error");
@@ -163,17 +167,25 @@ fn index(d: &Path, with_edges_kind: bool) {
 
 #[doc = "[GRAPH-01, GRAPH-04]"]
 #[test]
-fn codegraph_links_callers_impact_fts() {
+fn codegraph_links_tests_to_code() {
     let d = fixture("graph");
     index(&d, true);
     let a = Analysis::load(Some(&d)).unwrap();
     assert_eq!(a.graph.as_ref().unwrap().version, Some(11));
-    assert_eq!(a.links.as_ref().unwrap()["DEM-01"].iter().collect::<Vec<_>>(), ["Demo.swift"]);
+    assert_eq!(a.links.as_ref().unwrap()["DEM-01"].iter().collect::<Vec<_>>(), ["src/Demo.swift"]);
     assert_eq!(a.verdict("DEM-01"), "ok");
-    let g = a.graph.as_ref().unwrap();
-    assert_eq!(g.callers("n2").unwrap()[0].id, "t1");
-    assert_eq!(g.impact("n2", 3).unwrap().len(), 2); // itself and its caller
-    assert_eq!(g.search("Demo", 5).unwrap()[0].name, "Demo"); // FTS5 is compiled in
+    // a tag on the line above the test function (Rust's `#[doc = "[ID]"]`) links too: `b` starts one line below DEM-05's tag
+    // and code in a second src dir links too, shown repo-relative (the first src dir's prefix is dropped)
+    write(&d, "spec11.json", r#"{"tests":["tests"],"src":["src","lib"],"ext":["swift"]}"#);
+    Connection::open(d.join(".codegraph/codegraph.db")).unwrap().execute_batch("insert into nodes values ('t2','function','b','b','tests/DemoTests.swift',5,6,null), ('n3','function','c','c','lib/Other.swift',1,1,null); insert into edges(source,target,kind) values ('t2','n2','calls'), ('t2','n3','calls');").unwrap();
+    let a = Analysis::load(Some(&d)).unwrap();
+    assert_eq!(a.links.as_ref().unwrap()["DEM-05"].iter().collect::<Vec<_>>(), ["lib/Other.swift", "src/Demo.swift"]);
+    assert_eq!(a.status(&StatusOpts { all: true, ..Default::default() }).unwrap().rows.iter().find(|r| r.id == "DEM-05").unwrap().graph, ["lib/Other.swift", "Demo.swift"]);
+    // a dir that is both src and tests (Rust's inline tests): its file is linked and its calls are followed to `d` in src/Deep.swift
+    write(&d, "spec11.json", r#"{"tests":["tests","lib"],"src":["src","lib"],"ext":["swift"]}"#);
+    Connection::open(d.join(".codegraph/codegraph.db")).unwrap().execute_batch("insert into nodes values ('n4','function','d','d','src/Deep.swift',1,1,null); insert into edges(source,target,kind) values ('n3','n4','calls');").unwrap();
+    let a = Analysis::load(Some(&d)).unwrap();
+    assert_eq!(a.links.as_ref().unwrap()["DEM-05"].iter().collect::<Vec<_>>(), ["lib/Other.swift", "src/Deep.swift", "src/Demo.swift"]);
 }
 
 #[doc = "[GRAPH-02]"]
@@ -272,7 +284,7 @@ fn lenient_spec_formats() {
     let got: Vec<(&str, &str, &str)> = a.s.values().map(|s| (s.id.as_str(), s.level.as_str(), s.text.as_str())).collect();
     assert_eq!(got, [("LEN-01", "MUST", "plain."), ("LEN-02", "SHALL", "The system SHALL do it."), ("LEN-03", "SHOULD", "numbered."), ("LEN-04", "MAY", "wrap onto a line (manual)"), ("LEN-05", "MUST", "in a table")]);
     assert_eq!(a.s["LEN-04"].mark, "manual");
-    assert!(a.issues.iter().any(|x| x.starts_with("LEN-06") && x.contains("has no MUST")));
+    assert!(a.issues.iter().any(|x| x.id == "LEN-06" && x.uncounted));
 }
 
 fn scratch(name: &str) -> PathBuf {
@@ -319,7 +331,7 @@ Also [site](https://example.com/ADR\x2D0004.md).
     assert_eq!(a.s.keys().collect::<Vec<_>>(), ["ADR-0003", "ADR-0007"]);
     let adr = &a.s["ADR-0003"];
     assert_eq!((adr.file.as_str(), adr.level.as_str(), adr.text.as_str(), a.state["ADR-0003"].as_str()), ("decisions/0003-patterns.md", "DOC", "Architectural patterns", "ref"));
-    assert!(a.issues.iter().any(|x| x.starts_with("ADR-0009") && x.contains("does not exist")), "{:?}", a.issues);
+    assert!(a.issues.iter().any(|x| x.id == "ADR-0009" && x.msg.contains("does not exist")), "{:?}", a.issues);
     let r = a.report();
     assert_eq!((r.requirements, r.refs, r.due), (0, 2, 0));
     let t = a.trace("ADR-0003").unwrap();
@@ -425,12 +437,28 @@ fn ignore_files_and_agents_are_left_out() {
 
 #[doc = "[SCAN-16]"]
 #[test]
-fn diff_ranges_map_to_changed_lines() {
-    let d = spec11_core::scan::parse_diff("+++ b/specs/a.md\n@@ -1,0 +2,3 @@\n@@ -9 +11 @@\n+++ /dev/null\n@@ -1 +1 @@\n");
-    assert_eq!(d["specs/a.md"], vec![(2, 4), (11, 11)]);
-    assert_eq!(d.len(), 1);
-    let gone = spec11_core::scan::parse_diff("+++ b/x.rs\n@@ -5,2 +4,0 @@\n");
-    assert_eq!(gone["x.rs"], vec![(4, 4)]);
+fn hunks_map_to_changed_lines() {
+    let h = spec11_core::changes::parse_hunks("--- a/specs/a.md\n+++ b/specs/a.md\n@@ -1,0 +2,3 @@\n+x\n+y\n+z\n@@ -9 +11 @@\n-old\n+new\n--- a/gone.rs\n+++ /dev/null\n@@ -5,2 +4,0 @@\n-a\n-b\n");
+    let a = &h["specs/a.md"];
+    assert_eq!((a[0].new_start, a[0].new_len, a[0].added.len()), (2, 3, 3));
+    assert_eq!((a[1].new_start, a[1].removed.as_slice(), a[1].added.as_slice()), (11, ["old".to_string()].as_slice(), ["new".to_string()].as_slice()));
+    // a deleted file is keyed by its old path, and a pure deletion has no new lines
+    assert_eq!((h["gone.rs"][0].new_start, h["gone.rs"][0].new_len, h["gone.rs"][0].removed.len()), (4, 0, 2));
+}
+
+#[doc = "[SCAN-21]"]
+#[test]
+fn config_paths_cannot_leave_the_repo() {
+    let d = std::env::temp_dir().join(format!("spec11-{}-confined", std::process::id()));
+    let _ = fs::remove_dir_all(&d);
+    write(&d, "specs/01-a.md", "- **AAA-01** MUST — one.\n");
+    for (field, value) in [("src", r#"["../outside"]"#), ("tests", r#"["/etc"]"#), ("codegraph", r#""../x.db""#), ("specs", r#""../specs""#)] {
+        write(&d, "spec11.json", &format!(r#"{{"{field}": {value}}}"#));
+        let err = Analysis::load(Some(&d)).err().unwrap_or_else(|| panic!("{field} outside the repo must be refused"));
+        assert!(err.contains(field) && err.contains("outside the repo"), "{err}");
+    }
+    write(&d, "spec11.json", r#"{"src": ["src"], "tests": ["missing/tests"]}"#); // inside, even if absent: doctor says "not found"
+    assert!(Analysis::load(Some(&d)).is_ok());
 }
 
 #[doc = "[SCAN-17]"]
@@ -484,6 +512,27 @@ fn changes_split_staged_unstaged_and_untracked() {
     assert_eq!(Analysis::load(Some(&d)).unwrap().status(&o).unwrap().rows.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), ["AAA-01"]);
     let o = StatusOpts { changed: Some("HEAD".into()), no_untracked: true, ..Default::default() };
     assert_eq!(Analysis::load(Some(&d)).unwrap().status(&o).unwrap().rows.len(), 2);
+}
+
+#[doc = "[SCAN-22]"]
+#[test]
+fn changes_list_requirements_whose_tests_reach_a_changed_file() {
+    use spec11_core::ChangeOpts;
+    let d = fixture("reach");
+    index(&d, true);
+    let git = |a: &[&str]| assert!(std::process::Command::new("git").args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(a).current_dir(&d).output().unwrap().status.success(), "{a:?}");
+    git(&["init", "-q"]);
+    git(&["add", "."]);
+    git(&["commit", "-qm", "x"]);
+    // the test tagged DEM-01 calls Demo.run; the edit is far from the DEM-02 citation
+    write(&d, "src/Demo.swift", "/// (DEM-02) the rule\nstruct Demo {\n    func run() { print(1) }\n}\n// DEM-98 typo\n");
+    let c = Analysis::load(Some(&d)).unwrap().changes(&ChangeOpts { no_untracked: true, ..Default::default() }).unwrap();
+    let r = c.requirements.iter().find(|r| r.id == "DEM-01").expect("DEM-01 is reached by its test");
+    assert!(r.notes.iter().any(|n| n.role == "src" && n.action == "reached by a test" && n.file == "src/Demo.swift"), "{:?}", r.notes);
+    // without an index nothing is reached
+    fs::remove_dir_all(d.join(".codegraph")).unwrap();
+    let c = Analysis::load(Some(&d)).unwrap().changes(&ChangeOpts { no_untracked: true, ..Default::default() }).unwrap();
+    assert!(c.requirements.iter().all(|r| r.id != "DEM-01"));
 }
 
 #[doc = "[SCAN-18, SCAN-19, SCAN-20]"]

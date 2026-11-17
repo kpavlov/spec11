@@ -8,7 +8,7 @@ One Rust binary, three interfaces over the same core:
 
 | Interface | How |
 |---|---|
-| CLI | `spec11 report`, `spec11 status [flags]` (`--changed [REF] [--staged] [--no-untracked] [--ignore-whitespace]`), `spec11 trace ID` (`--json`, `--root DIR`) |
+| CLI | `spec11 report`, `spec11 status [flags]` (`--changed [REF] [--staged] [--no-untracked] [--ignore-whitespace]`), `spec11 trace ID`, `spec11 changes|diff|history` (`--json`, `--root DIR`) |
 | MCP (streamable HTTP) | `spec11` / `spec11 serve` → `http://127.0.0.1:7411/mcp` |
 | Web dashboard | `spec11` / `spec11 serve` → `http://127.0.0.1:7411/` (same or separate port) |
 

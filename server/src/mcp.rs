@@ -19,12 +19,12 @@ struct Mcp(AppState);
 
 impl ServerHandler for Mcp {
     fn get_info(&self) -> ServerConfig {
-        ServerConfig::new(ServerCapabilities::builder().enable_tools().enable_resources().enable_resources_subscribe().build()).with_instructions(format!("Deterministic spec-driven-development evidence for one repo. {}", ops::evidence_note()))
+        ServerConfig::new(ServerCapabilities::builder().enable_tools().enable_resources().enable_resources_subscribe().build()).with_instructions(format!("Deterministic spec-driven-development evidence for one repo. {}", ops::NOTE))
     }
 
     async fn list_tools(&self, _: Option<PaginatedRequestParams>, _: RequestContext<RoleServer>) -> Result<ListToolsResult, ErrorData> {
         let tools = ops::tools()
-            .into_iter()
+            .iter()
             .map(|t| {
                 let schema = t.schema.as_object().cloned().unwrap_or_default();
                 let mut tool = Tool::new(t.name, t.description, schema);
@@ -53,16 +53,16 @@ impl ServerHandler for Mcp {
                 res.structured_content = Some(data);
                 res
             }
-            Err(e) => CallToolResult::error(vec![ContentBlock::text(e)]),
+            Err(e) => CallToolResult::error(vec![ContentBlock::text(e.to_string())]),
         }
         .into())
     }
 
     async fn list_resources(&self, _: Option<PaginatedRequestParams>, _: RequestContext<RoleServer>) -> Result<ListResourcesResult, ErrorData> {
         // a JSON resource says which schema types it: in its description and in `_meta.schema`
-        let json = |uri: &'static str, name: &str, about: &str| {
-            let mut r = Resource::new(uri, name).with_mime_type(JSON_MIME);
-            match ops::schema_uri(uri) {
+        let json = |uri: String, name: &str, about: &str| {
+            let mut r = Resource::new(&uri, name).with_mime_type(JSON_MIME);
+            match ops::schema_uri(&uri) {
                 Some(schema) => {
                     let mut meta = MetaObject::new();
                     meta.insert("schema".into(), json!(schema));
@@ -73,9 +73,13 @@ impl ServerHandler for Mcp {
             r
         };
         let mut all = vec![Resource::new(UI_URI, "spec11 dashboard").with_description("Spec-driven status dashboard (MCP Apps)").with_mime_type(UI_MIME)];
-        all.extend(ops::VIEWS.iter().map(|(uri, name, tool)| Resource::new(*uri, *name).with_description(ops::tool_description(tool)).with_mime_type(TEXT_MIME)));
-        all.extend(ops::DATA.iter().map(|(uri, name, tool)| json(uri, name, ops::tool_description(tool))));
-        all.extend(ops::RESOURCES.iter().map(|(uri, name, about, _)| json(uri, name, about)));
+        for tool in ops::VIEW_TOOLS {
+            all.push(Resource::new(format!("spec11://{tool}"), format!("spec11 {tool}")).with_description(ops::tool_description(tool)).with_mime_type(TEXT_MIME));
+        }
+        for tool in ops::VIEW_TOOLS {
+            all.push(json(format!("spec11://{tool}.json"), &format!("spec11 {tool} (JSON)"), ops::tool_description(tool)));
+        }
+        all.extend(ops::RESOURCES.iter().map(|(uri, name, about, _)| json(uri.to_string(), name, about)));
         all.extend(ops::SCHEMAS.iter().map(|n| {
             let uri = format!("{}{n}", ops::SCHEMA_PREFIX);
             Resource::new(uri, format!("spec11 {n} schema")).with_description(format!("JSON Schema of the `{n}` result: the JSON resource spec11://{n}(.json) and the structuredContent of its tool.")).with_mime_type(SCHEMA_MIME)
@@ -101,7 +105,7 @@ impl ServerHandler for Mcp {
     /// Only the resources this server has can be subscribed to; list-changed is never offered (the lists are static).
     fn accepted_subscription_filter(&self, requested: &SubscriptionFilter) -> Option<SubscriptionFilter> {
         let mut f = SubscriptionFilter::new();
-        f.resource_subscriptions = requested.resource_subscriptions.as_ref().map(|v| v.iter().filter(|u| ops::resource_uris().any(|k| k == u.as_str())).cloned().collect());
+        f.resource_subscriptions = requested.resource_subscriptions.as_ref().map(|v| v.iter().filter(|u| ops::resource_uris().any(|k| k == **u)).cloned().collect());
         Some(f)
     }
 

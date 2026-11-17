@@ -24,9 +24,9 @@ Add it to the client's MCP config if the spec11 tools are not available. `spec11
 |---|---|---|
 | `report` | `limit` | `spec11 report [--limit N]` |
 | `status` | `spec`, `prefix`, `all`, `missing`, `changed` (git ref), `staged`, `include_untracked`, `built`, `done`, `unproven`, `issues`, `effort`, `limit` | `spec11 status [flags]` |
-| `changes` | `ref`, `commit`, `staged`, `include_untracked`, `ignore_whitespace`, `show_ignored`, `show_all` | `spec11 status --changed [--staged] [--no-untracked]`, plus the changed files (change: added, modified, deleted or renamed with `old_path`; stage: staged, unstaged, both, untracked or committed; kind) and the requirements the changed lines touch, with a note per file saying what happened (bullet edited or removed, test tag added or changed, citation added or removed). `ref=main` shows everything on a branch since main (committed and not); `commit=<sha>` explains one commit; `show_all` adds files spec11 does not scan |
-| `diff` | `path` (a file `changes` lists) and the arguments of `changes` | `git diff REF -- PATH`: what exactly changed in one file, with a line under each hunk naming the requirements it touches |
-| `history` | `base`, `head`, `limit` | `git log BASE..HEAD`: the commits not on the base branch (main or master by default), newest first, and how many files are uncommitted; explain one with `changes commit=<sha>` |
+| `changes` | `ref`, `commit`, `staged`, `include_untracked`, `ignore_whitespace`, `show_ignored`, `show_all` | `spec11 changes [--ref R] [--commit C] [--staged] [--no-untracked]` (or `spec11 status --changed`), plus the changed files (change: added, modified, deleted or renamed with `old_path`; stage: staged, unstaged, both, untracked or committed; kind) and the requirements the changed lines touch, with a note per file saying what happened (bullet edited or removed, test tag added or changed, citation added or removed, or a changed source file a tagged test reaches in the CodeGraph index). `ref=main` shows everything on a branch since main (committed and not); `commit=<sha>` explains one commit; `show_all` adds files spec11 does not scan |
+| `diff` | `path` (a file `changes` lists) and the arguments of `changes` | `spec11 diff PATH`, like `git diff REF -- PATH`: what exactly changed in one file, with a line under each hunk naming the requirements it touches |
+| `history` | `base`, `head`, `limit` | `spec11 history`, like `git log BASE..HEAD`: the commits not on the base branch (main or master by default), newest first, and how many files are uncommitted; explain one with `changes commit=<sha>` |
 | `trace` | `id` | `spec11 trace ID [--codegraph]` |
 | `overlap` | `path`, `all` | `spec11 overlap [PATH]` |
 | `uncovered` | `path`, `fanin`, `min` | `spec11 uncovered [PATH]` |
@@ -39,7 +39,7 @@ Add it to the client's MCP config if the spec11 tools are not available. `spec11
 | `install_status` | none | whether the skill and MCP entry are installed here or globally |
 | `install`, `uninstall` | `global`, `port` | `spec11 install/uninstall [--global]` (they write files: only when the user asks) |
 
-**CLI (no server needed).** `spec11 [--root DIR] [--json] report|status|trace|overlap|uncovered`. Output is plain text, identical on every run for the same tree.
+**CLI (no server needed).** `spec11 [--root DIR] [--json] report|status|trace|changes|diff|history|overlap|uncovered`. Output is plain text, identical on every run for the same tree.
 
 **Configuration.** None is needed in the usual layouts: the specs folder (`specs/`, `spec/`, `docs/specs/`, `openspec/specs/`, `.kiro/specs/`, a `docs/` holding requirement bullets) and the source and test folders, extensions and regexes of the dominant language (Swift, Rust, TypeScript/JavaScript, Python, Go, Java/Kotlin/Scala, C#, Ruby, PHP, C/C++) are detected, from the CodeGraph index when there is one. Symlinks count only inside the repo root or `ALLOWED_PATHS`. Anything else, or a second language, goes in an optional `spec11.json` at the repo root: `specs`, `tests`, `src`, `ext`, `comment`, `decl`, `assert`, `off`, `test_files`, `retired_prefixes`, `codegraph`, `infra_paths`; a field you set replaces its detected value.
 

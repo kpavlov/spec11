@@ -110,6 +110,16 @@ fn inside(p: &Path, allow: &[PathBuf]) -> bool {
     p.canonicalize().is_ok_and(|c| allow.iter().any(|a| c.starts_with(a)))
 }
 
+/// Whether a path from `spec11.json` stays in the repo (or `ALLOWED_PATHS`). One that does not exist yet only has to be a plain
+/// relative path, so `doctor` can still say "not found".
+pub fn confined(root: &Path, rel: &str, allow: &[PathBuf]) -> bool {
+    let at = root.join(rel);
+    if at.exists() {
+        return inside(&at, allow);
+    }
+    Path::new(rel).components().all(|c| matches!(c, std::path::Component::Normal(_) | std::path::Component::CurDir))
+}
+
 /// Files with gitignore syntax that hide paths from spec11, read from the repo root: `.aiignore` (shared with other agent
 /// tools) and `.spec11ignore` (this tool only). `.agents` (installed skills) is always hidden.
 const IGNORE_FILES: [&str; 2] = [".aiignore", ".spec11ignore"];
@@ -135,6 +145,36 @@ impl Ignore {
         set.into_iter().map(str::to_owned).collect()
     }
 
+    // (API-11, API-12)
+    /// Hide (`hidden`) or show a module folder: add or remove its anchored line in `.spec11ignore`, keeping every other line. To hide, `listed`
+    /// says the scanner lists the module; the root and anything glob-like are never hidden, so the line is that folder and nothing else.
+    /// Returns what the file says now.
+    pub fn set_module_hidden(root: &Path, module: &str, hidden: bool, listed: impl FnOnce() -> bool) -> Result<String, String> {
+        let want = module.trim_matches('/');
+        let line = format!("/{want}/");
+        let file = root.join(".spec11ignore");
+        let mut text = std::fs::read_to_string(&file).unwrap_or_default();
+        let is_hidden = Self::hidden_modules(root).iter().any(|m| m == want);
+        if hidden {
+            if want == "." || want.contains(['*', '?', '[', '\\', '\n']) || !listed() {
+                return Err(format!("{want}: not a module that can be hidden"));
+            }
+            if !is_hidden {
+                if !text.is_empty() && !text.ends_with('\n') {
+                    text.push('\n');
+                }
+                text += &format!("{line}\n");
+            }
+        } else {
+            if !is_hidden {
+                return Err(format!("{want}: not a hidden module"));
+            }
+            text = text.lines().filter(|l| l.trim() != line).map(|l| format!("{l}\n")).collect();
+        }
+        std::fs::write(&file, text).map_err(|e| format!(".spec11ignore: {e}"))?;
+        Ok(format!("{line} is {}in .spec11ignore\n", if hidden { "" } else { "not " }))
+    }
+
     /// Whether a repo-relative path, or any folder above it, is hidden.
     pub fn hides(&self, rel: &str) -> bool {
         let rel = rel.trim_start_matches("./");
@@ -152,23 +192,18 @@ fn wanted(e: &DirEntry, allow: &[PathBuf]) -> bool {
 
 // (SCAN-10, SCAN-15)
 /// Files under `dir`, sorted. Symlinks are followed only when they resolve inside `allow` (its first entry is the repo root);
-/// junk folders and what the root's `.aiignore` / `.spec11ignore` hide are skipped.
-pub fn walk(dir: &Path, allow: &[PathBuf]) -> Vec<PathBuf> {
-    let hidden = allow.first().and_then(|root| {
-        let base = dir.canonicalize().ok()?.strip_prefix(root).ok()?.to_path_buf();
-        Some((Ignore::load(root), base))
-    });
+/// junk folders and what `ignore` (the root's `.aiignore` / `.spec11ignore`) hides are skipped.
+pub fn walk(dir: &Path, allow: &[PathBuf], ignore: &Ignore) -> Vec<PathBuf> {
+    let base = allow.first().and_then(|root| dir.canonicalize().ok()?.strip_prefix(root).ok().map(Path::to_path_buf));
     let hides = |e: &DirEntry| {
-        hidden.as_ref().is_some_and(|(ig, base)| e.path().strip_prefix(dir).is_ok_and(|r| ig.hides(&base.join(r).to_string_lossy().replace('\\', "/"))))
+        base.as_ref().is_some_and(|base| e.path().strip_prefix(dir).is_ok_and(|r| ignore.hides(&base.join(r).to_string_lossy().replace('\\', "/"))))
     };
     let mut v: Vec<PathBuf> = WalkDir::new(dir).follow_links(true).into_iter().filter_entry(|e| wanted(e, allow) && !hides(e)).filter_map(Result::ok).filter(|e| e.file_type().is_file()).map(DirEntry::into_path).collect();
     v.sort();
     v
 }
 
-fn requirement_line() -> Regex {
-    Regex::new(&format!("{}.*{}", crate::scan::head(), crate::scan::LEVEL)).unwrap()
-}
+static REQUIREMENT_LINE: LazyLock<Regex> = LazyLock::new(|| Regex::new(&format!("{}.*{}", crate::scan::head(), crate::scan::LEVEL)).unwrap());
 
 fn is_md(p: &Path) -> bool {
     p.extension().is_some_and(|x| x == "md")
@@ -203,15 +238,14 @@ pub fn has_spec_marker(d: &Path, allow: &[PathBuf]) -> bool {
 /// none of them holds a requirement line, every markdown file of the repo that does. Empty when the repo has no such place.
 // (SCAN-09, SCAN-12)
 // ponytail: the fallback walks the whole repo's markdown once per load; add a cache if repos get huge.
-pub fn spec_paths(root: &Path, allow: &[PathBuf]) -> Vec<String> {
-    let mut v: Vec<String> = spec_dir(root, allow).into_iter().chain(spec_file_names(root)).collect();
-    let rx = requirement_line();
-    let holds = v.iter().any(|p| {
-        let at = root.join(p);
-        if at.is_file() { has_requirement(&at, &rx) } else { walk(&at, allow).iter().any(|f| is_md(f) && has_requirement(f, &rx)) }
-    });
+pub fn spec_paths(root: &Path, allow: &[PathBuf], ignore: &Ignore) -> Vec<String> {
+    let rx = &*REQUIREMENT_LINE;
+    let dir = scan_dirs(root, allow, ignore);
+    let files = spec_file_names(root);
+    let holds = dir.as_ref().is_some_and(|d| d.1) || files.iter().any(|f| has_requirement(&root.join(f), rx));
+    let mut v: Vec<String> = dir.map(|d| d.0).into_iter().chain(files).collect();
     if !holds {
-        v.extend(walk(root, allow).iter().filter(|f| is_md(f) && has_requirement(f, &rx)).filter_map(|f| f.strip_prefix(root).ok()).map(|f| f.to_string_lossy().replace('\\', "/")));
+        v.extend(walk(root, allow, ignore).iter().filter(|f| is_md(f) && has_requirement(f, rx)).filter_map(|f| f.strip_prefix(root).ok()).map(|f| f.to_string_lossy().replace('\\', "/")));
     }
     v
 }
@@ -219,13 +253,18 @@ pub fn spec_paths(root: &Path, allow: &[PathBuf]) -> Vec<String> {
 /// The first spec folder of `root`: one holding a requirement bullet, else a dedicated-name folder with any markdown,
 /// else a bare `specs/`. `None` when the repo has none of them.
 pub fn spec_dir(root: &Path, allow: &[PathBuf]) -> Option<String> {
-    let bullet = requirement_line();
-    let mds = |d: &str| -> Vec<PathBuf> { walk(&root.join(d), allow).into_iter().filter(|p| p.extension().is_some_and(|x| x == "md")).collect() };
+    scan_dirs(root, allow, &Ignore::load(root)).map(|d| d.0)
+}
+
+/// `spec_dir` and whether that folder holds a requirement line (so `spec_paths` need not read it again).
+fn scan_dirs(root: &Path, allow: &[PathBuf], ignore: &Ignore) -> Option<(String, bool)> {
+    let bullet = &*REQUIREMENT_LINE;
+    let mds = |d: &str| -> Vec<PathBuf> { walk(&root.join(d), allow, ignore).into_iter().filter(|p| p.extension().is_some_and(|x| x == "md")).collect() };
     let found: Vec<(&str, Vec<PathBuf>)> = SPEC_DIRS.iter().filter(|d| root.join(d).is_dir()).map(|d| (*d, mds(d))).collect();
     let has_bullet = |fs: &[PathBuf]| fs.iter().any(|f| std::fs::read(f).is_ok_and(|b| String::from_utf8_lossy(&b).lines().any(|l| bullet.is_match(l))));
-    found.iter().find(|(_, fs)| has_bullet(fs)).map(|(d, _)| d.to_string())
-        .or_else(|| found.iter().find(|(d, fs)| !GENERIC.contains(d) && !fs.is_empty()).map(|(d, _)| d.to_string()))
-        .or_else(|| root.join("specs").is_dir().then(|| "specs".to_string()))
+    found.iter().find(|(_, fs)| has_bullet(fs)).map(|(d, _)| (d.to_string(), true))
+        .or_else(|| found.iter().find(|(d, fs)| !GENERIC.contains(d) && !fs.is_empty()).map(|(d, _)| (d.to_string(), false)))
+        .or_else(|| root.join("specs").is_dir().then(|| ("specs".to_string(), false)))
 }
 
 /// What the file list says about the code: the dominant ecosystem and the folders of its sources and tests.

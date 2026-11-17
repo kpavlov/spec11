@@ -4,6 +4,32 @@ use serde_json::{Value, json};
 use spec11_core::{Analysis, ChangeOpts, StatusOpts};
 use std::path::{Path, PathBuf};
 
+/// Why a tool call failed. `NoIndex` is "not checked" (no CodeGraph index: the user decides about indexing), which a resource shows as content.
+#[derive(Debug)]
+pub enum ToolError {
+    NoIndex(String),
+    Other(String),
+}
+
+impl std::fmt::Display for ToolError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        let (Self::NoIndex(m) | Self::Other(m)) = self;
+        f.write_str(m)
+    }
+}
+
+impl From<String> for ToolError {
+    fn from(m: String) -> Self {
+        Self::Other(m)
+    }
+}
+
+impl From<&str> for ToolError {
+    fn from(m: &str) -> Self {
+        Self::Other(m.into())
+    }
+}
+
 pub struct Tool {
     pub name: &'static str,
     pub description: &'static str,
@@ -12,9 +38,14 @@ pub struct Tool {
     pub ui: bool,
 }
 
-const NOTE: &str = "Evidence, not truth: a citation or tag does not prove the requirement is implemented or that its test passes.";
+pub const NOTE: &str = "Evidence, not truth: a citation or tag does not prove the requirement is implemented or that its test passes.";
 
-pub fn tools() -> Vec<Tool> {
+pub fn tools() -> &'static [Tool] {
+    static TOOLS: std::sync::LazyLock<Vec<Tool>> = std::sync::LazyLock::new(tool_list);
+    &TOOLS
+}
+
+fn tool_list() -> Vec<Tool> {
     let status_props = json!({
         "spec": {"type": "string", "description": "only spec files whose name contains this, e.g. 04"},
         "prefix": {"type": "string", "description": "only IDs with this prefix, e.g. DOC"},
@@ -114,7 +145,7 @@ fn txt<'a>(args: &'a Value, k: &str) -> &'a str {
 
 // (API-01)
 /// Run one tool against the repo at `root` (or the nearest ancestor of the cwd with a specs folder). Blocking.
-pub fn call(root: Option<&Path>, name: &str, args: &Value, dashboard: &str, mcp_port: u16) -> Result<(String, Value), String> {
+pub fn call(root: Option<&Path>, name: &str, args: &Value, dashboard: &str, mcp_port: u16) -> Result<(String, Value), ToolError> {
     if name == "dashboard" {
         let url = format!("{dashboard}{}", args["view"].as_str().unwrap_or("").trim_start_matches('/'));
         return Ok((format!("{url}\n"), json!({"url": url})));
@@ -128,10 +159,14 @@ pub fn call(root: Option<&Path>, name: &str, args: &Value, dashboard: &str, mcp_
         return Ok((text.clone(), json!({"output": text})));
     }
     if let Some(r) = setup(root, name, args, mcp_port) {
-        return r;
+        return r.map_err(ToolError::Other);
+    }
+    // these read files by names the scanner lists: a Project is enough, no analysis
+    if matches!(name, "file" | "source") {
+        return Ok(read_listed(&spec11_core::scan::Project::open(root)?, name, args)?);
     }
     let a = Analysis::load(root)?;
-    let note = |a: &Analysis| a.graph_note.clone().unwrap_or_else(|| "no .codegraph index here; the user decides about indexing".into());
+    let note = |a: &Analysis| a.graph_note.clone().unwrap_or_else(|| "spec11: no .codegraph index here; the user decides about indexing".into());
     let out = match name {
         "report" => {
             let r = a.report();
@@ -175,72 +210,50 @@ pub fn call(root: Option<&Path>, name: &str, args: &Value, dashboard: &str, mcp_
             let h = a.history(txt(args, "base"), txt(args, "head"), num(args, "limit").unwrap_or(50).clamp(1, 500) as usize, &change_opts(args))?;
             (h.text(), json!(h))
         }
-        "file" => {
-            let names = a.p.spec_files();
-            let want = txt(args, "name");
-            if want.is_empty() {
-                (names.join("\n") + "\n", json!({"files": names}))
-            } else if names.iter().any(|n| n == want) {
-                // only names read from the folder listing: no path traversal
-                let md = std::fs::read_to_string(a.p.root.join(want)).map_err(|e| e.to_string())?;
-                (md.clone(), json!({"name": want, "markdown": md}))
-            } else {
-                return Err(format!("{want}: not a spec file"));
-            }
-        }
-        "source" => {
-            let want = txt(args, "path");
-            // only paths the scanner itself lists: no traversal, nothing outside tests/src
-            if !a.p.test_files().iter().chain(a.p.src_files().iter()).any(|f| f == want) {
-                return Err(format!("{want}: not a scanned test or source file"));
-            }
-            let text = std::fs::read_to_string(a.p.root.join(want)).map_err(|e| e.to_string())?;
-            (text.clone(), json!({"path": want, "text": text}))
-        }
         "trace" => match a.trace(txt(args, "id")) {
             Some(t) => (t.text(), json!(t)),
-            None => return Err(format!("{}: not in specs, tests or sources", txt(args, "id").to_uppercase())),
+            None => return Err(format!("{}: not in specs", txt(args, "id").to_uppercase()).into()),
         },
         "overlap" => {
-            let rows = a.overlap(txt(args, "path"), args["all"].as_bool().unwrap_or(false)).map_err(|e| e.to_string())?.ok_or_else(|| note(&a))?;
+            let rows = a.overlap(txt(args, "path"), args["all"].as_bool().unwrap_or(false)).map_err(|e| e.to_string())?.ok_or_else(|| ToolError::NoIndex(note(&a)))?;
             (a.overlap_text(&rows, 25), json!({"rows": rows}))
         }
         "uncovered" => {
-            let u = a.uncovered(txt(args, "path"), num(args, "fanin").unwrap_or(5).max(0) as usize, num(args, "min").unwrap_or(10)).map_err(|e| e.to_string())?.ok_or_else(|| note(&a))?;
+            let u = a.uncovered(txt(args, "path"), num(args, "fanin").unwrap_or(5).max(0) as usize, num(args, "min").unwrap_or(10)).map_err(|e| e.to_string())?.ok_or_else(|| ToolError::NoIndex(note(&a)))?;
             (u.text(), json!(u))
         }
-        // (API-11, API-12)
         "module" => {
+            let hidden = args["hidden"].as_bool().ok_or("hidden: true or false")?;
             let want = txt(args, "path").trim_matches('/');
-            let line = format!("/{want}/");
-            let file = a.p.root.join(".spec11ignore");
-            let mut text = std::fs::read_to_string(&file).unwrap_or_default();
-            let hidden = spec11_core::detect::Ignore::hidden_modules(&a.p.root);
-            let msg = if args["hidden"].as_bool().ok_or("hidden: true or false")? {
-                // only a module the scanner lists, never the root or a glob: the line is that folder and nothing else
-                if want == "." || want.contains(['*', '?', '[', '\\', '\n']) || !a.modules_view().modules.iter().any(|m| m.path == want) {
-                    return Err(format!("{want}: not a module that can be hidden"));
-                }
-                if !hidden.iter().any(|m| m == want) {
-                    if !text.is_empty() && !text.ends_with('\n') {
-                        text.push('\n');
-                    }
-                    text += &format!("{line}\n");
-                }
-                format!("{line} is in .spec11ignore\n")
-            } else {
-                if !hidden.iter().any(|m| m == want) {
-                    return Err(format!("{want}: not a hidden module"));
-                }
-                text = text.lines().filter(|l| l.trim() != line).map(|l| format!("{l}\n")).collect();
-                format!("{line} is not in .spec11ignore\n")
-            };
-            std::fs::write(&file, text).map_err(|e| format!(".spec11ignore: {e}"))?;
+            let msg = spec11_core::detect::Ignore::set_module_hidden(&a.p.root, want, hidden, || a.modules_view().modules.iter().any(|m| m.path == want))?;
             (msg, json!({"path": want, "hidden": args["hidden"]}))
         }
-        other => return Err(format!("unknown tool {other}")),
+        other => return Err(format!("unknown tool {other}").into()),
     };
     Ok(out)
+}
+
+// (API-03)
+/// `file` and `source`: a spec file, or a test or source file, but only by a name the scanner itself lists.
+fn read_listed(p: &spec11_core::scan::Project, name: &str, args: &Value) -> Result<(String, Value), String> {
+    if name == "file" {
+        let names = p.spec_files();
+        let want = txt(args, "name");
+        if want.is_empty() {
+            return Ok((names.join("\n") + "\n", json!({"files": names})));
+        }
+        if !names.iter().any(|n| n == want) {
+            return Err(format!("{want}: not a spec file"));
+        }
+        let md = std::fs::read_to_string(p.root.join(want)).map_err(|e| e.to_string())?;
+        return Ok((md.clone(), json!({"name": want, "markdown": md})));
+    }
+    let want = txt(args, "path");
+    if !p.test_files().iter().chain(p.src_files().iter()).any(|f| f == want) {
+        return Err(format!("{want}: not a scanned test or source file"));
+    }
+    let text = std::fs::read_to_string(p.root.join(want)).map_err(|e| e.to_string())?;
+    Ok((text.clone(), json!({"path": want, "text": text})))
 }
 
 /// Read-only JSON MCP resources: (uri, name, description, JSON text of the analysis). Listed and read through this table only.
@@ -249,26 +262,11 @@ pub const RESOURCES: [(&str, &str, &str, fn(&Analysis) -> serde_json::Result<Str
     ("spec11://tests", "spec11 tests", "Test cases detected in the test files, grouped by module and file, with the requirement IDs tagged on each. Detected, not run: it does not say a test passes.", |a| serde_json::to_string_pretty(&a.tests_view())),
 ];
 
-/// The read-only tools that take no argument, also as plain-text MCP resources: (uri, name, tool). The text is what the CLI prints.
-/// The description is the tool's. Tools with arguments (`trace`, status filters) and the writing ones stay tools only.
-pub const VIEWS: [(&str, &str, &str); 5] = [
-    ("spec11://changes", "spec11 changes", "changes"),
-    ("spec11://report", "spec11 report", "report"),
-    ("spec11://status", "spec11 status", "status"),
-    ("spec11://uncovered", "spec11 uncovered", "uncovered"),
-    ("spec11://overlap", "spec11 overlap", "overlap"),
-];
-
-/// The same tools as JSON resources, `<view uri>.json`: (uri, name, tool). The JSON is the tool's `structuredContent`, typed by
-/// the schema at `spec11://schemas/<name>`. Without a CodeGraph index `uncovered` and `overlap` cannot be typed data: reading
-/// them is an error that says why.
-pub const DATA: [(&str, &str, &str); 5] = [
-    ("spec11://changes.json", "spec11 changes (JSON)", "changes"),
-    ("spec11://report.json", "spec11 report (JSON)", "report"),
-    ("spec11://status.json", "spec11 status (JSON)", "status"),
-    ("spec11://uncovered.json", "spec11 uncovered (JSON)", "uncovered"),
-    ("spec11://overlap.json", "spec11 overlap (JSON)", "overlap"),
-];
+/// The read-only tools that take no argument, also as MCP resources: `spec11://<tool>` as the text the CLI prints and
+/// `spec11://<tool>.json` as the tool's `structuredContent`, typed by the schema at `spec11://schemas/<tool>`. Tools with arguments
+/// (`trace`, status filters) and the writing ones stay tools only. Reading `uncovered` or `overlap` without a CodeGraph index gives the
+/// "not checked" note as text, and an error as JSON (there is no typed data).
+pub const VIEW_TOOLS: [&str; 5] = ["changes", "report", "status", "uncovered", "overlap"];
 
 pub const SCHEMA_PREFIX: &str = "spec11://schemas/";
 pub const JSON_MIME: &str = "application/json";
@@ -277,12 +275,12 @@ pub const TEXT_MIME: &str = "text/plain";
 
 /// The description of a tool, for the resource that shows the same thing.
 pub fn tool_description(name: &str) -> &'static str {
-    tools().into_iter().find(|t| t.name == name).map_or("", |t| t.description)
+    tools().iter().find(|t| t.name == name).map_or("", |t| t.description)
 }
 
 /// Every resource that can change when the repo does (and so can be subscribed to). The schemas never change.
-pub fn resource_uris() -> impl Iterator<Item = &'static str> {
-    RESOURCES.iter().map(|r| r.0).chain(VIEWS.iter().map(|v| v.0)).chain(DATA.iter().map(|d| d.0))
+pub fn resource_uris() -> impl Iterator<Item = String> {
+    RESOURCES.iter().map(|r| r.0.to_string()).chain(VIEW_TOOLS.iter().flat_map(|t| [format!("spec11://{t}"), format!("spec11://{t}.json")]))
 }
 
 /// The schema a JSON resource is typed by, as its `spec11://schemas/<name>` URI.
@@ -352,6 +350,12 @@ pub fn schema(name: &str) -> Option<Value> {
         checks: Vec<crate::doctor::Check>,
         index_action: Option<String>,
     }
+    #[derive(schemars::JsonSchema)]
+    #[allow(dead_code)]
+    struct Install {
+        status: crate::skill::InstallStatus,
+        suggestions: Vec<String>,
+    }
     Some(match name {
         "report" => of::<Report>(),
         "status" => of::<Status>(),
@@ -367,7 +371,7 @@ pub fn schema(name: &str) -> Option<Value> {
         "history" => of::<History>(),
         "source" => shape(json!({"path": {"type": "string"}, "text": {"type": "string"}}), &["path", "text"]),
         "codegraph" => shape(json!({"output": {"type": "string"}}), &["output"]),
-        "install" => shape(json!({"status": {"type": "object"}, "suggestions": strs()}), &["status", "suggestions"]),
+        "install" => of::<Install>(),
         "module" => shape(json!({"path": {"type": "string"}, "hidden": {"type": "boolean"}}), &["path", "hidden"]),
         "dashboard" => shape(json!({"url": {"type": "string"}}), &["url"]),
         _ => return None,
@@ -382,16 +386,17 @@ pub fn output_schema(tool: &str) -> Option<Value> {
 // (API-07, API-08)
 /// (mime type, text) of a resource, `None` for an unknown URI.
 pub fn read_resource(root: Option<&Path>, uri: &str) -> Result<Option<(&'static str, String)>, String> {
-    if let Some((.., tool)) = VIEWS.iter().find(|v| v.0 == uri) {
+    let tool_of = |suffix: &str| uri.strip_prefix("spec11://").and_then(|n| n.strip_suffix(suffix)).and_then(|n| VIEW_TOOLS.iter().find(|t| **t == n));
+    if let Some(tool) = tool_of("") {
         return match call(root, tool, &json!({}), "", 0) {
             Ok((text, _)) => Ok(Some((TEXT_MIME, text))),
             // "not checked" (no usable CodeGraph index) is content here, not an error: indexing is the user's decision
-            Err(e) if matches!(*tool, "overlap" | "uncovered") && Analysis::load(root).is_ok_and(|a| a.graph.is_none()) => Ok(Some((TEXT_MIME, e))),
-            Err(e) => Err(e),
+            Err(ToolError::NoIndex(note)) => Ok(Some((TEXT_MIME, note))),
+            Err(e) => Err(e.to_string()),
         };
     }
-    if let Some((.., tool)) = DATA.iter().find(|d| d.0 == uri) {
-        let (_, data) = call(root, tool, &json!({}), "", 0)?;
+    if let Some(tool) = tool_of(".json") {
+        let (_, data) = call(root, tool, &json!({}), "", 0).map_err(|e| e.to_string())?;
         return serde_json::to_string_pretty(&data).map(|t| Some((JSON_MIME, t))).map_err(|e| e.to_string());
     }
     if let Some(name) = uri.strip_prefix(SCHEMA_PREFIX).filter(|n| SCHEMAS.contains(n)) {
@@ -404,11 +409,11 @@ pub fn read_resource(root: Option<&Path>, uri: &str) -> Result<Option<(&'static 
 // (API-08)
 /// A fingerprint (path, mtime, size) of what the analysis reads: the repo's files, the spec files, `spec11.json` and the
 /// CodeGraph index with its WAL. Equal stamps mean the resources read the same. 0 when the repo cannot be opened. Blocking.
-// ponytail: one repo walk per poll and per subscriber; share one poller or use a file watcher if that ever costs.
+// ponytail: a full `Project::open` (config, ignore files, file list, spec scan) per poll and per subscriber; share one poller or use a file watcher if that ever costs.
 pub fn stamp(root: Option<&Path>) -> u64 {
     use std::hash::{Hash, Hasher};
     let Ok(p) = spec11_core::scan::Project::open(root) else { return 0 };
-    let db = if p.cfg.codegraph.is_empty() { ".codegraph/codegraph.db".to_string() } else { p.cfg.codegraph.clone() };
+    let db = p.cfg.codegraph.clone();
     let mut h = std::collections::hash_map::DefaultHasher::new();
     let extra = ["spec11.json".to_string(), ".git/index".to_string(), ".git/HEAD".to_string(), ".git/logs/HEAD".to_string(), format!("{db}-wal"), format!("{db}-shm"), db];
     for rel in p.files.iter().chain(&p.spec_files()).chain(&extra) {
@@ -417,10 +422,6 @@ pub fn stamp(root: Option<&Path>) -> u64 {
         }
     }
     h.finish()
-}
-
-pub fn evidence_note() -> &'static str {
-    NOTE
 }
 
 /// What the dashboard shows in its header.

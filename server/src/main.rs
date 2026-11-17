@@ -1,4 +1,3 @@
-mod api;
 mod doctor;
 mod frontend;
 mod mcp;
@@ -12,8 +11,11 @@ use reqwest as _;
 #[cfg(debug_assertions)]
 use mime_guess as _;
 use clap::{Args, Parser, Subcommand};
-use spec11_core::{Analysis, StatusOpts};
+use serde_json::json;
 use std::{path::PathBuf, process::ExitCode, sync::Arc};
+
+/// The port `serve` and the `.mcp.json` entry use unless told otherwise.
+const DEFAULT_PORT: u16 = 7411;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -21,6 +23,8 @@ pub struct AppState {
     pub dashboard: String,
     /// Port of /mcp, for the .mcp.json entry the install tools write.
     pub mcp_port: u16,
+    /// The UI has its own port (`--ui-port`); the main port then carries `/mcp` only.
+    pub split: bool,
     /// `host:port` values a request may carry (DNS-rebinding guard).
     pub hosts: Arc<Vec<String>>,
     /// Cancelled on Ctrl-C so open `subscriptions/listen` streams end and the graceful shutdown can finish.
@@ -74,13 +78,35 @@ enum Cmd {
         #[arg(long)]
         codegraph: bool,
     },
+    /// What changed against a git ref (HEAD by default) or in one commit: the changed files and the requirements the changed lines touch.
+    Changes(ChangeArgs),
+    /// Unified diff of one changed file, with the requirements each hunk touches.
+    Diff {
+        /// Repo-relative path of a file `changes` lists.
+        path: String,
+        #[command(flatten)]
+        c: ChangeArgs,
+    },
+    /// Commits on a branch that are not on the base branch, newest first.
+    History {
+        /// Default: main, master, origin/main or origin/master.
+        #[arg(long)]
+        base: Option<String>,
+        /// Default: HEAD.
+        #[arg(long)]
+        head: Option<String>,
+        #[arg(long, default_value_t = 50)]
+        limit: usize,
+        #[command(flatten)]
+        c: ChangeArgs,
+    },
     /// Install the spec11 skill into <repo>/.agents/skills and add the spec11 MCP server to <repo>/.mcp.json.
     Install {
         /// Install the skill into ~/.agents/skills instead (the MCP config is per repo and is left alone).
         #[arg(long)]
         global: bool,
         /// Port of `spec11 serve` that the MCP entry points at.
-        #[arg(long, default_value_t = 7411)]
+        #[arg(long, default_value_t = DEFAULT_PORT)]
         port: u16,
     },
     /// Remove what `install` added; other skills and MCP servers stay.
@@ -93,10 +119,13 @@ enum Cmd {
         /// Also build or refresh the CodeGraph index when the checks call for it (runs `codegraph init` / `sync`). Without this flag doctor only reads.
         #[arg(long)]
         fix: bool,
+        /// Port of `spec11 serve` that the MCP entry should point at.
+        #[arg(long, default_value_t = DEFAULT_PORT)]
+        port: u16,
     },
     /// Serve the dashboard (`/`, `/api/info`) and the MCP server (`/mcp`) on 127.0.0.1.
     Serve {
-        #[arg(long, default_value_t = 7411)]
+        #[arg(long, default_value_t = DEFAULT_PORT)]
         port: u16,
         /// Serve the UI on this port instead (it also carries /mcp, which the UI uses); `--port` then carries only /mcp.
         #[arg(long)]
@@ -119,6 +148,49 @@ enum Cmd {
         #[arg(long = "min", default_value_t = 10)]
         min_lines: i64,
     },
+}
+
+/// The arguments of the `changes` tool.
+#[derive(Args)]
+struct ChangeArgs {
+    /// The git ref the working tree is compared with (default HEAD).
+    #[arg(long = "ref")]
+    reference: Option<String>,
+    /// Explain this one commit against its first parent (ignores --ref, --staged and untracked files).
+    #[arg(long)]
+    commit: Option<String>,
+    /// Only what is staged.
+    #[arg(long)]
+    staged: bool,
+    /// Leave untracked files out.
+    #[arg(long)]
+    no_untracked: bool,
+    /// Leave out changes that only touch whitespace.
+    #[arg(long)]
+    ignore_whitespace: bool,
+    /// Also files .aiignore, .spec11ignore and .agents hide.
+    #[arg(long)]
+    show_ignored: bool,
+    /// Also files spec11 does not scan (kind other).
+    #[arg(long)]
+    show_all: bool,
+}
+
+impl ChangeArgs {
+    fn json(&self) -> serde_json::Value {
+        json!({"ref": self.reference, "commit": self.commit, "staged": self.staged, "include_untracked": !self.no_untracked, "ignore_whitespace": self.ignore_whitespace, "show_ignored": self.show_ignored, "show_all": self.show_all})
+    }
+}
+
+trait Merged {
+    fn merged(self, other: serde_json::Value) -> serde_json::Value;
+}
+
+impl Merged for serde_json::Value {
+    fn merged(mut self, other: serde_json::Value) -> serde_json::Value {
+        self.as_object_mut().unwrap().extend(other.as_object().unwrap().clone());
+        self
+    }
 }
 
 #[derive(Args)]
@@ -158,8 +230,15 @@ struct StatusArgs {
     uncovered: Option<String>,
 }
 
-fn out<T: serde::Serialize>(json: bool, v: &T, text: impl FnOnce() -> String) {
-    if json { println!("{}", serde_json::to_string_pretty(v).unwrap()) } else { print!("{}", text()) }
+impl StatusArgs {
+    /// The arguments of the `status` tool; the CLI has no row cap.
+    fn json(&self) -> serde_json::Value {
+        json!({
+            "spec": self.spec, "prefix": self.prefix, "all": self.all, "missing": self.missing, "changed": self.changed, "staged": self.staged,
+            "include_untracked": !self.no_untracked, "ignore_whitespace": self.ignore_whitespace, "built": self.built, "done": self.done,
+            "unproven": self.unproven, "issues": self.issues, "effort": self.effort, "limit": i64::MAX
+        })
+    }
 }
 
 // (API-02)
@@ -170,11 +249,16 @@ async fn guard(State(s): State<AppState>, headers: HeaderMap, req: axum::extract
     if s.hosts.iter().any(|h| h == host) && origin_ok { next.run(req).await } else { StatusCode::FORBIDDEN.into_response() }
 }
 
+/// What the dashboard shows in its header: the repo and the evidence note. The one thing MCP does not carry.
+async fn info(State(s): State<AppState>) -> Result<axum::Json<serde_json::Value>, (StatusCode, axum::Json<serde_json::Value>)> {
+    ops::info(s.root.as_ref()).map(axum::Json).map_err(|e| (StatusCode::BAD_REQUEST, axum::Json(serde_json::json!({"error": e}))))
+}
+
 /// (main router, optional UI router). Without `ui_port` the main router serves everything; with it, `/mcp` only, and the UI router
 /// serves the UI and `/mcp` too, since the dashboard talks to the server over MCP.
 fn routers(state: AppState) -> (Router, Option<Router>) {
-    let split = state.hosts.len() > 2;
-    let ui = || Router::new().nest("/api", api::router()).route("/", axum::routing::get(frontend::handler)).route("/{*path}", axum::routing::get(frontend::handler));
+    let split = state.split;
+    let ui = || Router::new().route("/api/info", axum::routing::get(info)).route("/", axum::routing::get(frontend::handler)).route("/{*path}", axum::routing::get(frontend::handler));
     let mcp = || Router::new().nest_service("/mcp", mcp::service(state.clone(), &state.hosts));
     let guarded = |r: Router<AppState>| -> Router {
         r.layer(middleware::from_fn_with_state(state.clone(), guard)).layer(tower_http::compression::CompressionLayer::new()).with_state(state.clone())
@@ -184,7 +268,7 @@ fn routers(state: AppState) -> (Router, Option<Router>) {
 
 fn app_state(root: Option<PathBuf>, ports: &[u16]) -> AppState {
     let hosts = ports.iter().flat_map(|p| [format!("127.0.0.1:{p}"), format!("localhost:{p}")]).collect();
-    AppState { root, dashboard: format!("http://127.0.0.1:{}/", ports.last().unwrap()), mcp_port: ports[0], hosts: Arc::new(hosts), shutdown: Default::default(), #[cfg(debug_assertions)] http: reqwest::Client::new() }
+    AppState { root, dashboard: format!("http://127.0.0.1:{}/", ports.last().unwrap()), mcp_port: ports[0], split: ports.len() > 1, hosts: Arc::new(hosts), shutdown: Default::default(), #[cfg(debug_assertions)] http: reqwest::Client::new() }
 }
 
 /// Best effort: a failure to launch a browser is not an error.
@@ -240,63 +324,53 @@ fn install(root: Option<&std::path::Path>, global: bool, port: Option<u16>) -> R
 }
 
 fn run(cli: Cli) -> Result<u8, String> {
-    let cmd = cli.cmd.unwrap_or(Cmd::Serve { port: 7411, ui_port: None, no_open: false });
+    let cmd = cli.cmd.unwrap_or(Cmd::Serve { port: DEFAULT_PORT, ui_port: None, no_open: false });
     match cmd {
         Cmd::Serve { port, ui_port, no_open } => return serve(cli.root, port, ui_port, no_open),
-        Cmd::Doctor { fix } => {
-            let mut checks = doctor::run(cli.root.as_deref(), 7411);
+        Cmd::Doctor { fix, port } => {
+            let mut checks = doctor::run(cli.root.as_deref(), port);
             if fix && let Some(action) = doctor::suggested(&checks) {
                 eprint!("{}", doctor::index(cli.root.as_deref(), action)?);
-                checks = doctor::run(cli.root.as_deref(), 7411);
+                checks = doctor::run(cli.root.as_deref(), port);
             }
-            out(cli.json, &checks, || doctor::text(&checks));
+            if cli.json { println!("{}", serde_json::to_string_pretty(&checks).unwrap()) } else { print!("{}", doctor::text(&checks)) }
             return Ok(u8::from(checks.iter().any(|k| k.level == "fail")));
         }
         Cmd::Install { global, port } => return install(cli.root.as_deref(), global, Some(port)),
         Cmd::Uninstall { global } => return install(cli.root.as_deref(), global, None),
         _ => {}
     }
-    let a = Analysis::load(cli.root.as_deref())?;
-    let no_index = || a.graph_note.clone().unwrap_or_else(|| "spec11: no .codegraph index here; the user decides about indexing".into());
-    match cmd {
-        Cmd::Report { limit } => {
-            let r = a.report();
-            out(cli.json, &r, || r.text(&a, limit));
-        }
-        Cmd::Status(s) => {
-            if let Some(p) = &s.overlap {
-                let rows = a.overlap(p, false).map_err(|e| e.to_string())?.ok_or_else(no_index)?;
-                out(cli.json, &rows, || a.overlap_text(&rows, 25));
-            } else if let Some(p) = &s.uncovered {
-                let u = a.uncovered(p, 5, 10).map_err(|e| e.to_string())?.ok_or_else(no_index)?;
-                out(cli.json, &u, || u.text());
-            } else {
-                let o = StatusOpts { spec: s.spec, prefix: s.prefix, all: s.all, missing: s.missing, changed: s.changed, staged: s.staged, no_untracked: s.no_untracked, ignore_whitespace: s.ignore_whitespace, built: s.built, done: s.done, unproven: s.unproven, issues: s.issues, effort: s.effort };
-                let st = a.status(&o)?;
-                out(cli.json, &st, || st.text(&o));
-            }
-        }
-        Cmd::Trace { id, codegraph } => match a.trace(&id) {
-            Some(t) => {
-                out(cli.json, &t, || t.text());
-                if codegraph && !t.query.is_empty() {
-                    let _ = std::process::Command::new("codegraph").args(["explore", &t.query]).current_dir(&a.p.root).status();
-                }
-            }
-            None => {
-                println!("{}: not in specs", id.to_uppercase());
-                return Ok(1);
-            }
+    // (API-14) the CLI is one more client of the tools: what MCP returns, printed
+    let (name, args) = match &cmd {
+        Cmd::Report { limit } => ("report", json!({"limit": limit})),
+        Cmd::Status(s) => match (&s.overlap, &s.uncovered) {
+            (Some(p), _) => ("overlap", json!({"path": p})),
+            (_, Some(p)) => ("uncovered", json!({"path": p})),
+            _ => ("status", s.json()),
         },
-        Cmd::Serve { .. } | Cmd::Install { .. } | Cmd::Uninstall { .. } | Cmd::Doctor { .. } => unreachable!(),
-        Cmd::Overlap { path, all } => {
-            let rows = a.overlap(path.as_deref().unwrap_or(""), all).map_err(|e| e.to_string())?.ok_or_else(no_index)?;
-            out(cli.json, &rows, || a.overlap_text(&rows, 25));
+        Cmd::Trace { id, .. } => ("trace", json!({"id": id})),
+        Cmd::Changes(c) => ("changes", c.json()),
+        Cmd::Diff { path, c } => ("diff", json!({"path": path}).merged(c.json())),
+        Cmd::History { base, head, limit, c } => ("history", json!({"base": base, "head": head, "limit": limit}).merged(c.json())),
+        Cmd::Overlap { path, all } => ("overlap", json!({"path": path, "all": all})),
+        Cmd::Uncovered { path, fanin, min_lines } => ("uncovered", json!({"path": path, "fanin": fanin, "min": min_lines})),
+        Cmd::Serve { .. } | Cmd::Install { .. } | Cmd::Uninstall { .. } | Cmd::Doctor { .. } => return Err("not a tool command".into()),
+    };
+    let (text, data) = match ops::call(cli.root.as_deref(), name, &args, "", DEFAULT_PORT) {
+        Ok(r) => r,
+        // a requirement that is not there is an answer, not a failure of the tool
+        Err(e) if name == "trace" => {
+            println!("{e}");
+            return Ok(1);
         }
-        Cmd::Uncovered { path, fanin, min_lines } => {
-            let u = a.uncovered(path.as_deref().unwrap_or(""), fanin, min_lines).map_err(|e| e.to_string())?.ok_or_else(no_index)?;
-            out(cli.json, &u, || u.text());
-        }
+        Err(e) => return Err(e.to_string()),
+    };
+    // `overlap --json` has always printed the rows themselves
+    let data = if name == "overlap" { data["rows"].clone() } else { data };
+    if cli.json { println!("{}", serde_json::to_string_pretty(&data).unwrap()) } else { print!("{text}") }
+    if let Cmd::Trace { codegraph: true, .. } = cmd && let Some(q) = data["query"].as_str().filter(|q| !q.is_empty()) {
+        let root = spec11_core::scan::Project::open(cli.root.as_deref())?.root;
+        let _ = std::process::Command::new("codegraph").args(["explore", q]).current_dir(root).status();
     }
     Ok(0)
 }
@@ -340,6 +414,27 @@ mod tests {
     /// A tool call over `/mcp`: what the CLI runs, and what the dashboard sends.
     fn tool(name: &str, args: &str, host: &str) -> Request<Body> {
         post("/mcp", host, &format!(r#"{{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{"name":"{name}","arguments":{args}}}}}"#))
+    }
+
+    #[doc = "[API-14]"]
+    #[test]
+    fn cli_commands_run_the_tools() {
+        // its own repo: it runs git and edits a spec, which the shared `repo()` fixture must not see
+        let d = std::env::temp_dir().join(format!("spec11-cli-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("specs")).unwrap();
+        std::fs::write(d.join("specs/01-a.md"), "- **AAA-01** MUST — one.\n- **AAA-02** MUST — two.\n").unwrap();
+        let git = |args: &[&str]| assert!(std::process::Command::new("git").args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(args).current_dir(&d).output().unwrap().status.success(), "{args:?}");
+        git(&["init", "-q"]);
+        git(&["add", "."]);
+        git(&["commit", "-q", "-m", "one"]);
+        std::fs::write(d.join("specs/01-a.md"), "- **AAA-01** MUST — one.\n- **AAA-02** MUST — two, edited.\n").unwrap();
+        let go = |args: &[&str]| run(Cli::parse_from(["spec11", "--root", d.to_str().unwrap()].into_iter().chain(args.iter().copied())));
+        for ok in [&["report"][..], &["status", "--all"], &["trace", "AAA-01"], &["changes", "--no-untracked", "--ref", "HEAD"], &["diff", "specs/01-a.md"], &["history", "--limit", "5"]] {
+            assert_eq!(go(ok), Ok(0), "{ok:?}");
+        }
+        assert_eq!(go(&["trace", "NOPE-1"]), Ok(1));
+        assert!(go(&["diff", "nope.md"]).is_err(), "a file `changes` does not list is refused");
     }
 
     #[doc = "[API-07]"]
@@ -423,7 +518,7 @@ mod tests {
             _ => json!({}),
         };
         let mut checked = 0;
-        for t in ops::tools() {
+        for t in ops::tools().iter() {
             let schema = ops::output_schema(t.name).unwrap_or_else(|| panic!("{} has no output schema", t.name));
             assert_eq!(schema["type"], "object", "{}", t.name);
             // portable: nullable fields are `anyOf` of single types, never `"type": [.., "null"]`

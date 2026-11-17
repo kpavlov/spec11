@@ -1,11 +1,11 @@
 //! Analysis of a repo and its three views: the whole-project `Report`, the per-requirement `Status`, one requirement's `Trace`.
 //! Each view is a serde struct (for `--json`, the API and MCP) with a `text()` that matches the Python scripts line for line.
-use crate::codegraph::{Graph, GraphError};
+use crate::codegraph::Graph;
 use crate::changes::{ChangeOpts, roles_of};
 use crate::coverage::{OverlapRow, Uncovered};
-use crate::scan::{Project, Ref, Refs, Spec, id_key, ranges, sorted_ids};
+use crate::scan::{Issue, Project, Ref, Refs, Spec, id_key, ranges, sorted_ids, stem};
 use indexmap::IndexMap;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
     path::Path,
@@ -18,7 +18,7 @@ pub struct Analysis {
     pub s: IndexMap<String, Spec>,
     pub t: Refs,
     pub c: Refs,
-    pub issues: Vec<String>,
+    pub issues: Vec<Issue>,
     pub state: HashMap<String, String>,
     pub graph: Option<Graph>,
     /// Why the CodeGraph index is not used (schema drift, unreadable); `None` when it is used or absent.
@@ -34,7 +34,7 @@ pub fn chars(s: &str, n: usize) -> String {
 
 impl Analysis {
     pub fn load(root: Option<&Path>) -> Result<Analysis, String> {
-        let p = Project::open(root)?;
+        let mut p = Project::open(root)?;
         let mut issues = vec![];
         let mut s = p.specs(&mut issues);
         let (docs, linked) = p.docs(&s, &mut issues);
@@ -42,13 +42,13 @@ impl Analysis {
         p.check_refs(&s, &mut issues);
         let (t, c) = (p.tests(), p.sources());
         let state = s.iter().map(|(i, sp)| (i.clone(), if !sp.mark.is_empty() { sp.mark.clone() } else if t.contains_key(i) { "tested".into() } else if c.contains_key(i) { "src-only".into() } else { "none".into() })).collect();
-        let (graph, graph_note) = match Graph::open(&p.root.join(&p.cfg.codegraph)) {
+        let (graph, graph_note) = match p.take_graph() {
             Ok(g) => (g, None),
             Err(e) => (None, Some(e.to_string())),
         };
         let mut a = Analysis { p, s, t, c, issues, state, graph, graph_note, links: None, linked };
         if let Some(g) = &a.graph {
-            match g.code_links(&a.t, &a.app(), &|f| a.p.is_test_path(f)) {
+            match g.code_links(&a.t, &|f| a.p.is_src_path(f) && !a.p.is_test_only(f), &|f| a.p.is_test_path(f)) {
                 Ok(l) => a.links = Some(l),
                 Err(e) => a.graph_note = Some(e.to_string()),
             }
@@ -62,10 +62,6 @@ impl Analysis {
             None | Some(".") => String::new(),
             Some(d) => format!("{d}/"),
         }
-    }
-
-    pub fn graph_err(&self, e: GraphError) -> String {
-        e.to_string()
     }
 
     /// Evidence for a check-marked requirement: NO-TEST is strong; NO-LINK means its tests reach no app code in the graph; unchecked = no index.
@@ -88,7 +84,7 @@ impl Analysis {
         for i in ids {
             by.entry(self.s[i].file.as_str()).or_default().push(i);
         }
-        by.into_iter().map(|(f, v)| format!("  {}: {}", &f[..f.len() - 3], ranges(v))).collect()
+        by.into_iter().map(|(f, v)| format!("  {}: {}", stem(f), ranges(v))).collect()
     }
 
     pub(crate) fn requirement_row(&self, i: &str) -> Row {
@@ -105,10 +101,10 @@ impl Analysis {
             verdict: self.verdict(i).to_string(),
             built: self.built(i),
             changed: vec![],
-            issues: self.issues.iter().filter(|x| x.split_whitespace().next() == Some(i)).map(|x| x[i.len() + 1..].to_string()).collect(),
+            issues: self.issues.iter().filter(|x| x.id == i).map(|x| x.msg.clone()).collect(),
             tests: self.t.get(i).cloned().unwrap_or_default(),
             cites: self.c.get(i).cloned().unwrap_or_default(),
-            graph: self.links.as_ref().and_then(|l| l.get(i)).map(|f| f.iter().cloned().collect()).unwrap_or_default(),
+            graph: self.links.as_ref().and_then(|l| l.get(i)).map(|f| { let app = self.app(); f.iter().map(|x| x.strip_prefix(&app).unwrap_or(x).to_string()).collect() }).unwrap_or_default(),
         }
     }
 }
@@ -229,7 +225,7 @@ impl Analysis {
             unproven,
             built,
             invalid_tests,
-            spec_issues: self.issues.clone(),
+            spec_issues: self.issues.iter().map(Issue::to_string).collect(),
             dangling_tests: dt,
             dangling_sources: ds,
             overlaps,
@@ -307,8 +303,7 @@ impl Report {
 
 // ───────────────────────────── Status ─────────────────────────────
 
-#[derive(Debug, Default, Clone, Deserialize)]
-#[serde(default)]
+#[derive(Debug, Default, Clone)]
 pub struct StatusOpts {
     pub spec: Option<String>,
     pub prefix: Option<String>,
@@ -383,7 +378,7 @@ impl Analysis {
         }
         ids.sort_by_key(|i| id_key(i));
         let listing = o.all || o.missing || o.issues || o.reference().is_some() || o.built || o.done || o.unproven;
-        let issue_ids: HashSet<&str> = self.issues.iter().filter_map(|x| x.split_whitespace().next()).collect();
+        let issue_ids: HashSet<&str> = self.issues.iter().map(|x| x.id.as_str()).collect();
         let notes = match o.reference() {
             Some(r) => self.change_notes(&ChangeOpts { reference: r.into(), staged: o.staged, no_untracked: o.no_untracked, ignore_whitespace: o.ignore_whitespace, ..Default::default() })?,
             None => vec![],
@@ -399,7 +394,7 @@ impl Analysis {
                 if (o.done || o.unproven) && !row.done { continue; }
                 if o.unproven && matches!(verdict, "ok" | "unchecked") { continue; }
                 if o.reference().is_some() {
-                    row.changed = roles_of(&notes, i);
+                    row.changed = roles_of(notes.iter(), i);
                     if row.changed.is_empty() { continue; }
                 }
                 rows.push(row);
@@ -436,8 +431,8 @@ impl Analysis {
             marked_no_test: marked.iter().filter(|i| self.verdict(i) == "NO-TEST").map(|i| i.to_string()).collect(),
             marked_no_link: marked.iter().filter(|i| self.verdict(i) == "NO-LINK").map(|i| i.to_string()).collect(),
             links_checked: self.links.is_some(),
-            issues: self.issues.clone(),
-            uncounted: self.issues.iter().filter(|x| x.split_whitespace().next().is_some_and(|i| !self.s.contains_key(i)) && x.contains("has no MUST/SHOULD/MAY")).cloned().collect(),
+            issues: self.issues.iter().map(Issue::to_string).collect(),
+            uncounted: self.issues.iter().filter(|x| x.uncounted && !self.s.contains_key(&x.id)).map(Issue::to_string).collect(),
             dangling_tests: self.p.dangling(&self.s, &self.t),
             dangling_sources: self.p.dangling(&self.s, &self.c),
         })
@@ -468,13 +463,13 @@ impl Status {
             }
             if o.issues {
                 for x in &self.uncounted {
-                    let (id, rest) = x.split_once(' ').unwrap();
+                    let (id, rest) = x.split_once(' ').unwrap_or((x, ""));
                     out += &format!("{id} (not counted)  issue: {rest}\n");
                 }
             }
         } else {
             for l in &self.by_spec {
-                let name = &l.file[..l.file.len() - 3];
+                let name = stem(&l.file);
                 let mut line = format!("{name:<28} {}/{} tested", l.tested, l.due);
                 if !l.src_only.is_empty() { line += &format!(" | src-only: {}", ranges(&l.src_only)); }
                 if !l.none.is_empty() { line += &format!(" | none: {}", ranges(&l.none)); }
@@ -546,6 +541,9 @@ pub struct Trace {
     pub query: String,
 }
 
+/// A declaration line that declares a type, whatever the language: what `trace` lists as related code.
+static TYPE_KEYWORD: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| regex::Regex::new(r"\b(?:struct|class|enum|trait|interface|protocol|actor|record|object)\b").unwrap());
+
 impl Analysis {
     // (SCAN-08)
     /// `None` when the ID is in no spec, test or source.
@@ -555,8 +553,6 @@ impl Analysis {
         if spec.is_none() && !self.t.contains_key(&want) && !self.c.contains_key(&want) && !self.linked.contains_key(&want) {
             return None;
         }
-        let word = regex::Regex::new(r"\b[A-Za-z_]\w{3,}\b").unwrap();
-        let kw = regex::Regex::new(r"\b(?:struct|class|enum|actor|protocol)\b").unwrap();
         let cites: Vec<String> = spec.as_ref().map(|s| {
             let set: BTreeSet<String> = self.p.rx.mention.captures_iter(&s.text).map(|m| m[1].to_string()).filter(|x| *x != want).collect();
             set.into_iter().collect()
@@ -565,7 +561,7 @@ impl Analysis {
         let mut idents: HashSet<String> = HashSet::new();
         for r in &tests {
             for line in crate::scan::body(&self.p.lines(&r.file), r.line, 200) {
-                idents.extend(word.find_iter(&line).map(|m| m.as_str().to_string()));
+                idents.extend(crate::scan::WORD.find_iter(&line).map(|m| m.as_str().to_string()));
             }
         }
         let (mut cited, mut names) = (HashSet::new(), BTreeSet::new());
@@ -580,7 +576,7 @@ impl Analysis {
         for f in self.p.src_files() {
             let mut types = BTreeSet::new();
             for line in self.p.lines(&f).iter() {
-                if let Some(m) = self.p.rx.decl.captures(line) && idents.contains(&m[1]) && kw.is_match(line) {
+                if let Some(m) = self.p.rx.decl.captures(line) && idents.contains(&m[1]) && TYPE_KEYWORD.is_match(line) {
                     types.insert(m[1].to_string());
                 }
             }
