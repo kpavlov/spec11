@@ -216,10 +216,13 @@
 
   // scroll to what the URL points at once it is rendered
   $effect(() => {
-    void [specMd, code, rows.length, route.id, route.line, selGroup];
+    void [specMd, code, rows.length, route.id, route.line, selGroup, split];
     queueMicrotask(() => {
       const el = route.tab === "code" ? document.getElementById(`L${route.line}`) : route.tab === "specs" && route.id ? document.querySelector(`article a[data-id="${route.id}"]`) : route.tab === "requirements" ? document.querySelector("tr.sel") : null;
-      el?.scrollIntoView({ block: "center" });
+      const pane = route.tab === "requirements" ? el?.closest<HTMLElement>(".list") : null;
+      // the list pane scrolls on its own: centre the row there without moving the page
+      if (el && pane) pane.scrollTop += el.getBoundingClientRect().top - pane.getBoundingClientRect().top - (pane.clientHeight - el.getBoundingClientRect().height) / 2;
+      else el?.scrollIntoView({ block: "center" });
     });
   });
 
@@ -362,6 +365,7 @@
   let copied = $state(false);
   let showHidden = $state(stored("spec11.hidden") === "1");
   let modView = $state(stored("spec11.modules") === "graph" ? "graph" : "list");
+  let split = $state<"v" | "h">(stored("spec11.split") === "h" ? "h" : "v");
   const save = (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* storage blocked */ } };
   const copyPath = (path: string) => navigator.clipboard.writeText(path).then(() => { copied = true; setTimeout(() => (copied = false), 1200); }).catch(() => {});
 </script>
@@ -528,9 +532,10 @@
         {#each levels as l}<button class="chip" class:on={levelFilter === l} aria-pressed={levelFilter === l} onclick={() => filter({ level: levelFilter === l ? undefined : l })}>{l} <b>{rows.filter((r) => r.level === l).length}</b></button>{/each}
       </div>
       <input name="filter" aria-label="filter" placeholder="Filter ID, text, file   ( / )" value={query} oninput={(e) => filter({ q: e.currentTarget.value })} />
+      <button type="button" class="icon" onclick={() => save("spec11.split", (split = split === "v" ? "h" : "v"))} title={split === "v" ? "List left, preview right (click: list on top)" : "List on top, preview below (click: list left)"} aria-label="Split layout: {split === 'v' ? 'list left, preview right' : 'list on top, preview below'}">{split === "v" ? "◫" : "⬒"}</button>
     </div>
-    <div class="split">
-      <table>
+    <div class="split" class:h={split === "h"}>
+      <div class="list"><table>
         <thead><tr>{@render th("ID", "id", reqSort)}{@render th("level", "level", reqSort)}{@render th("state", "state", reqSort)}{@render th("requirement", "text", reqSort)}{@render th("location", "file", reqSort)}</tr></thead>
         <tbody>
           {#each reqGroups as g (g.prefix)}
@@ -550,7 +555,7 @@
             {/if}
           {/each}
         </tbody>
-      </table>
+      </table></div>
       {@render tracePanel()}
     </div>
     {#if !shown.length}<p class="muted empty">No requirement matches. <a href={u({ tab: "requirements" })}>Clear filters</a></p>{/if}
@@ -845,8 +850,13 @@
   
   .chip.none:not(.on) b, .chip.none:not(.on) { color: var(--bad); }
   .chip.src-only:not(.on) { color: var(--warn); }
-  .split { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; align-items: start; }
-  @media (min-width: 1000px) { .split:has(aside) { grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); } }
+  /* list and preview are panes that scroll on their own: side by side (wide screens, default) or stacked (.h, and always on narrow screens) */
+  .split { display: grid; grid-template: minmax(0, 1fr) / minmax(0, 1fr); gap: 14px; height: calc(100vh - 150px); min-height: 360px; }
+  .split:has(aside) { grid-template: minmax(0, 1fr) minmax(0, 1fr) / minmax(0, 1fr); }
+  @media (min-width: 1000px) { .split:has(aside):not(.h) { grid-template: minmax(0, 1fr) / minmax(0, 3fr) minmax(0, 2fr); } }
+  .list { overflow: auto; min-height: 0; }
+  .list th { position: sticky; top: 0; background: var(--bg); z-index: 1; }
+  .split aside { position: static; max-height: none; min-height: 0; }
   table { width: 100%; border-collapse: collapse; }
   td { padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: baseline; }
   tr[onclick] { cursor: pointer; }
@@ -858,7 +868,6 @@
   .txt { display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   .empty { padding: 24px 0; text-align: center; }
   aside { position: sticky; top: 64px; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 16px 14px; overflow: auto; max-height: calc(100vh - 80px); box-shadow: var(--shadow); }
-  @media (max-width: 999px) { aside { order: -1; position: static; max-height: none; } }
   .ahead { display: flex; align-items: center; gap: 8px; }
   .ahead .x { margin-left: auto; text-decoration: none; padding: 0 8px; color: var(--muted); }
   aside h4 { margin: 14px 0 4px; font-size: 13px; }
