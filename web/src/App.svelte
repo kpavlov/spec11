@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { untrack } from "svelte";
+  import { tick, untrack } from "svelte";
   import { call, embedded, read, watch } from "./transport";
   import { TABS, format, parse, type Route } from "./router";
   import Markdown from "./Markdown.svelte";
@@ -67,7 +67,7 @@
   $effect(() => {
     const onkey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement;
-      if (t.closest("input, select, textarea") || e.metaKey || e.ctrlKey || e.altKey) { if (e.key === "Escape") (t as HTMLElement).blur(); return; }
+      if (t.closest("input, select, textarea, .gutter, .seg") || e.metaKey || e.ctrlKey || e.altKey) { if (e.key === "Escape") (t as HTMLElement).blur(); return; }
       if (e.key === "/") {
         e.preventDefault();
         if (route.tab !== "requirements") navigate({ tab: "requirements" });
@@ -91,6 +91,14 @@
       } else if ((e.key === "ArrowLeft" || e.key === "ArrowRight") && route.tab === "requirements" && curGroup()) {
         e.preventDefault();
         setOpen(curGroup()!, e.key === "ArrowRight");
+      } else if (route.tab === "requirements" && /^[0-7sl]$/i.test(e.key)) {
+        // filter shortcuts: 1-7 pick a state, S/L step through states/levels (⇧ goes back), 0 clears every filter
+        const k = e.key.toLowerCase(), d = e.shiftKey ? -1 : 1;
+        const step = (keys: string[], cur: string) => keys[(keys.indexOf(cur) + d + keys.length) % keys.length];
+        if (k === "0") filter({ state: undefined, level: undefined, q: undefined });
+        else if (k === "s") filter({ state: step(states, stateFilter) });
+        else if (k === "l") { const n = step(levelKeys, levelFilter || "all"); filter({ level: n === "all" ? undefined : n }); }
+        else if (+k <= states.length) filter({ state: states[+k - 1] });
       } else if (e.key === "Escape" && route.id && (route.tab === "requirements" || route.tab === "overlap")) navigate({ ...route, id: undefined });
     };
     document.addEventListener("keydown", onkey);
@@ -184,9 +192,8 @@
     const id = route.id;
     void rows; // a refresh replaces the rows and must reload the open trace
     if (!id) { trace = null; return; }
-    // another requirement blanks the view; a refresh of the same one keeps showing it until the new trace lands
-    if (untrack(() => trace?.data?.id?.toUpperCase()) !== id.toUpperCase()) trace = null;
-    call("spec_trace", { id }).then((r) => { if (route.id === id) trace = r; }).catch((e) => { trace = null; error = e.message; });
+    // the previous trace stays (dimmed) until the new one lands, so the preview pane never collapses and reopens
+    call("spec_trace", { id }).then((r) => { if (route.id === id) { trace = r; document.querySelector(".split aside")?.scrollTo(0, 0); } }).catch((e) => { trace = null; error = e.message; });
   });
 
   $effect(() => {
@@ -246,12 +253,40 @@
   loadSetup().catch(() => {});
 
   // ---- views ----
-  const states = ["all", "tested", "src-only", "none", "manual", "later", "ref"];
+  // the states that need work come first; the hints say what the scanner saw, not that anything passes
+  const states = ["all", "none", "src-only", "tested", "manual", "later", "ref"];
+  const STATE_HINT: Record<string, string> = {
+    all: "Every requirement",
+    none: "No test tag and no source citation",
+    "src-only": "Cited in source, no test tag",
+    tested: "A test carries its [ID] tag (run the suite to know it passes)",
+    manual: "Checked by a person",
+    later: "Marked later or deferred",
+    ref: "Reference document, never due",
+  };
   const stateFilter = $derived(route.state ?? "all");
   const query = $derived(route.q ?? "");
   const levels = ["MUST", "SHOULD", "MAY"];
   const levelFilter = $derived(route.level ?? "");
-  const shown = $derived(rows.filter((r) => (stateFilter === "all" || r.state === stateFilter) && (!levelFilter || r.level === levelFilter) && (!query || `${r.id} ${r.text} ${r.file}`.toLowerCase().includes(query.toLowerCase()))));
+  // SHALL and reference docs have no chip of their own: they group under "other"
+  const levelOf = (r: Row) => (levels.includes(r.level) ? r.level : "other");
+  // the rows that pass every filter except the one named: what a chip of that filter would show
+  const facet = (skip?: "state" | "level") => rows.filter((r) => (skip === "state" || stateFilter === "all" || r.state === stateFilter) && (skip === "level" || !levelFilter || levelOf(r) === levelFilter) && (!query || `${r.id} ${r.text} ${r.file}`.toLowerCase().includes(query.toLowerCase())));
+  const tally = (list: Row[], key: (r: Row) => string) => list.reduce<Record<string, number>>((m, r) => ((m[key(r)] = (m[key(r)] ?? 0) + 1), m), {});
+  const shown = $derived(facet());
+  const stateN = $derived.by(() => { const l = facet("state"); return { ...tally(l, (r) => r.state), all: l.length } as Record<string, number>; });
+  const levelN = $derived.by(() => { const l = facet("level"); return { ...tally(l, levelOf), all: l.length } as Record<string, number>; });
+  const levelKeys = $derived(["all", ...levels, ...(levelN.other || levelFilter === "other" ? ["other"] : [])]);
+  const filtering = $derived(stateFilter !== "all" || !!levelFilter || !!query);
+  // radio-group keys: ←/→ move and select, focus follows; the global ↑/↓ row navigation skips `.seg`
+  const arrow = (e: KeyboardEvent, keys: string[], cur: string, set: (k: string) => void) => {
+    const d = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
+    if (!d) return;
+    e.preventDefault();
+    const bar = (e.currentTarget as HTMLElement).parentElement;
+    set(keys[(keys.indexOf(cur) + d + keys.length) % keys.length]);
+    tick().then(() => bar?.querySelector<HTMLElement>("[aria-checked=true]")?.focus());
+  };
   // sortable column headers (click: ascending, descending, back to file order); requirements are grouped by ID prefix when there are several
   type Sort = { key: string; dir: 1 | -1 };
   let reqSort = $state<Sort>({ key: "", dir: 1 });
@@ -302,7 +337,6 @@
     const g = reqGroups[i];
     return !g ? undefined : isOpen(g.prefix) ? { id: g.rows.at(end)!.id } : { group: g.prefix };
   };
-  const counts = $derived(rows.reduce<Record<string, number>>((m, r) => ((m[r.state] = (m[r.state] ?? 0) + 1), m), { all: rows.length }));
   const invalidN = $derived(report ? Object.values(report.invalid_tests).reduce((n: number, v: any) => n + v.length, 0) : 0);
   const known = $derived(new Set(rows.map((r) => r.id)));
   const mods = $derived<any[]>(sorted((modules?.modules ?? []).filter((m: any) => !query || m.path.toLowerCase().includes(query.toLowerCase())), modSort, modVal));
@@ -366,6 +400,25 @@
   let showHidden = $state(stored("spec11.hidden") === "1");
   let modView = $state(stored("spec11.modules") === "graph" ? "graph" : "list");
   let split = $state<"v" | "h">(stored("spec11.split") === "h" ? "h" : "v");
+  // size of the list pane in percent: dragged or keyed on the splitter, remembered per browser; unset = 60 beside, 50 on top
+  const clampPos = (n: number) => Math.min(85, Math.max(15, Math.round(n)));
+  let pos = $state<number | null>(stored("spec11.splitpos") ? clampPos(Number(stored("spec11.splitpos"))) : null);
+  const listPct = $derived(pos ?? (split === "v" ? 60 : 50));
+  const setPos = (n: number | null, keep = true) => { pos = n === null ? null : clampPos(n); if (keep) try { n === null ? localStorage.removeItem("spec11.splitpos") : localStorage.setItem("spec11.splitpos", String(pos)); } catch { /* storage blocked */ } };
+  const sideBySide = () => split === "v" && matchMedia("(min-width: 1000px)").matches;
+  const dragSplit = (e: PointerEvent) => {
+    const g = e.currentTarget as HTMLElement, box = g.parentElement!.getBoundingClientRect(), down = e.type === "pointerdown";
+    if (down) g.setPointerCapture(e.pointerId);
+    else if (!g.hasPointerCapture(e.pointerId)) return;
+    setPos(sideBySide() ? ((e.clientX - box.left) / box.width) * 100 : ((e.clientY - box.top) / box.height) * 100, false);
+  };
+  const keySplit = (e: KeyboardEvent) => {
+    const step: Record<string, number> = sideBySide() ? { ArrowLeft: -5, ArrowRight: 5 } : { ArrowUp: -5, ArrowDown: 5 };
+    if (e.key === "Home") setPos(null);
+    else if (step[e.key]) setPos(listPct + step[e.key]);
+    else return;
+    e.preventDefault();
+  };
   const save = (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* storage blocked */ } };
   const copyPath = (path: string) => navigator.clipboard.writeText(path).then(() => { copied = true; setTimeout(() => (copied = false), 1200); }).catch(() => {});
 </script>
@@ -392,9 +445,12 @@
 {/snippet}
 
 {#snippet tracePanel()}
-  {#if trace}
-    {@const sp = trace.data?.spec}
-    <aside>
+  {#if trace || route.tab === "requirements"}
+    <aside class:stale={trace && route.id && trace.data?.id?.toUpperCase() !== route.id.toUpperCase()}>
+      {#if !trace || !route.id}
+        <p class="muted empty">Select a requirement to preview it.</p>
+      {:else}
+      {@const sp = trace.data?.spec}
       <div class="ahead">
         <b class="mono nowrap">{trace.data.id}</b>
         {#if sp}<span class="pill">{sp.level}</span>{/if}
@@ -418,6 +474,7 @@
       {/if}
       <details class="plain"><summary class="muted">plain text</summary><pre>{trace.text}</pre></details>
       <p class="muted note">Evidence, not truth.</p>
+      {/if}
     </aside>
   {/if}
 {/snippet}
@@ -524,17 +581,21 @@
       </details>
     {/if}
   {:else if route.tab === "requirements"}
+    <div class="reqpage">
     <div class="bar">
-      <div class="chips" role="group" aria-label="state">
-        {#each states as st}{#if st === "all" || counts[st]}<button class="chip {st}" class:on={stateFilter === st} aria-pressed={stateFilter === st} onclick={() => filter({ state: st })}>{st} <b>{counts[st] ?? 0}</b></button>{/if}{/each}
+      <div class="seg" role="radiogroup" aria-label="Filter by state" title="Press 1–7 to pick a state, S for the next one, ⇧S for the previous one">
+        <span class="name" aria-hidden="true">State <kbd>S</kbd></span>
+        {#each states as st, i}<button type="button" role="radio" class:zero={!stateN[st] && stateFilter !== st} aria-checked={stateFilter === st} tabindex={stateFilter === st ? 0 : -1} title="{STATE_HINT[st]} ({i + 1})" onclick={() => filter({ state: st })} onkeydown={(e) => arrow(e, states, stateFilter, (k) => filter({ state: k }))}>{#if st !== "all"}<i class="dot {st}"></i>{/if}{st} <b>{stateN[st] ?? 0}</b></button>{/each}
       </div>
-      <div class="chips" role="group" aria-label="level">
-        {#each levels as l}<button class="chip" class:on={levelFilter === l} aria-pressed={levelFilter === l} onclick={() => filter({ level: levelFilter === l ? undefined : l })}>{l} <b>{rows.filter((r) => r.level === l).length}</b></button>{/each}
+      <div class="seg" role="radiogroup" aria-label="Filter by level" title="Press L for the next level, ⇧L for the previous one">
+        <span class="name" aria-hidden="true">Level <kbd>L</kbd></span>
+        {#each levelKeys as l}<button type="button" role="radio" class:zero={!levelN[l] && (levelFilter || "all") !== l} aria-checked={(levelFilter || "all") === l} tabindex={(levelFilter || "all") === l ? 0 : -1} onclick={() => filter({ level: l === "all" ? undefined : l })} onkeydown={(e) => arrow(e, levelKeys, levelFilter || "all", (k) => filter({ level: k === "all" ? undefined : k }))}>{l} <b>{levelN[l] ?? 0}</b></button>{/each}
       </div>
       <input name="filter" aria-label="filter" placeholder="Filter ID, text, file   ( / )" value={query} oninput={(e) => filter({ q: e.currentTarget.value })} />
+      <span class="found muted nowrap" aria-live="polite">{#if filtering}{shown.length} of {rows.length} <a href={u({ tab: "requirements" })} title="Clear every filter (0)">Clear filters <kbd>0</kbd></a>{/if}</span>
       <button type="button" class="icon" onclick={() => save("spec11.split", (split = split === "v" ? "h" : "v"))} title={split === "v" ? "List left, preview right (click: list on top)" : "List on top, preview below (click: list left)"} aria-label="Split layout: {split === 'v' ? 'list left, preview right' : 'list on top, preview below'}">{split === "v" ? "◫" : "⬒"}</button>
     </div>
-    <div class="split" class:h={split === "h"}>
+    <div class="split" class:h={split === "h"} style="--a: {listPct}fr; --b: {100 - listPct}fr">
       <div class="list"><table>
         <thead><tr>{@render th("ID", "id", reqSort)}{@render th("level", "level", reqSort)}{@render th("state", "state", reqSort)}{@render th("requirement", "text", reqSort)}{@render th("location", "file", reqSort)}</tr></thead>
         <tbody>
@@ -556,10 +617,13 @@
           {/each}
         </tbody>
       </table></div>
+      <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
+      <div class="gutter" role="separator" tabindex="0" aria-label="resize list and preview" aria-orientation={sideBySide() ? "vertical" : "horizontal"} aria-valuemin="15" aria-valuemax="85" aria-valuenow={listPct} title="Drag to resize; double-click or Home to reset" onpointerdown={dragSplit} onpointermove={dragSplit} onpointerup={() => setPos(listPct)} ondblclick={() => setPos(null)} onkeydown={keySplit}></div>
       {@render tracePanel()}
     </div>
     {#if !shown.length}<p class="muted empty">No requirement matches. <a href={u({ tab: "requirements" })}>Clear filters</a></p>{/if}
     {#if shown.length > REQ_CAP}<p class="muted">First {REQ_CAP} shown; narrow the filter.</p>{/if}
+    </div>
   {:else if route.tab === "code"}
     {#if !route.path}<p class="muted">No file selected: open one from a requirement's tests or citations.</p>
     {:else if !code || code.path !== route.path}<p class="muted">Loading {route.path}…</p>
@@ -784,7 +848,8 @@
   .icon { padding: 5px 9px; line-height: 1.2; }
   a.tab.icon .badge { margin-left: 3px; }
   .lbl { margin-left: 7px; }
-  @media (max-width: 1350px) { .lbl { display: none; } a.tab { padding: 5px 9px; } }
+  /* narrow: icons only, except the current tab keeps its name */
+  @media (max-width: 1350px) { a.tab .lbl { display: none; } a.tab.on .lbl { display: inline; } a.tab { padding: 5px 9px; } }
   
 
   /* report */
@@ -837,7 +902,8 @@
   .pill.tested { color: var(--ok); } .pill.none { color: var(--bad); } .pill.src-only { color: var(--warn); } .pill.done { color: var(--accent); }
   .pill.manual, .pill.later, .pill.ref { color: var(--muted); }
   :global(.rfc) { font-size: 11px; font-weight: 600; letter-spacing: .02em; padding: 0 6px; border-radius: 2px; white-space: nowrap; background: color-mix(in srgb, currentColor 12%, transparent); }
-  :global(.rfc.must) { color: var(--bad); } :global(.rfc.should) { color: var(--warn); } :global(.rfc.may) { color: var(--muted); }
+  /* level is weight, not colour: red and amber belong to the state (none, src-only) */
+  :global(.rfc.must) { background: var(--fg); color: var(--card); } :global(.rfc.should) { background: none; box-shadow: inset 0 0 0 1px currentColor; } :global(.rfc.may) { color: var(--muted); }
 
   /* requirements */
   .bar { display: flex; gap: 10px; align-items: center; margin-bottom: 14px; flex-wrap: wrap; }
@@ -848,12 +914,33 @@
   .chip { font-size: 13px; padding: 3px 10px; }
   .chip b { font-weight: 600; opacity: 0.75; margin-left: 2px; }
   
-  .chip.none:not(.on) b, .chip.none:not(.on) { color: var(--bad); }
-  .chip.src-only:not(.on) { color: var(--warn); }
+  /* a labelled segmented control: one choice, joined buttons; the state dot keeps its colour when the segment is selected */
+  .seg { display: inline-flex; flex-wrap: wrap; align-items: center; row-gap: 4px; }
+  .seg .name { color: var(--muted); font-size: 13px; margin-right: 8px; }
+  .seg button { min-height: 28px; padding: 2px 10px; font-size: 13px; border-radius: 0; border: 1px solid var(--line); margin-left: -1px; white-space: nowrap; background: var(--card); }
+  .seg .name + button { border-radius: var(--radius) 0 0 var(--radius); margin-left: 0; }
+  .seg button:last-child { border-radius: 0 var(--radius) var(--radius) 0; }
+  .seg button[aria-checked=true] { position: relative; z-index: 1; background: color-mix(in srgb, var(--accent) 18%, var(--card)); border-color: var(--accent); color: var(--fg); font-weight: 600; }
+  .seg button[aria-checked=true]:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 24%, var(--card)); color: var(--fg); }
+  .seg button.zero { color: var(--muted); opacity: .6; }
+  .seg b { font-weight: 600; font-variant-numeric: tabular-nums; opacity: .75; margin-left: 2px; }
+  .seg .dot { display: inline-block; margin: 0 6px 1px 0; }
+  .dot.tested { background: var(--ok); } .dot.none { background: var(--bad); } .dot.src-only { background: var(--warn); }
+  kbd { font: 11px/1 var(--mono); color: var(--muted); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 3px; padding: 1px 4px; margin-left: 3px; vertical-align: 1px; }
+  .found { font-size: 13px; }
+  .found a { margin-left: 6px; }
+  .reqpage { display: flex; flex-direction: column; height: calc(100dvh - 100px); min-height: 440px; }
   /* list and preview are panes that scroll on their own: side by side (wide screens, default) or stacked (.h, and always on narrow screens) */
-  .split { display: grid; grid-template: minmax(0, 1fr) / minmax(0, 1fr); gap: 14px; height: calc(100vh - 150px); min-height: 360px; }
-  .split:has(aside) { grid-template: minmax(0, 1fr) minmax(0, 1fr) / minmax(0, 1fr); }
-  @media (min-width: 1000px) { .split:has(aside):not(.h) { grid-template: minmax(0, 1fr) / minmax(0, 3fr) minmax(0, 2fr); } }
+  .split { display: grid; grid-template: minmax(0, 1fr) / minmax(0, 1fr); flex: 1; min-height: 360px; }
+  .split:has(aside) { grid-template: minmax(0, var(--a)) 14px minmax(0, var(--b)) / minmax(0, 1fr); }
+  aside.stale { opacity: .55; }
+  @media (min-width: 1000px) { .split:has(aside):not(.h) { grid-template: minmax(0, 1fr) / minmax(0, var(--a)) 14px minmax(0, var(--b)); } }
+  .gutter { position: relative; touch-action: none; cursor: row-resize; }
+  @media (min-width: 1000px) { .split:not(.h) .gutter { cursor: col-resize; } }
+  .gutter::before { content: ""; position: absolute; inset: 6px 0; border-radius: 2px; background: var(--line); }
+  @media (min-width: 1000px) { .split:not(.h) .gutter::before { inset: 0 6px; } }
+  .gutter:hover::before, .gutter:focus-visible::before { background: var(--accent); }
+  .gutter:focus-visible { outline: none; }
   .list { overflow: auto; min-height: 0; }
   .list th { position: sticky; top: 0; background: var(--bg); z-index: 1; }
   .split aside { position: static; max-height: none; min-height: 0; }
