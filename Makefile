@@ -10,7 +10,7 @@ ARCH := $(shell uname -m | sed s/arm64/aarch64/)
 OPENER := $(shell command -v open || command -v xdg-open)
 VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
 
-.PHONY: help dev serve web build run install uninstall dist report test parity clean
+.PHONY: help dev serve web build run install uninstall dist report test parity clean mcp-inspector
 
 help:
 	@echo "make dev      Vite (HMR, :5173) + Rust server on :$(PORT) proxying to it, scanning $(ROOT)"
@@ -80,3 +80,8 @@ parity:
 clean:
 	cargo clean
 	rm -rf web/dist web/node_modules
+
+mcp-inspector: ## Launch MCP Inspector UI
+	@echo "🧐 MCP Inspector"
+	@export MCP_INSPECTOR_SECRET_STORE=memory && \
+	npx -y @modelcontextprotocol/inspector --config mcp-inspector.json
