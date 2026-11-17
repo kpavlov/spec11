@@ -1,4 +1,5 @@
 //! `spec11 install` / `uninstall`: the skill ships inside the binary and is written to `<base>/skills/spec11/SKILL.md`.
+use serde::Serialize;
 use serde_json::{Map, Value, json};
 use std::path::{Path, PathBuf};
 
@@ -115,53 +116,86 @@ fn home() -> Result<PathBuf, String> {
     std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(PathBuf::from).ok_or_else(|| "HOME is not set".into())
 }
 
-fn skill_state(dir: &Path) -> &'static str {
+#[derive(Clone, Copy, PartialEq, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum SkillState {
+    Current,
+    Outdated,
+    Missing,
+}
+
+/// `Ok`: an http entry for this port; `Other`: a spec11 entry that points elsewhere.
+#[derive(Clone, Copy, PartialEq, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum McpState {
+    Ok,
+    Other,
+    Missing,
+}
+
+#[derive(Serialize, schemars::JsonSchema)]
+pub struct ProjectInstall {
+    pub root: PathBuf,
+    pub skill: SkillState,
+    pub skill_path: PathBuf,
+    pub mcp: McpState,
+    pub mcp_path: PathBuf,
+}
+
+#[derive(Serialize, schemars::JsonSchema)]
+pub struct GlobalInstall {
+    pub skill: SkillState,
+    pub skill_path: PathBuf,
+    pub mcp: McpState,
+}
+
+#[derive(Serialize, schemars::JsonSchema)]
+pub struct InstallStatus {
+    pub project: ProjectInstall,
+    pub global: GlobalInstall,
+}
+
+fn skill_state(dir: &Path) -> SkillState {
     match std::fs::read_to_string(dir.join(NAME).join("SKILL.md")) {
-        Ok(t) if t == SKILL => "current",
-        Ok(_) => "outdated",
-        Err(_) => "missing",
+        Ok(t) if t == SKILL => SkillState::Current,
+        Ok(_) => SkillState::Outdated,
+        Err(_) => SkillState::Missing,
     }
 }
 
-/// `ok`: an http entry for this port; `other`: a spec11 entry that points elsewhere; `missing`.
-fn mcp_state(config: &Path, port: u16) -> &'static str {
-    let Ok(Some(m)) = read_config(config) else { return "missing" };
+fn mcp_state(config: &Path, port: u16) -> McpState {
+    let Ok(Some(m)) = read_config(config) else { return McpState::Missing };
     match m.get("mcpServers").and_then(|s| s.get(NAME)) {
-        None => "missing",
-        Some(e) if e["url"] == format!("http://127.0.0.1:{port}/mcp") => "ok",
-        Some(_) => "other",
+        None => McpState::Missing,
+        Some(e) if e["url"] == format!("http://127.0.0.1:{port}/mcp") => McpState::Ok,
+        Some(_) => McpState::Other,
     }
 }
 
 /// Where the skill and the MCP entry are installed: this repo (`.agents/skills`, `.mcp.json`) and the user's global skills
 /// (`~/.agents/skills`; the user-scope MCP entry in `~/.claude.json` is only looked at, never written).
-pub fn status(root: Option<&Path>, port: u16) -> Result<Value, String> {
+pub fn status(root: Option<&Path>, port: u16) -> Result<InstallStatus, String> {
     let base = repo_root(root)?;
     let pdir = base.join(".agents/skills");
     let gdir = home()?.join(".agents/skills");
-    Ok(json!({
-        "project": {"root": base, "skill": skill_state(&pdir), "skill_path": pdir.join(NAME).join("SKILL.md"), "mcp": mcp_state(&base.join(".mcp.json"), port), "mcp_path": base.join(".mcp.json")},
-        "global": {"skill": skill_state(&gdir), "skill_path": gdir.join(NAME).join("SKILL.md"), "mcp": mcp_state(&home()?.join(".claude.json"), port)},
-    }))
+    Ok(InstallStatus {
+        project: ProjectInstall { skill: skill_state(&pdir), skill_path: pdir.join(NAME).join("SKILL.md"), mcp: mcp_state(&base.join(".mcp.json"), port), mcp_path: base.join(".mcp.json"), root: base },
+        global: GlobalInstall { skill: skill_state(&gdir), skill_path: gdir.join(NAME).join("SKILL.md"), mcp: mcp_state(&home()?.join(".claude.json"), port) },
+    })
 }
 
 /// One line per thing a person should do after `status`; empty when the agent can already use spec11 here.
-pub fn suggestions(st: &Value) -> Vec<String> {
-    let (p, g) = (&st["project"], &st["global"]);
-    fn skill(v: &Value) -> &str {
-        v["skill"].as_str().unwrap_or("")
-    }
-    fn mcp(v: &Value) -> &str {
-        v["mcp"].as_str().unwrap_or("")
-    }
+pub fn suggestions(st: &InstallStatus) -> Vec<String> {
+    use {McpState as M, SkillState as S};
+    let (p, g) = (&st.project, &st.global);
     let mut out = vec![];
-    if skill(p) == "missing" && skill(g) == "missing" {
+    if p.skill == S::Missing && g.skill == S::Missing {
         out.push("skill not installed: `spec11 install` (this repo) or `spec11 install --global`".to_string());
-    } else if skill(p) == "outdated" || (skill(p) == "missing" && skill(g) == "outdated") {
+    } else if p.skill == S::Outdated || (p.skill == S::Missing && g.skill == S::Outdated) {
         out.push("installed skill is out of date: run `spec11 install`".to_string());
     }
-    if mcp(p) != "ok" && mcp(g) != "ok" {
-        out.push(if mcp(p) == "other" { "the spec11 entry in .mcp.json points at another port: `spec11 install --port N` fixes it" } else { "MCP entry missing from .mcp.json: `spec11 install`" }.to_string());
+    if p.mcp != M::Ok && g.mcp != M::Ok {
+        out.push(if p.mcp == M::Other { "the spec11 entry in .mcp.json points at another port: `spec11 install --port N` fixes it" } else { "MCP entry missing from .mcp.json: `spec11 install`" }.to_string());
     }
     out
 }
@@ -278,18 +312,17 @@ mod tests {
         let repo = tmp("s");
         std::fs::create_dir_all(repo.join("specs")).unwrap();
         let st = status(Some(&repo), 7411).unwrap();
-        assert_eq!(st["project"]["skill"], "missing");
-        assert_eq!(st["project"]["mcp"], "missing");
-        assert!(suggestions(&st).len() >= 1 || st["global"]["skill"] != "missing"); // a real ~/.agents may already hold it
+        assert!(st.project.skill == SkillState::Missing && st.project.mcp == McpState::Missing);
+        assert!(suggestions(&st).len() >= 1 || st.global.skill != SkillState::Missing); // a real ~/.agents may already hold it
         apply(Some(&repo), false, Some(7411)).unwrap();
         let st = status(Some(&repo), 7411).unwrap();
-        assert_eq!((st["project"]["skill"].as_str(), st["project"]["mcp"].as_str()), (Some("current"), Some("ok")));
+        assert!(st.project.skill == SkillState::Current && st.project.mcp == McpState::Ok);
         assert!(suggestions(&st).is_empty(), "{:?}", suggestions(&st));
-        assert_eq!(status(Some(&repo), 7500).unwrap()["project"]["mcp"], "other");
+        assert!(status(Some(&repo), 7500).unwrap().project.mcp == McpState::Other);
         std::fs::write(repo.join(".agents/skills/spec11/SKILL.md"), "old").unwrap();
-        assert_eq!(status(Some(&repo), 7411).unwrap()["project"]["skill"], "outdated");
+        assert!(status(Some(&repo), 7411).unwrap().project.skill == SkillState::Outdated);
         apply(Some(&repo), false, None).unwrap();
-        assert_eq!(status(Some(&repo), 7411).unwrap()["project"]["skill"], "missing");
+        assert!(status(Some(&repo), 7411).unwrap().project.skill == SkillState::Missing);
     }
 
     #[doc = "[SETUP-01]"]

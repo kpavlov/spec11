@@ -25,31 +25,37 @@ pub struct Config {
     /// A file whose repo-relative path matches is a test, also inside a `src` folder (`a_test.go`, `a.test.ts`).
     pub test_files: String,
     pub retired_prefixes: Vec<String>,
-    /// CodeGraph index; empty = `.codegraph/codegraph.db`.
+    /// CodeGraph index; empty = `DEFAULT_DB`.
     pub codegraph: String,
     /// Path prefixes under `src[0]` that `uncovered` treats as plumbing.
     pub infra_paths: Vec<String>,
 }
 
+/// The CodeGraph index when `spec11.json` names none.
+pub const DEFAULT_DB: &str = ".codegraph/codegraph.db";
+
 impl Config {
     // (SCAN-06)
+    /// `spec11.json` of `root`, or the defaults; `codegraph` is never empty after this.
     pub fn load(root: &Path) -> Result<Config, String> {
         let f = root.join("spec11.json");
-        if !f.exists() {
-            return Ok(Config::default());
+        let mut cfg = if f.exists() {
+            let text = std::fs::read_to_string(&f).map_err(|e| format!("{}: {e}", f.display()))?;
+            serde_json::from_str(&text).map_err(|e| format!("{}: {e}", f.display()))?
+        } else {
+            Config::default()
+        };
+        if cfg.codegraph.is_empty() {
+            cfg.codegraph = DEFAULT_DB.into();
         }
-        let text = std::fs::read_to_string(&f).map_err(|e| format!("{}: {e}", f.display()))?;
-        serde_json::from_str(&text).map_err(|e| format!("{}: {e}", f.display()))
+        Ok(cfg)
     }
 
     /// Fill what the file left empty from the repo's file list (CodeGraph's, else a walk); what it set stays as it is.
     /// (SCAN-09)
     pub fn detect(&mut self, files: &[String]) {
-        if self.codegraph.is_empty() {
-            self.codegraph = ".codegraph/codegraph.db".into();
-        }
         let Some(Layout { profile: p, src, tests }) = detect::layout(files) else { return self.never() };
-                let (explicit_src, explicit_tests) = (!self.src.is_empty(), !self.tests.is_empty());
+        let (explicit_src, explicit_tests) = (!self.src.is_empty(), !self.tests.is_empty());
         for (field, auto) in [(&mut self.src, src), (&mut self.tests, tests), (&mut self.ext, p.ext.clone()), (&mut self.comment, p.comment.clone())] {
             if field.is_empty() {
                 *field = auto;
@@ -73,9 +79,6 @@ impl Config {
             if r.is_empty() {
                 *r = detect::NEVER.into();
             }
-        }
-        if self.codegraph.is_empty() {
-            self.codegraph = ".codegraph/codegraph.db".into();
         }
     }
 }

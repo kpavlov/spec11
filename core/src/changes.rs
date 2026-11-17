@@ -4,14 +4,16 @@ use crate::report::{Analysis, Row, chars};
 use crate::scan::{Project, id_key};
 use indexmap::IndexMap;
 use regex::Regex;
-use serde::{Deserialize, Serialize};
-use std::{collections::{HashMap, HashSet}, rc::Rc};
+use serde::Serialize;
+use std::{collections::{HashMap, HashSet}, rc::Rc, sync::LazyLock};
+
+static HUNK: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@").unwrap());
+static HEADER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@").unwrap());
 
 /// The longest diff `file_diff` returns.
 pub const DIFF_LINES: usize = 3000;
 
-#[derive(Debug, Default, Clone, Deserialize)]
-#[serde(default)]
+#[derive(Debug, Default, Clone)]
 pub struct ChangeOpts {
     /// The git ref the working tree is compared with (HEAD when empty).
     pub reference: String,
@@ -72,7 +74,6 @@ pub struct Hunk {
 /// {new path: hunks} of a `-U0` diff. A deleted file is keyed by its old path. Lines inside a hunk are counted, so a removed line that
 /// starts with `-- ` is not mistaken for a file header.
 pub fn parse_hunks(diff: &str) -> IndexMap<String, Vec<Hunk>> {
-    let re = Regex::new(r"^@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@").unwrap();
     let (mut out, mut old, mut new): (IndexMap<String, Vec<Hunk>>, Option<String>, Option<String>) = (IndexMap::new(), None, None);
     let (mut rem_o, mut rem_n) = (0i64, 0i64);
     let mut cur: Option<(String, usize)> = None;
@@ -100,7 +101,7 @@ pub fn parse_hunks(diff: &str) -> IndexMap<String, Vec<Hunk>> {
             old = p.trim_end().strip_prefix("a/").map(str::to_owned);
         } else if let Some(p) = line.strip_prefix("+++ ") {
             new = p.trim_end().strip_prefix("b/").map(str::to_owned);
-        } else if let Some(m) = re.captures(line) && let Some(path) = new.clone().or(old.clone()) {
+        } else if let Some(m) = HUNK.captures(line) && let Some(path) = new.clone().or(old.clone()) {
             let num = |i: usize, d: i64| m.get(i).map_or(d, |x| x.as_str().parse().unwrap_or(d));
             (rem_o, rem_n) = (num(1, 1), num(3, 1));
             let v = out.entry(path.clone()).or_default();
@@ -139,8 +140,14 @@ impl Project {
     /// committed: the change is in HEAD or in the explained commit and the working tree has nothing to add). Hidden by the ignore files
     /// unless `show_ignored`; git-ignored files never appear.
     pub fn file_changes(&self, o: &ChangeOpts) -> Result<Vec<FileChange>, String> {
+        let patch = if o.ignore_whitespace { Some(self.patch_hunks(o)?) } else { None };
+        self.list_changes(o, patch.as_ref())
+    }
+
+    /// `file_changes` with the `-U0` hunks already parsed (`patch`, needed for `ignore_whitespace`), so a caller that wants both runs git once.
+    fn list_changes(&self, o: &ChangeOpts, patch: Option<&IndexMap<String, Vec<Hunk>>>) -> Result<Vec<FileChange>, String> {
         let names = self.run(diff_args(o, &["--name-status"])?)?;
-        let kept: Option<HashSet<String>> = if o.ignore_whitespace { Some(self.patch_hunks(o)?.into_keys().collect()) } else { None };
+        let kept: Option<HashSet<&String>> = patch.filter(|_| o.ignore_whitespace).map(|p| p.keys().collect());
         let set = |a: &[&str]| self.git(a).unwrap_or_default().lines().map(str::to_owned).collect::<HashSet<String>>();
         let (cached, unstaged) = if o.commit.is_empty() { (set(&["diff", "--cached", "--name-only", "HEAD", "--"]), set(&["diff", "--name-only", "--"])) } else { Default::default() };
         let mut out = vec![];
@@ -170,9 +177,8 @@ impl Project {
         Ok(out)
     }
 
-    /// The `-U0` hunks of the diff; an untracked file is one hunk of additions.
-    fn hunks(&self, o: &ChangeOpts, files: &[FileChange]) -> Result<IndexMap<String, Vec<Hunk>>, String> {
-        let mut out = self.patch_hunks(o)?;
+    /// `out` (the `-U0` hunks of the diff) plus one hunk of additions per untracked file, without what the ignore files hide.
+    fn hunks(&self, o: &ChangeOpts, files: &[FileChange], mut out: IndexMap<String, Vec<Hunk>>) -> Result<IndexMap<String, Vec<Hunk>>, String> {
         for f in files.iter().filter(|f| f.stage == "untracked") {
             let added: Vec<String> = std::fs::read_to_string(self.root.join(&f.path)).map(|t| t.lines().map(str::to_owned).collect()).unwrap_or_default();
             out.insert(f.path.clone(), vec![Hunk { header: format!("@@ -0,0 +1,{} @@", added.len()), new_start: 1, new_len: added.len() as i64, removed: vec![], added }]);
@@ -238,8 +244,8 @@ pub struct Note {
 }
 
 /// The distinct roles (spec, test, src, in that order) of the notes of one requirement.
-pub fn roles_of(notes: &[Note], id: &str) -> Vec<String> {
-    ["spec", "test", "src"].into_iter().filter(|r| notes.iter().any(|n| n.id == id && n.role == *r)).map(String::from).collect()
+pub fn roles_of<'a>(notes: impl Iterator<Item = &'a Note> + Clone, id: &str) -> Vec<String> {
+    ["spec", "test", "src"].into_iter().filter(|r| notes.clone().any(|n| n.id == id && n.role == *r)).map(String::from).collect()
 }
 
 /// Which of spec, test and src a file is for the scanner. A file that is gone is judged by its path.
@@ -438,9 +444,9 @@ impl Analysis {
         out
     }
 
-    fn notes_of(&self, o: &ChangeOpts, files: &[FileChange], kinds: &Kinds) -> Result<Vec<Note>, String> {
+    fn notes_of(&self, o: &ChangeOpts, files: &[FileChange], kinds: &Kinds, patch: IndexMap<String, Vec<Hunk>>) -> Result<Vec<Note>, String> {
         let mut out = vec![];
-        for (f, hs) in self.p.hunks(o, files)? {
+        for (f, hs) in self.p.hunks(o, files, patch)? {
             let roles = kinds.roles(&f);
             if !roles.is_empty() {
                 out.extend(self.hunk_notes(&f, &hs, &self.new_lines(o, &f), &roles).into_iter().flatten());
@@ -451,8 +457,9 @@ impl Analysis {
 
     /// The notes of a change set (what `status changed` maps to requirements).
     pub(crate) fn change_notes(&self, o: &ChangeOpts) -> Result<Vec<Note>, String> {
-        let files = self.p.file_changes(o)?;
-        self.notes_of(o, &files, &Kinds::of(&self.p))
+        let patch = self.p.patch_hunks(o)?;
+        let files = self.p.list_changes(o, Some(&patch))?;
+        self.notes_of(o, &files, &Kinds::of(&self.p), patch)
     }
 
     // (SCAN-20)
@@ -470,15 +477,28 @@ impl Analysis {
     // (SCAN-18)
     /// What the working tree (or one commit) changed: the files, and the requirements the changed lines touch.
     pub fn changes(&self, o: &ChangeOpts) -> Result<Changes, String> {
-        let (files, kinds) = (self.p.file_changes(o)?, Kinds::of(&self.p));
-        let notes = self.notes_of(o, &files, &kinds)?;
+        let patch = self.p.patch_hunks(o)?;
+        let (files, kinds) = (self.p.list_changes(o, Some(&patch))?, Kinds::of(&self.p));
+        let mut notes = self.notes_of(o, &files, &kinds, patch)?;
+        // (SCAN-22) a changed source file that a requirement's tagged tests reach in the index: it may be affected though nothing there cites it
+        if let Some(links) = &self.links {
+            for f in files.iter().filter(|f| kinds.roles(&f.path).contains(&"src")) {
+                let mut reached: Vec<&String> = links.iter().filter(|(_, fs)| fs.contains(&f.path)).map(|(id, _)| id).collect();
+                reached.sort_by_key(|i| id_key(i));
+                for id in reached {
+                    if !notes.iter().any(|n| n.id == *id && n.file == f.path) {
+                        notes.push(Note { id: id.clone(), role: "src", action: "reached by a test", file: f.path.clone(), text: None });
+                    }
+                }
+            }
+        }
         let mut ids: Vec<&str> = notes.iter().map(|n| n.id.as_str()).collect::<HashSet<_>>().into_iter().collect();
         ids.sort_by_key(|i| id_key(i));
         let requirements = ids.into_iter().map(|id| {
             let mine: Vec<&Note> = notes.iter().filter(|n| n.id == id).collect();
             let mut seen = HashSet::new();
             let notes = mine.iter().filter(|n| seen.insert((n.role, n.action, &n.file))).map(|n| ReqNote { role: n.role.into(), action: n.action.into(), file: n.file.clone() }).collect();
-            let changed = roles_of(&notes_owned(&mine), id);
+            let changed = roles_of(mine.iter().copied(), id);
             if self.s.contains_key(id) {
                 let Row { state, level, text, file, line, .. } = self.requirement_row(id);
                 return ReqChange { id: id.into(), deleted: false, state, level, text, file, line, changed, notes };
@@ -502,7 +522,8 @@ impl Analysis {
     /// hunks touches. Any other path is refused, so the diff cannot be used to read other files.
     pub fn file_diff(&self, path: &str, o: &ChangeOpts) -> Result<FileDiff, String> {
         let files = self.p.file_changes(o)?;
-        let f = files.iter().find(|f| f.path == path && (o.show_all || !Kinds::of(&self.p).roles(path).is_empty())).ok_or_else(|| format!("{path}: not a changed file"))?.clone();
+        let kinds = Kinds::of(&self.p);
+        let f = files.iter().find(|f| f.path == path && (o.show_all || !kinds.roles(path).is_empty())).ok_or_else(|| format!("{path}: not a changed file"))?.clone();
         let paths: Vec<String> = f.old_path.iter().cloned().chain([f.path.clone()]).collect();
         let text = if f.stage == "untracked" {
             match std::fs::read_to_string(self.p.root.join(path)) {
@@ -517,12 +538,11 @@ impl Analysis {
         // the same file at -U0 says what each hunk touches; a context hunk takes the notes of the -U0 hunks that start inside it
         let mut z = diff_args(o, if o.ignore_whitespace { &["-U0", "-w"] } else { &["-U0"] })?;
         z.extend(paths);
-        let zero = if f.stage == "untracked" { self.p.hunks(o, &files)?.shift_remove(path).unwrap_or_default() } else { parse_hunks(&self.p.run(z)?).shift_remove(path).unwrap_or_default() };
-        let roles = Kinds::of(&self.p).roles(path);
+        let zero = if f.stage == "untracked" { self.p.hunks(o, &files, IndexMap::new())?.shift_remove(path).unwrap_or_default() } else { parse_hunks(&self.p.run(z)?).shift_remove(path).unwrap_or_default() };
+        let roles = kinds.roles(path);
         let notes = if roles.is_empty() { vec![vec![]; zero.len()] } else { self.hunk_notes(path, &zero, &self.new_lines(o, path), &roles) };
-        let re = Regex::new(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@").unwrap();
         let mut hunks: Vec<(i64, i64, HunkInfo)> = text.lines().filter(|l| l.starts_with("@@")).filter_map(|l| {
-            let m = re.captures(l)?;
+            let m = HEADER.captures(l)?;
             let (s, n): (i64, i64) = (m[1].parse().ok()?, m.get(2).map_or(1, |x| x.as_str().parse().unwrap_or(1)));
             Some((s, s + n.max(1), HunkInfo { header: l.to_string(), requirements: vec![] }))
         }).collect();
@@ -542,10 +562,6 @@ impl Analysis {
         }
         Ok(FileDiff { path: f.path, old_path: f.old_path, change: f.change.into(), stage: f.stage.into(), diff, hunks: hunks.into_iter().map(|h| h.2).collect() })
     }
-}
-
-fn notes_owned(v: &[&Note]) -> Vec<Note> {
-    v.iter().map(|n| (*n).clone()).collect()
 }
 
 // ───────────────────────────── text ─────────────────────────────

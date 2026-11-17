@@ -2,7 +2,7 @@
 //! Ports of overlap.py and uncovered.py. Pure logic over the rows `codegraph.rs` returns.
 use crate::codegraph::{GraphError, UNIT_KINDS};
 use crate::report::Analysis;
-use crate::scan::{body, id_key, sorted_ids};
+use crate::scan::{WORD, body, id_key, sorted_ids, stem};
 use indexmap::IndexMap;
 use serde::Serialize;
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -117,7 +117,7 @@ impl Analysis {
             o += &format!("  {}:{}  {}  [{}]\n", r.file.strip_prefix(&app).unwrap_or(&r.file), r.line, r.name, r.ids.join(", "));
             for (a, b, linked) in r.pairs.iter().take(6) {
                 let (fa, fb) = (&self.s[a].file, &self.s[b].file);
-                o += &format!("    {a} {} {b}  {}  {} / {}\n", if *linked { "~" } else { "?" }, if *linked { "linked" } else { "UNLINKED" }, &fa[..fa.len() - 3], &fb[..fb.len() - 3]);
+                o += &format!("    {a} {} {b}  {}  {} / {}\n", if *linked { "~" } else { "?" }, if *linked { "linked" } else { "UNLINKED" }, stem(fa), stem(fb));
             }
         }
         if found.len() > limit {
@@ -144,13 +144,12 @@ impl Analysis {
                 units.entry((n.file.clone(), n.name.clone())).or_insert(Unit { name: n.name.clone(), file: n.file.clone(), lo: n.lo, hi: n.hi, visibility: n.visibility.clone(), kind: n.kind.clone() });
             }
         }
-        let word = regex::Regex::new(r"\b[A-Za-z_]\w{3,}\b").unwrap();
         let cited: HashSet<(&str, i64)> = self.c.values().flatten().map(|r| (r.file.as_str(), r.line as i64)).collect();
         let mut tested: HashSet<String> = HashSet::new(); // names that appear in the body of a test tagged with a requirement
         for refs in self.t.values() {
             for r in refs {
                 for line in body(&self.p.lines(&r.file), r.line, 200) {
-                    tested.extend(word.find_iter(&line).map(|m| m.as_str().to_string()));
+                    tested.extend(WORD.find_iter(&line).map(|m| m.as_str().to_string()));
                 }
             }
         }

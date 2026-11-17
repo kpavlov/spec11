@@ -99,7 +99,7 @@ impl Analysis {
     /// The test cases of the test files, grouped by module and file (`case` in `spec11.json` replaces the built-in markers).
     pub fn tests_view(&self) -> TestsView {
         let (mut rx, mut seen): (HashMap<&str, Regex>, _) = (HashMap::new(), HashMap::new());
-        let custom = Some(&self.p.cfg.case).filter(|c| !c.is_empty()).and_then(|c| Regex::new(c).ok());
+        let custom = &self.p.rx.case;
         let mut by: BTreeMap<String, Vec<TestFile>> = BTreeMap::new();
         for file in self.p.test_files() {
             let Some(case) = detect::case_of(&file) else { continue };
@@ -155,7 +155,7 @@ impl Analysis {
                         mods.get_mut(&a).unwrap().depends_on.push(Dep { module: b, edges: n });
                     }
                 }
-                (Err(e), _) | (_, Err(e)) => note = Some(self.graph_err(e)),
+                (Err(e), _) | (_, Err(e)) => note = Some(e.to_string()),
             }
         } else if note.is_none() {
             note = Some("no CodeGraph index, so symbols and module dependencies are not checked".into());

@@ -11,10 +11,13 @@ pub struct Check {
     pub level: &'static str,
     pub detail: String,
     pub hint: Option<String>,
+    /// The index action this check calls for (`init` or `sync`); not part of the output.
+    #[serde(skip)]
+    pub action: Option<&'static str>,
 }
 
 fn c(name: &'static str, level: &'static str, detail: impl Into<String>, hint: Option<&str>) -> Check {
-    Check { name, level, detail: detail.into(), hint: hint.map(str::to_owned) }
+    Check { name, level, detail: detail.into(), hint: hint.map(str::to_owned), action: None }
 }
 
 fn mtime(p: &Path) -> Option<SystemTime> {
@@ -52,7 +55,7 @@ pub fn index(root: Option<&Path>, action: &str) -> Result<String, String> {
 pub fn suggested(checks: &[Check]) -> Option<&'static str> {
     let k = checks.iter().find(|k| k.name == "codegraph index")?;
     if checks.iter().any(|b| b.name == "codegraph binary" && b.level != "ok") { return None; }
-    if k.detail.contains("not initialized") { Some("init") } else if k.detail.contains("older than") { Some("sync") } else { None }
+    k.action
 }
 
 // (SETUP-05, SETUP-06)
@@ -105,12 +108,12 @@ pub fn run(root: Option<&Path>, mcp_port: u16) -> Vec<Check> {
     out.push(match Graph::open(&db) {
         Ok(None) => {
             let hint = if bin.is_some() { "run `codegraph init` in the repo if you want it (indexing is your call; spec11 never does it)" } else { "needs the codegraph binary first" };
-            c("codegraph index", "warn", format!("{} not found: not initialized", p.cfg.codegraph), Some(hint))
+            Check { action: Some("init"), ..c("codegraph index", "warn", format!("{} not found: not initialized", p.cfg.codegraph), Some(hint)) }
         }
         Ok(Some(_)) => {
             let newest = p.src_files().into_iter().chain(p.test_files()).filter_map(|f| mtime(&p.root.join(f))).max();
             match (mtime(&db), newest) {
-                (Some(d), Some(n)) if n > d => c("codegraph index", "warn", "initialized, but older than the newest source or test file", Some("run `codegraph sync`")),
+                (Some(d), Some(n)) if n > d => Check { action: Some("sync"), ..c("codegraph index", "warn", "initialized, but older than the newest source or test file", Some("run `codegraph sync`")) },
                 _ => c("codegraph index", "ok", format!("{} readable, schema supported", p.cfg.codegraph), None),
             }
         }

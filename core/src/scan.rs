@@ -1,11 +1,14 @@
 //! File scanning: spec IDs, test tags `[ABC-12]`, source comment mentions. Port of scripts/common.py (minus SQL).
-use crate::codegraph::Graph;
+use crate::codegraph::{Graph, GraphError};
 use crate::config::Config;
 use crate::detect;
 use indexmap::IndexMap;
 use regex::Regex;
 use serde::Serialize;
-use std::{cell::RefCell, collections::HashMap, path::{Path, PathBuf}, process::Command, rc::Rc};
+use std::{cell::{OnceCell, RefCell}, collections::HashMap, path::{Path, PathBuf}, process::Command, rc::Rc};
+
+/// An identifier of 4+ characters: what the tests of a requirement name.
+pub static WORD: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| Regex::new(r"\b[A-Za-z_]\w{3,}\b").unwrap());
 
 const ID: &str = r"[A-Z]{2,5}-\d{1,4}";
 pub const LEVEL: &str = r"\b(?:MUST|SHOULD|MAY|SHALL)\b";
@@ -36,8 +39,32 @@ pub struct Ref {
     pub text: String,
 }
 
+/// A mistake found in the specs, about one requirement ID. Prints as `ID message`, which is how it reaches the reports and the JSON.
+#[derive(Debug, Clone)]
+pub struct Issue {
+    pub id: String,
+    pub msg: String,
+    /// The bullet has no MUST/SHOULD/MAY, so it is no requirement and is not counted.
+    pub uncounted: bool,
+}
+
+impl Issue {
+    pub fn new(id: &str, msg: String) -> Issue {
+        Issue { id: id.into(), msg, uncounted: false }
+    }
+
+    fn uncounted(id: &str, msg: String) -> Issue {
+        Issue { uncounted: true, ..Issue::new(id, msg) }
+    }
+}
+
+impl std::fmt::Display for Issue {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{} {}", self.id, self.msg)
+    }
+}
+
 pub type Refs = HashMap<String, Vec<Ref>>;
-pub type Diff = IndexMap<String, Vec<(i64, i64)>>;
 
 pub struct Rx {
     pub(crate) head: Regex,
@@ -57,6 +84,8 @@ pub struct Rx {
     assert: Regex,
     off: Regex,
     test: Option<Regex>,
+    /// `case` of `spec11.json`: replaces the built-in test-case markers.
+    pub(crate) case: Option<Regex>,
 }
 
 impl Rx {
@@ -80,6 +109,7 @@ impl Rx {
             assert: r(cfg.assert.clone())?,
             off: r(cfg.off.clone())?,
             test: if cfg.test_files.is_empty() { None } else { Some(r(cfg.test_files.clone())?) },
+            case: if cfg.case.is_empty() { None } else { Some(r(cfg.case.clone())?) },
         })
     }
 }
@@ -104,6 +134,12 @@ pub struct Project {
     pub files: Vec<String>,
     ignore: detect::Ignore,
     cache: RefCell<HashMap<String, Rc<Vec<String>>>>,
+    /// The index as `open` found it, for `Analysis::load` to take instead of opening it again.
+    graph: Option<Result<Option<Graph>, GraphError>>,
+    /// The file lists, walked once.
+    tests: OnceCell<Vec<String>>,
+    srcs: OnceCell<Vec<String>>,
+    specs: OnceCell<Vec<String>>,
 }
 
 /// The repo is the nearest ancestor of `from` that has the `specs` path, or, when none is configured, any known spec place;
@@ -140,15 +176,21 @@ impl Project {
         };
         // the config can move the specs folder, so look for spec11.json first
         let base = start.ancestors().find(|d| d.join("spec11.json").exists()).unwrap_or(&start);
-        let cfg = Config::load(base)?;
+        let first = Config::load(base)?;
         let hint = |at: &str| format!("spec11: no specs (specs/, spec/, docs/specs/, SPEC.md, decisions/ ... or markdown with requirement lines) in {at}; set \"specs\" in spec11.json");
-        let root = if root.is_some() { start.clone() } else { find_root(&start, &cfg.specs).ok_or_else(|| hint(&format!("{} or above", start.display())))? };
-        let mut cfg = Config::load(&root)?;
+        let root = if root.is_some() { start.clone() } else { find_root(&start, &first.specs).ok_or_else(|| hint(&format!("{} or above", start.display())))? };
+        let mut cfg = if root == base { first } else { Config::load(&root)? };
         let allow = detect::allow_list(&root);
+        let ignore = detect::Ignore::load(&root);
         let doc_dirs = detect::decision_dirs(&root);
+        // (SCAN-21)
+        let named = [("specs", vec![cfg.specs.clone()]), ("src", cfg.src.clone()), ("tests", cfg.tests.clone()), ("codegraph", vec![cfg.codegraph.clone()])];
+        if let Some((field, p)) = named.iter().find_map(|(f, ps)| ps.iter().find(|p| !p.is_empty() && !detect::confined(&root, p, &allow)).map(|p| (f, p))) {
+            return Err(format!("spec11: {field} {p} in spec11.json is outside the repo (see ALLOWED_PATHS)"));
+        }
         // (SCAN-12) `specs` may name a folder or a file; left empty, the places come from the repo
         let spec_paths = if cfg.specs.is_empty() {
-            let v = detect::spec_paths(&root, &allow);
+            let v = detect::spec_paths(&root, &allow, &ignore);
             if v.is_empty() && doc_dirs.is_empty() {
                 return Err(hint(&root.display().to_string()));
             }
@@ -160,12 +202,17 @@ impl Project {
             return Err(format!("spec11: no {} in {}", cfg.specs, root.display()));
         };
         // (SCAN-09) what spec11.json leaves out comes from the CodeGraph file list, else from a walk of the repo
-        let indexed = Graph::open(&root.join(if cfg.codegraph.is_empty() { ".codegraph/codegraph.db" } else { &cfg.codegraph })).ok().flatten().and_then(|g| g.file_paths().ok());
-        let ignore = detect::Ignore::load(&root);
-        let files: Vec<String> = indexed.map(|v| v.into_iter().filter(|f| !ignore.hides(f)).collect()).unwrap_or_else(|| detect::walk(&root, &allow).iter().filter_map(|f| f.strip_prefix(&root).ok()).map(|f| f.to_string_lossy().replace('\\', "/")).collect());
+        let graph = Graph::open(&root.join(&cfg.codegraph));
+        let indexed = graph.as_ref().ok().and_then(Option::as_ref).and_then(|g| g.file_paths().ok());
+        let files: Vec<String> = indexed.map(|v| v.into_iter().filter(|f| !ignore.hides(f)).collect()).unwrap_or_else(|| detect::walk(&root, &allow, &ignore).iter().filter_map(|f| f.strip_prefix(&root).ok()).map(|f| f.to_string_lossy().replace('\\', "/")).collect());
         cfg.detect(&files);
         let rx = Rx::new(&cfg)?;
-        Ok(Project { root, cfg, rx, allow, spec_paths, doc_dirs, files, ignore, cache: RefCell::default() })
+        Ok(Project { root, cfg, rx, allow, spec_paths, doc_dirs, files, ignore, cache: RefCell::default(), graph: Some(graph), tests: OnceCell::new(), srcs: OnceCell::new(), specs: OnceCell::new() })
+    }
+
+    /// The CodeGraph index `open` already looked at (opened again if it was taken before).
+    pub(crate) fn take_graph(&mut self) -> Result<Option<Graph>, GraphError> {
+        self.graph.take().unwrap_or_else(|| Graph::open(&self.root.join(&self.cfg.codegraph)))
     }
 
     /// Whether `.aiignore`, `.spec11ignore` or the built-in `.agents` rule hides this repo-relative path.
@@ -190,7 +237,7 @@ impl Project {
     /// Files with a configured extension under each dir, sorted per dir. Symlinks count only inside the root or `ALLOWED_PATHS`.
     pub fn files(&self, dirs: &[String]) -> Vec<String> {
         let ext = |p: &PathBuf| p.extension().and_then(|x| x.to_str()).is_some_and(|x| self.cfg.ext.iter().any(|y| y == x));
-        dirs.iter().flat_map(|d| detect::walk(&if d == "." { self.root.clone() } else { self.root.join(d) }, &self.allow).into_iter().filter(ext).map(|p| self.rel(&p)).collect::<Vec<_>>()).collect()
+        dirs.iter().flat_map(|d| detect::walk(&if d == "." { self.root.clone() } else { self.root.join(d) }, &self.allow, &self.ignore).into_iter().filter(ext).map(|p| self.rel(&p)).collect::<Vec<_>>()).collect()
     }
 
     fn is_test(&self, rel: &str) -> bool {
@@ -209,18 +256,25 @@ impl Project {
         self.is_test(rel) || (self.is_test_path(rel) && !in_src)
     }
 
+    /// A file under one of the `src` dirs.
+    pub fn is_src_path(&self, rel: &str) -> bool {
+        self.cfg.src.iter().any(|d| d == "." || rel.starts_with(&format!("{d}/")))
+    }
+
     /// The test files: those under `tests`, plus test-named files that sit in `src` folders.
     pub fn test_files(&self) -> Vec<String> {
-        let mut v = self.files(&self.cfg.tests);
-        v.extend(self.files(&self.cfg.src).into_iter().filter(|f| self.is_test(f)));
-        let mut seen = std::collections::HashSet::new();
-        v.retain(|f| seen.insert(f.clone()));
-        v
+        self.tests.get_or_init(|| {
+            let mut v = self.files(&self.cfg.tests);
+            v.extend(self.files(&self.cfg.src).into_iter().filter(|f| self.is_test(f)));
+            let mut seen = std::collections::HashSet::new();
+            v.retain(|f| seen.insert(f.clone()));
+            v
+        }).clone()
     }
 
     /// The source files: those under `src` that are not tests.
     pub fn src_files(&self) -> Vec<String> {
-        self.files(&self.cfg.src).into_iter().filter(|f| !self.is_test(f)).collect()
+        self.srcs.get_or_init(|| self.files(&self.cfg.src).into_iter().filter(|f| !self.is_test(f)).collect()).clone()
     }
 
     /// Folders and files the requirement lines are read from, plus decision folders, repo-relative.
@@ -230,19 +284,21 @@ impl Project {
 
     /// Every `*.md` file of `dir` and its subfolders, repo-relative.
     fn md_in(&self, dir: &str) -> Vec<String> {
-        detect::walk(&if dir == "." { self.root.clone() } else { self.root.join(dir) }, &self.allow).iter().filter(|p| p.extension().is_some_and(|x| x == "md")).map(|p| self.rel(p)).collect()
+        detect::walk(&if dir == "." { self.root.clone() } else { self.root.join(dir) }, &self.allow, &self.ignore).iter().filter(|p| p.extension().is_some_and(|x| x == "md")).map(|p| self.rel(p)).collect()
     }
 
     /// The markdown files that may hold requirements: the spec paths (folders, files) and decision folders, repo-relative.
     pub fn spec_files(&self) -> Vec<String> {
-        let mut seen = std::collections::HashSet::new();
-        self.spec_paths.iter().chain(&self.doc_dirs).flat_map(|p| if self.root.join(p).is_file() { vec![p.clone()] } else { self.md_in(p) }).filter(|f| seen.insert(f.clone())).collect()
+        self.specs.get_or_init(|| {
+            let mut seen = std::collections::HashSet::new();
+            self.spec_paths.iter().chain(&self.doc_dirs).flat_map(|p| if self.root.join(p).is_file() { vec![p.clone()] } else { self.md_in(p) }).filter(|f| seen.insert(f.clone())).collect()
+        }).clone()
     }
 
     // (SCAN-13)
     /// Reference docs and who links to them. `[ABC-12](path.md)` to an existing markdown file names that file by ID, and so does
     /// a decision-folder file `0003-title.md` (`ADR-0003`); IDs a bullet defines are left alone. Links to missing files go to `problems`.
-    pub fn docs(&self, s: &IndexMap<String, Spec>, problems: &mut Vec<String>) -> (Vec<Spec>, Refs) {
+    pub fn docs(&self, s: &IndexMap<String, Spec>, problems: &mut Vec<Issue>) -> (Vec<Spec>, Refs) {
         let mds = self.md_in(".");
         let known: std::collections::HashSet<&str> = mds.iter().map(String::as_str).collect();
         let (mut found, mut linked): (IndexMap<String, String>, Refs) = Default::default();
@@ -258,11 +314,11 @@ impl Project {
                     let Some(t) = resolve(f, target).filter(|t| t.ends_with(".md")) else { continue };
                     if !known.contains(t.as_str()) {
                         if !self.root.join(&t).exists() {
-                            problems.push(format!("{id} {f}:{} links to {target}, which does not exist", idx + 1));
+                            problems.push(Issue::new(&id, format!("{f}:{} links to {target}, which does not exist", idx + 1)));
                         }
                     } else if !s.contains_key(&id) {
                         match found.get(&id) {
-                            Some(was) if *was != t => problems.push(format!("{id} is linked to two files: {was} and {t}")),
+                            Some(was) if *was != t => problems.push(Issue::new(&id, format!("is linked to two files: {was} and {t}"))),
                             Some(_) => {}
                             None => { found.insert(id, t); }
                         }
@@ -293,7 +349,7 @@ impl Project {
     /// {id: Spec} from `- **ABC-12** MUST — text` bullets (also `- ABC-12: text MUST …`, `1.`/`*` lists, `| ABC-12 | MUST | text |` rows), wrapped lines joined. A bullet ending in `(manual)`, `(later)` or
     /// `(deferred)` carries mark "manual" or "later"; struck-out bullets (`- ~~**ABC-12**`) are retired.
     /// Spec mistakes found on the way (duplicate ID, no level, marker not at the end) go to `problems`.
-    pub fn specs(&self, problems: &mut Vec<String>) -> IndexMap<String, Spec> {
+    pub fn specs(&self, problems: &mut Vec<Issue>) -> IndexMap<String, Spec> {
         let mut found: IndexMap<String, Spec> = IndexMap::new();
         for f in self.spec_files() {
             let ls = self.lines(&f);
@@ -302,7 +358,7 @@ impl Project {
                 let Some(m) = self.rx.head.captures(line) else { continue };
                 let id = m[1].to_string();
                 let Some(lv) = self.rx.level.find(&m[2]) else {
-                    problems.push(format!("{id} {f}:{n} has no MUST/SHOULD/MAY, so it is not counted"));
+                    problems.push(Issue::uncounted(&id, format!("{f}:{n} has no MUST/SHOULD/MAY, so it is not counted")));
                     continue;
                 };
                 let m1 = m.get(1).unwrap();
@@ -325,18 +381,18 @@ impl Project {
                     Some(_) => "later",
                 };
                 if let Some(was) = found.get(&id) {
-                    problems.push(format!("{id} is defined twice: {}:{} and {f}:{n}", was.file, was.line));
+                    problems.push(Issue::new(&id, format!("is defined twice: {}:{} and {f}:{n}", was.file, was.line)));
                 } else {
                     let before = match &end {
                         Some(e) => &text[..e.get(0).unwrap().start()],
                         None => &text[..],
                     };
                     if self.rx.later_inside.is_match(&self.rx.struck.replace_all(before, "")) {
-                        problems.push(format!("{id} {f}:{n} has (later)/(deferred)/(manual) before the end, so it counts as due"));
+                        problems.push(Issue::new(&id, format!("{f}:{n} has (later)/(deferred)/(manual) before the end, so it counts as due")));
                     }
                 }
                 if done && !mark.is_empty() {
-                    problems.push(format!("{id} {f}:{n} has a check mark but is also marked ({}/deferred)", if mark == "manual" { "manual" } else { "later" }));
+                    problems.push(Issue::new(&id, format!("{f}:{n} has a check mark but is also marked ({}/deferred)", if mark == "manual" { "manual" } else { "later" })));
                 }
                 found.insert(id.clone(), Spec { id, file: f.clone(), line: n, end: j, level: lv.as_str().to_string(), text, mark: mark.into(), done });
             }
@@ -389,7 +445,7 @@ impl Project {
     }
 
     /// An issue for every requirement that cites an ID no spec defines (retired IDs live in specs/README.md, not in bullets).
-    pub fn check_refs(&self, s: &IndexMap<String, Spec>, issues: &mut Vec<String>) {
+    pub fn check_refs(&self, s: &IndexMap<String, Spec>, issues: &mut Vec<Issue>) {
         let known = self.known_prefixes(s);
         for (i, spec) in s {
             let mut refs: Vec<String> = self.rx.mention.captures_iter(&spec.text).map(|m| m[1].to_string()).filter(|r| !s.contains_key(r)).collect();
@@ -397,7 +453,7 @@ impl Project {
             refs.dedup();
             for r in refs {
                 if known.contains(&prefix(&r)) {
-                    issues.push(format!("{i} {}:{} cites {r}, which no spec defines", spec.file, spec.line));
+                    issues.push(Issue::new(&i, format!("{}:{} cites {r}, which no spec defines", spec.file, spec.line)));
                 }
             }
         }
@@ -460,11 +516,11 @@ impl Project {
         match kind {
             "comment-only" => self.is_comment(&r.text),
             "disabled" => {
-                // the attribute: the tag line up to the `func` line
+                // the attribute: the tag line up to the declaration line
                 let mut head = vec![];
                 for x in ls.iter().skip(r.line - 1).take(4) {
                     head.push(x);
-                    if x.contains("func ") {
+                    if self.rx.decl.is_match(x) {
                         break;
                     }
                 }
@@ -492,6 +548,11 @@ impl Project {
         }
         Ok(String::from_utf8_lossy(&r.stdout).into_owned())
     }
+}
+
+/// A spec file name without its `.md`.
+pub fn stem(file: &str) -> &str {
+    file.strip_suffix(".md").unwrap_or(file)
 }
 
 pub fn prefix(id: &str) -> String {
@@ -549,21 +610,4 @@ pub fn ranges<S: AsRef<str>>(ids: impl IntoIterator<Item = S>) -> String {
         }
     }
     out.join(",")
-}
-
-// (SCAN-16)
-/// {path: [(first, last)]} new-file line ranges from `git diff -U0`; a pure deletion marks the line it sat before.
-pub fn parse_diff(diff: &str) -> Diff {
-    let hunk = Regex::new(r"@@ -\S+ \+(\d+)(?:,(\d+))? @@").unwrap();
-    let (mut out, mut path): (Diff, Option<String>) = (IndexMap::new(), None);
-    for line in diff.lines() {
-        if line.starts_with("+++ ") {
-            path = line.strip_prefix("+++ b/").map(str::to_owned);
-        } else if line.starts_with("@@") && let Some(p) = &path && let Some(m) = hunk.captures(line) {
-            let start: i64 = m[1].parse().unwrap();
-            let count: i64 = m.get(2).map_or(1, |c| c.as_str().parse().unwrap());
-            out.entry(p.clone()).or_default().push((start, start + count.max(1) - 1));
-        }
-    }
-    out
 }

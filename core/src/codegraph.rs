@@ -78,10 +78,12 @@ impl Graph {
         Ok(Some(Graph { c, version }))
     }
 
-    /// {id: app files (relative to `app`)} each tagged test reaches through calls/instantiates/references, up to 3 hops, through test helpers.
+    /// {id: app files (repo-relative, any src dir)} each tagged test reaches through calls/instantiates/references, up to 3 hops, through test helpers.
     /// An id with tests but no files has tests the graph cannot connect to app code.
-    pub fn code_links(&self, tests: &Refs, app: &str, is_test: &dyn Fn(&str) -> bool) -> R<HashMap<String, BTreeSet<String>>> {
-        let mut inside = self.c.prepare("select id from nodes where file_path=?1 and start_line<=?2 and end_line>=?2 and kind in ('method','function') order by end_line-start_line limit 1")?;
+    pub fn code_links(&self, tests: &Refs, is_app: &dyn Fn(&str) -> bool, is_test: &dyn Fn(&str) -> bool) -> R<HashMap<String, BTreeSet<String>>> {
+        // the test the tag is in, else the one it sits above (a Rust `#[doc = "[ID]"]` / `#[test]` before `fn`)
+        // ponytail: "above" means within 3 lines; an attribute stack taller than that loses its link
+        let mut inside = self.c.prepare("select id from nodes where file_path=?1 and start_line<=?2+3 and end_line>=?2 and kind in ('method','function') order by start_line>?2, end_line-start_line limit 1")?;
         let mut out_edges = self.c.prepare(&format!("select e.target, n.file_path from edges e join nodes n on n.id=e.target where e.source=?1 and e.kind in ({USES})"))?;
         let mut out = HashMap::new();
         for (id, refs) in tests {
@@ -94,12 +96,12 @@ impl Graph {
                     for src in &frontier {
                         let rows: Vec<(String, String)> = out_edges.query_map([src], |x| Ok((x.get(0)?, x.get(1)?)))?.collect::<Result<_, _>>()?;
                         for (dst, path) in rows {
-                            if is_test(&path) {
-                                if seen.insert(dst.clone()) {
-                                    next.push(dst);
-                                }
-                            } else if let Some(rest) = path.strip_prefix(app) {
-                                files.insert(rest.to_string());
+                            // a dir can be both (Rust's inline tests in `src`): link its file and follow it
+                            if is_app(&path) {
+                                files.insert(path.clone());
+                            }
+                            if is_test(&path) && seen.insert(dst.clone()) {
+                                next.push(dst);
                             }
                         }
                     }
@@ -148,34 +150,4 @@ impl Graph {
         let mut st = self.c.prepare(&format!("select s.file_path, t.file_path, count(*) from edges e join nodes s on s.id=e.source join nodes t on t.id=e.target where e.kind in ({USES},'imports') and s.file_path<>t.file_path group by s.file_path, t.file_path order by 1, 2"))?;
         Ok(st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?.collect::<Result<_, _>>()?)
     }
-
-    /// Direct callers of a symbol id.
-    pub fn callers(&self, id: &str) -> R<Vec<Node>> {
-        let mut st = self.c.prepare("select c.id, c.kind, c.name, c.qualified_name, c.file_path, c.start_line, c.end_line, coalesce(c.visibility,'') from edges e join nodes c on c.id=e.source where e.target=?1 and e.kind='calls'")?;
-        let rows = st.query_map([id], node_row)?;
-        Ok(rows.collect::<Result<_, _>>()?)
-    }
-
-    /// Transitive callers of a symbol id, depth-capped.
-    pub fn impact(&self, id: &str, depth: i64) -> R<Vec<Node>> {
-        let mut st = self.c.prepare(
-            "with recursive up(id, depth) as (select ?1, 0 union select e.source, depth + 1 from edges e join up on e.target = up.id where e.kind = 'calls' and depth < ?2) \
-             select n.id, n.kind, n.name, n.qualified_name, n.file_path, n.start_line, n.end_line, coalesce(n.visibility,'') from up join nodes n on n.id = up.id",
-        )?;
-        let rows = st.query_map(params![id, depth], node_row)?;
-        Ok(rows.collect::<Result<_, _>>()?)
-    }
-
-    /// Full-text search over symbol names (`nodes_fts`).
-    pub fn search(&self, query: &str, limit: i64) -> R<Vec<Node>> {
-        let mut st = self.c.prepare(
-            "select n.id, n.kind, n.name, n.qualified_name, n.file_path, n.start_line, n.end_line, coalesce(n.visibility,'') from nodes_fts f join nodes n on n.rowid = f.rowid where nodes_fts match ?1 order by rank limit ?2",
-        )?;
-        let rows = st.query_map(params![query, limit], node_row)?;
-        Ok(rows.collect::<Result<_, _>>()?)
-    }
-}
-
-fn node_row(r: &rusqlite::Row) -> rusqlite::Result<Node> {
-    Ok(Node { id: r.get(0)?, kind: r.get(1)?, name: r.get(2)?, qualified: r.get(3)?, file: r.get(4)?, lo: r.get(5)?, hi: r.get(6)?, visibility: r.get(7)? })
 }
