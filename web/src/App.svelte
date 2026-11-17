@@ -1,6 +1,6 @@
 <script lang="ts">
   import { untrack } from "svelte";
-  import { call, embedded, read, watch } from "./transport";
+  import { call, embedded, onToolInput, read, watch } from "./transport";
   import { TABS, format, parse, type Route } from "./router";
   import Markdown from "./Markdown.svelte";
   import Graph from "./Graph.svelte";
@@ -32,6 +32,9 @@
     if (embedded) return; // a host iframe has no URL of its own
     try { (replace ? history.replaceState : history.pushState).call(history, null, "", format(r)); } catch { /* sandboxed */ }
   }
+
+  // MCP Apps host: the `dashboard` tool's `view` ("requirements/DOC-25?state=none") picks the page
+  onToolInput((a) => typeof a.view === "string" && navigate(parse(new URL(a.view.replace(/^\/?/, "/"), location.href))));
 
   $effect(() => {
     const onpop = () => (route = here());
