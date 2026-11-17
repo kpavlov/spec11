@@ -1,0 +1,39 @@
+<script lang="ts">
+  import { tick } from "svelte";
+  import type { Tone } from "./tone";
+
+  type Opt = { key: string; label: string; count?: number; tone?: Tone; title?: string };
+  // a labelled segmented control: one choice, joined buttons; ←/→ move and select, focus follows
+  let { label, keycap, hint, options, value, onpick }: { label: string; keycap?: string; hint?: string; options: Opt[]; value: string; onpick: (key: string) => void } = $props();
+  let bar = $state<HTMLElement>();
+
+  function arrow(e: KeyboardEvent) {
+    const d = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
+    if (!d) return;
+    e.preventDefault();
+    const keys = options.map((o) => o.key);
+    onpick(keys[(keys.indexOf(value) + d + keys.length) % keys.length]);
+    tick().then(() => bar?.querySelector<HTMLElement>("[aria-checked=true]")?.focus());
+  }
+</script>
+
+<div class="seg" role="radiogroup" aria-label={label} title={hint} bind:this={bar}>
+  <span class="name" aria-hidden="true">{label}{#if keycap}{" "}<kbd>{keycap}</kbd>{/if}</span>
+  {#each options as o (o.key)}
+    <button type="button" role="radio" class:zero={o.count === 0 && value !== o.key} aria-checked={value === o.key} tabindex={value === o.key ? 0 : -1} title={o.title} onclick={() => onpick(o.key)} onkeydown={arrow}>{#if o.tone}<i class="dot" data-tone={o.tone}></i>{/if}{o.label}{#if o.count !== undefined}{" "}<b>{o.count}</b>{/if}</button>
+  {/each}
+</div>
+
+<style>
+  .seg { display: inline-flex; flex-wrap: wrap; align-items: center; row-gap: 4px; }
+  .name { color: var(--muted); font-size: var(--text-sm); margin-right: 8px; }
+  button { min-height: 28px; padding: 2px 10px; font-size: var(--text-sm); border-radius: 0; border: 1px solid var(--line); margin-left: -1px; white-space: nowrap; background: var(--card); }
+  .name + button { border-radius: var(--radius) 0 0 var(--radius); margin-left: 0; }
+  button:last-child { border-radius: 0 var(--radius) var(--radius) 0; }
+  /* the dot keeps its colour when the segment is selected */
+  button[aria-checked=true] { position: relative; z-index: 1; background: var(--tint-sel); border-color: var(--accent); color: var(--fg); font-weight: 600; }
+  button[aria-checked=true]:hover:not(:disabled) { background: var(--tint-sel-hover); color: var(--fg); }
+  button.zero { color: var(--muted); opacity: .6; }
+  b { font-weight: 600; font-variant-numeric: tabular-nums; opacity: .75; margin-left: 2px; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin: 0 6px 1px 0; background: var(--tone, var(--muted)); }
+</style>

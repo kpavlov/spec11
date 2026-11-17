@@ -1,9 +1,19 @@
 <script lang="ts">
-  import { tick, untrack } from "svelte";
+  import { untrack } from "svelte";
   import { call, embedded, read, watch } from "./transport";
   import { TABS, format, parse, type Route } from "./router";
   import Markdown from "./Markdown.svelte";
   import Graph from "./Graph.svelte";
+  import Split from "./Split.svelte";
+  import SplitToggle from "./SplitToggle.svelte";
+  import DataTable from "./DataTable.svelte";
+  import Seg from "./Seg.svelte";
+  import Pill from "./Pill.svelte";
+  import IdLink from "./IdLink.svelte";
+  import Section from "./Section.svelte";
+  import PaneHead from "./PaneHead.svelte";
+  import { stateTone, edgeTone, levelTone, type Tone } from "./tone";
+  import { sorted, toggleSort, type Sort } from "./sort";
   import { inline } from "./markdown";
   import { highlightLines } from "./highlight";
 
@@ -63,7 +73,7 @@
     try { theme === "auto" ? localStorage.removeItem("spec11.theme") : localStorage.setItem("spec11.theme", theme); } catch { /* storage blocked */ }
   });
 
-  // keyboard: `/` focuses the filter (opening the requirements list first), ↑/↓ move the selected requirement, Esc closes the trace panel
+  // keyboard: `/` focuses the filter (opening the requirements list first), filter shortcuts, Esc closes the trace panel (↑/↓ on the lists: DataTable)
   $effect(() => {
     const onkey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement;
@@ -72,25 +82,6 @@
         e.preventDefault();
         if (route.tab !== "requirements") navigate({ tab: "requirements" });
         queueMicrotask(() => document.querySelector<HTMLInputElement>("input[name=filter]")?.focus());
-      } else if ((e.key === "ArrowDown" || e.key === "ArrowUp") && route.tab === "requirements" && seq.length) {
-        e.preventDefault();
-        const down = e.key === "ArrowDown", grp = curGroup();
-        let to: Stop | undefined;
-        if (grp) {
-          // from a group: the next/previous group's first/last requirement, or the group itself when collapsed
-          const gi = reqGroups.findIndex((g) => g.prefix === grp);
-          to = down && isOpen(grp) ? { id: reqGroups[gi].rows[0].id } : down ? stopOf(gi + 1, 0) : stopOf(gi - 1, -1);
-        } else {
-          const i = seq.findIndex((x) => x.id === route.id);
-          // up from the first requirement of a group selects the group itself, down from the last one the next group
-          const gi = grouped ? reqGroups.findIndex((g) => g.rows.at(down ? -1 : 0)!.id === route.id) : -1;
-          const edge = gi < 0 ? undefined : reqGroups[down ? gi + 1 : gi];
-          to = edge ? { group: edge.prefix } : seq[down ? Math.min(i + 1, seq.length - 1) : i < 0 ? 0 : Math.max(i - 1, 0)];
-        }
-        if (to) go(to);
-      } else if ((e.key === "ArrowLeft" || e.key === "ArrowRight") && route.tab === "requirements" && curGroup()) {
-        e.preventDefault();
-        setOpen(curGroup()!, e.key === "ArrowRight");
       } else if (route.tab === "requirements" && /^[0-7sl]$/i.test(e.key)) {
         // filter shortcuts: 1-7 pick a state, S/L step through states/levels (⇧ goes back), 0 clears every filter
         const k = e.key.toLowerCase(), d = e.shiftKey ? -1 : 1;
@@ -100,6 +91,7 @@
         else if (k === "l") { const n = step(levelKeys, levelFilter || "all"); filter({ level: n === "all" ? undefined : n }); }
         else if (+k <= states.length) filter({ state: states[+k - 1] });
       } else if (e.key === "Escape" && route.id && (route.tab === "requirements" || route.tab === "overlap")) navigate({ ...route, id: undefined });
+      else if (e.key === "Escape" && route.path && route.tab === "tests") navigate({ ...route, path: undefined, line: undefined });
     };
     document.addEventListener("keydown", onkey);
     return () => document.removeEventListener("keydown", onkey);
@@ -193,18 +185,18 @@
     void rows; // a refresh replaces the rows and must reload the open trace
     if (!id) { trace = null; return; }
     // the previous trace stays (dimmed) until the new one lands, so the preview pane never collapses and reopens
-    call("spec_trace", { id }).then((r) => { if (route.id === id) { trace = r; document.querySelector(".split aside")?.scrollTo(0, 0); } }).catch((e) => { trace = null; error = e.message; });
+    call("spec_trace", { id }).then((r) => { if (route.id === id) { trace = r; document.querySelector(".split .preview")?.scrollTo(0, 0); } }).catch((e) => { trace = null; error = e.message; });
   });
 
   $effect(() => {
     if (route.tab !== "specs") return;
     if (specFiles === null) { call("spec_file").then((r) => (specFiles = r.data.files)).catch((e) => (error = e.message)); return; }
     const f = route.file ?? specFiles[0];
-    if (f && f !== untrack(() => specLoaded)) call("spec_file", { name: f }).then((r) => { specLoaded = f; specMd = r.data.markdown; }).catch((e) => (error = e.message));
+    if (f && f !== untrack(() => specLoaded)) call("spec_file", { name: f }).then((r) => { specLoaded = f; specMd = r.data.markdown; document.querySelector(".split .preview")?.scrollTo(0, 0); }).catch((e) => (error = e.message));
   });
 
   $effect(() => {
-    const path = route.tab === "code" ? route.path : undefined;
+    const path = route.tab === "code" || route.tab === "tests" ? route.path : undefined;
     if (path && untrack(() => code?.path) !== path) call("spec_source", { path }).then((r) => (code = r.data)).catch((e) => { code = null; error = e.message; });
   });
 
@@ -221,15 +213,12 @@
     if (route.tab === "uncovered") fetchOnce("uncovered", () => call("spec_uncovered").then((r) => void (uncovered = r.data)));
   });
 
-  // scroll to what the URL points at once it is rendered
+  // scroll to what the URL points at once it is rendered (the lists scroll their own selection: DataTable)
   $effect(() => {
-    void [specMd, code, rows.length, route.id, route.line, selGroup, split];
+    void [specMd, code, route.id, route.line];
     queueMicrotask(() => {
-      const el = route.tab === "code" ? document.getElementById(`L${route.line}`) : route.tab === "specs" && route.id ? document.querySelector(`article a[data-id="${route.id}"]`) : route.tab === "requirements" ? document.querySelector("tr.sel") : null;
-      const pane = route.tab === "requirements" ? el?.closest<HTMLElement>(".list") : null;
-      // the list pane scrolls on its own: centre the row there without moving the page
-      if (el && pane) pane.scrollTop += el.getBoundingClientRect().top - pane.getBoundingClientRect().top - (pane.clientHeight - el.getBoundingClientRect().height) / 2;
-      else el?.scrollIntoView({ block: "center" });
+      const el = route.tab === "code" ? document.getElementById(`L${route.line}`) : route.tab === "specs" && route.id ? document.querySelector(`article a[data-id="${route.id}"]`) : null;
+      el?.scrollIntoView({ block: "center" });
     });
   });
 
@@ -278,65 +267,15 @@
   const levelN = $derived.by(() => { const l = facet("level"); return { ...tally(l, levelOf), all: l.length } as Record<string, number>; });
   const levelKeys = $derived(["all", ...levels, ...(levelN.other || levelFilter === "other" ? ["other"] : [])]);
   const filtering = $derived(stateFilter !== "all" || !!levelFilter || !!query);
-  // radio-group keys: ←/→ move and select, focus follows; the global ↑/↓ row navigation skips `.seg`
-  const arrow = (e: KeyboardEvent, keys: string[], cur: string, set: (k: string) => void) => {
-    const d = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
-    if (!d) return;
-    e.preventDefault();
-    const bar = (e.currentTarget as HTMLElement).parentElement;
-    set(keys[(keys.indexOf(cur) + d + keys.length) % keys.length]);
-    tick().then(() => bar?.querySelector<HTMLElement>("[aria-checked=true]")?.focus());
-  };
-  // sortable column headers (click: ascending, descending, back to file order); requirements are grouped by ID prefix when there are several
-  type Sort = { key: string; dir: 1 | -1 };
-  let reqSort = $state<Sort>({ key: "", dir: 1 });
+  const stateOpts = $derived(states.map((st, i) => ({ key: st, label: st, count: stateN[st] ?? 0, tone: st === "all" ? undefined : stateTone[st], title: `${STATE_HINT[st]} (${i + 1})` })));
+  const levelOpts = $derived(levelKeys.map((l) => ({ key: l, label: l, count: levelN[l] ?? 0 })));
+  // the modules table sorts here; the requirement, test and spec lists sort inside DataTable
   let modSort = $state<Sort>({ key: "", dir: 1 });
-  const toggleSort = (st: Sort, key: string) => {
-    if (st.key !== key) { st.key = key; st.dir = 1; } else if (st.dir === 1) st.dir = -1; else st.key = "";
-  };
-  const sorted = <T,>(list: T[], st: Sort, val: (x: T, k: string) => string | number): T[] =>
-    !st.key ? list : [...list].sort((a, b) => {
-      const x = val(a, st.key), y = val(b, st.key);
-      return st.dir * (typeof x === "number" && typeof y === "number" ? x - y : String(x).localeCompare(String(y), undefined, { numeric: true }));
-    });
   const reqVal = (r: Row, k: string) => (k === "file" ? `${r.file}:${String(r.line).padStart(6, "0")}` : (r as any)[k]);
   const modVal = (m: any, k: string) => (k === "languages" ? m.languages.join(", ") : k === "symbols" ? symbolsOf(m) : k === "depends" ? m.depends_on.length : (m[k] ?? ""));
   const prefixOf = (id: string) => id.replace(/-.*$/, "");
-  const REQ_CAP = 500;
-  const reqGroups = $derived.by(() => {
-    const out: { prefix: string; rows: Row[] }[] = [];
-    for (const r of sorted(shown, reqSort, reqVal).slice(0, REQ_CAP)) {
-      const p = prefixOf(r.id);
-      (out.find((g) => g.prefix === p) ?? out[out.push({ prefix: p, rows: [] }) - 1]).rows.push(r);
-    }
-    return out;
-  });
-  const grouped = $derived(reqGroups.length > 1);
-  // collapsed groups are remembered per browser; everything starts expanded
-  const loadCollapsed = (): string[] => { try { return JSON.parse(localStorage.getItem("spec11.collapsed") ?? "[]"); } catch { return []; } };
-  let collapsed = $state<string[]>(loadCollapsed());
-  const isOpen = (p: string) => !grouped || !collapsed.includes(p);
-  const setOpen = (p: string, open: boolean) => {
-    if (open === isOpen(p)) return;
-    collapsed = open ? collapsed.filter((x) => x !== p) : [...collapsed, p];
-    try { localStorage.setItem("spec11.collapsed", JSON.stringify(collapsed)); } catch { /* storage blocked */ }
-  };
-  // the selection is a requirement (`route.id`) or a group header (`selGroup`, only while no requirement is selected)
-  type Stop = { id?: string; group?: string };
-  let selGroup = $state<string | null>(null);
-  const curGroup = () => (grouped && !route.id && reqGroups.some((g) => g.prefix === selGroup) ? selGroup : null);
-  const go = (s: Stop) => {
-    selGroup = s.group ?? null;
-    navigate({ ...route, id: s.id }, true);
-  };
-  const pick = (p: string) => { selGroup = p; navigate({ ...route, id: undefined }, true); setOpen(p, !isOpen(p)); };
-  // the arrow-key order: every requirement of an expanded group, a collapsed group as one stop
-  const seq = $derived<Stop[]>(reqGroups.flatMap((g) => (isOpen(g.prefix) ? g.rows.map((r): Stop => ({ id: r.id })) : [{ group: g.prefix } as Stop])));
-  // the stop at an end of group `i` (0 first, -1 last); undefined past the ends
-  const stopOf = (i: number, end: 0 | -1): Stop | undefined => {
-    const g = reqGroups[i];
-    return !g ? undefined : isOpen(g.prefix) ? { id: g.rows.at(end)!.id } : { group: g.prefix };
-  };
+  // requirement table columns (the state colours the row edge)
+  const reqCols = [{ key: "id", label: "ID", cls: "mono nowrap" }, { key: "level", label: "level", cls: "nowrap" }, { key: "state", label: "state" }, { key: "text", label: "requirement" }, { key: "file", label: "location", cls: "mono muted nowrap" }];
   const invalidN = $derived(report ? Object.values(report.invalid_tests).reduce((n: number, v: any) => n + v.length, 0) : 0);
   const known = $derived(new Set(rows.map((r) => r.id)));
   const mods = $derived<any[]>(sorted((modules?.modules ?? []).filter((m: any) => !query || m.path.toLowerCase().includes(query.toLowerCase())), modSort, modVal));
@@ -346,19 +285,20 @@
   const testsOf = (path: string) => tests?.modules.find((m: any) => m.module === path);
   const symbolsOf = (m: any) => Object.values<number>(m.symbols).reduce((a, b) => a + b, 0);
   // the tests screen: every detected test, narrowed by module, tagged/untagged and text; capped so a monorepo stays responsive
-  const testStates = ["all", "tagged", "untagged"];
+  const testOpts = $derived(["all", "tagged", "untagged"].map((k) => ({ key: k, label: k, count: tcounts[k] })));
+  const VIEWS = [{ key: "list", label: "📋 list" }, { key: "graph", label: "🕸️ graph" }];
   const allCases = $derived<any[]>((tests?.modules ?? []).filter((m: any) => !route.module || m.module === route.module).flatMap((m: any) => m.files.flatMap((f: any) => f.tests.map((t: any) => ({ module: m.module, file: f.file, t })))));
   const tcounts = $derived({ all: allCases.length, tagged: allCases.filter((c) => c.t.ids.length).length, untagged: allCases.filter((c) => !c.t.ids.length).length } as Record<string, number>);
   const matched = $derived(allCases.filter((c) => (stateFilter === "all" || (stateFilter === "tagged") === c.t.ids.length > 0) && (!query || `${c.file} ${c.t.name} ${c.t.ids.join(" ")}`.toLowerCase().includes(query.toLowerCase()))));
-  const TEST_CAP = 500;
-  const groups = $derived.by(() => {
-    const out: { module: string; files: { file: string; tests: any[] }[] }[] = [];
-    for (const c of matched.slice(0, TEST_CAP)) {
-      const g = out.find((x) => x.module === c.module) ?? out[out.push({ module: c.module, files: [] }) - 1];
-      (g.files.find((x) => x.file === c.file) ?? g.files[g.files.push({ file: c.file, tests: [] }) - 1]).tests.push(c.t);
-    }
-    return out;
-  });
+  // list rows: a test is told apart by file and line, which is also how the URL selects it (`path` + `line`)
+  const testRows = $derived(matched.map((c) => ({ ...c, key: `${c.file}:${c.t.line}` })));
+  const testCols = [{ key: "name", label: "test", cls: "wrap" }, { key: "ids", label: "requirements", cls: "nowrap" }, { key: "file", label: "location", cls: "mono muted nowrap" }];
+  const testVal = (c: any, k: string) => (k === "file" ? `${c.file}:${String(c.t.line).padStart(6, "0")}` : k === "ids" ? c.t.ids.join(" ") : c.t.name);
+  const selTest = $derived(route.tab === "tests" && route.path ? `${route.path}:${route.line}` : undefined);
+  const byId = $derived(new Map(rows.map((r) => [r.id, r])));
+  // the preview shows the lines of the selected test: a few before it and the start of its body
+  const TEST_BEFORE = 3, TEST_AFTER = 24;
+  const specRows = $derived((specFiles ?? []).map((file) => ({ file })));
   const taggedN = $derived(tests ? tests.modules.reduce((n: number, m: any) => n + m.files.reduce((k: number, f: any) => k + f.tests.filter((t: any) => t.ids.length).length, 0), 0) : 0);
   const plain = (t: string) => t.replace(/[`*~]/g, "");
   const req = (id: string): Route => ({ tab: "requirements", id });
@@ -399,32 +339,12 @@
   let copied = $state(false);
   let showHidden = $state(stored("spec11.hidden") === "1");
   let modView = $state(stored("spec11.modules") === "graph" ? "graph" : "list");
-  let split = $state<"v" | "h">(stored("spec11.split") === "h" ? "h" : "v");
-  // size of the list pane in percent: dragged or keyed on the splitter, remembered per browser; unset = 60 beside, 50 on top
-  const clampPos = (n: number) => Math.min(85, Math.max(15, Math.round(n)));
-  let pos = $state<number | null>(stored("spec11.splitpos") ? clampPos(Number(stored("spec11.splitpos"))) : null);
-  const listPct = $derived(pos ?? (split === "v" ? 60 : 50));
-  const setPos = (n: number | null, keep = true) => { pos = n === null ? null : clampPos(n); if (keep) try { n === null ? localStorage.removeItem("spec11.splitpos") : localStorage.setItem("spec11.splitpos", String(pos)); } catch { /* storage blocked */ } };
-  const sideBySide = () => split === "v" && matchMedia("(min-width: 1000px)").matches;
-  const dragSplit = (e: PointerEvent) => {
-    const g = e.currentTarget as HTMLElement, box = g.parentElement!.getBoundingClientRect(), down = e.type === "pointerdown";
-    if (down) g.setPointerCapture(e.pointerId);
-    else if (!g.hasPointerCapture(e.pointerId)) return;
-    setPos(sideBySide() ? ((e.clientX - box.left) / box.width) * 100 : ((e.clientY - box.top) / box.height) * 100, false);
-  };
-  const keySplit = (e: KeyboardEvent) => {
-    const step: Record<string, number> = sideBySide() ? { ArrowLeft: -5, ArrowRight: 5 } : { ArrowUp: -5, ArrowDown: 5 };
-    if (e.key === "Home") setPos(null);
-    else if (step[e.key]) setPos(listPct + step[e.key]);
-    else return;
-    e.preventDefault();
-  };
   const save = (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* storage blocked */ } };
   const copyPath = (path: string) => navigator.clipboard.writeText(path).then(() => { copied = true; setTimeout(() => (copied = false), 1200); }).catch(() => {});
 </script>
 
 {#snippet idlink(id: string, to: Route)}
-  <a class="id" href={u(to)}>{id}</a>
+  <IdLink href={u(to)}>{id}</IdLink>
 {/snippet}
 
 {#snippet th(label: string, key: string, st: Sort, cls = "")}
@@ -444,18 +364,14 @@
   {/each}
 {/snippet}
 
-{#snippet tracePanel()}
-  {#if trace || route.tab === "requirements"}
-    <aside class:stale={trace && route.id && trace.data?.id?.toUpperCase() !== route.id.toUpperCase()}>
+{#snippet tracePanel(float = false)}
+  {#if trace || !float}
+    <aside class:float class:stale={trace && route.id && trace.data?.id?.toUpperCase() !== route.id.toUpperCase()}>
       {#if !trace || !route.id}
         <p class="muted empty">Select a requirement to preview it.</p>
       {:else}
       {@const sp = trace.data?.spec}
-      <div class="ahead">
-        <b class="mono nowrap">{trace.data.id}</b>
-        {#if sp}<span class="pill">{sp.level}</span>{/if}
-        <a class="x" href={u({ ...route, id: undefined })} aria-label="close trace">✕</a>
-      </div>
+      <PaneHead title={trace.data.id} close={u({ ...route, id: undefined })}>{#if sp}<Pill>{sp.level}</Pill>{/if}</PaneHead>
       {#if sp}
         <p class="muted mono nowrap"><a href={u({ tab: "specs", file: sp.file, id: trace.data.id })}>{sp.file}:{sp.line}</a></p>
         <Markdown source={sp.text} />
@@ -479,20 +395,51 @@
   {/if}
 {/snippet}
 
+{#snippet testPanel()}
+  {#if !route.path}
+    <p class="muted empty">Select a test to preview it.</p>
+  {:else}
+    {@const c = allCases.find((x) => x.file === route.path && x.t.line === route.line)}
+    {@const lo = Math.max(1, (route.line ?? 1) - TEST_BEFORE)}
+    <PaneHead title={c?.t.name ?? route.path} close={u({ ...route, path: undefined, line: undefined })} />
+    <p class="muted mono nowrap"><a href={u({ tab: "code", path: route.path, line: route.line })}>{route.path}:{route.line}</a>{#if c}{" "}in <a href={u({ tab: "modules", module: c.module })}>{c.module}</a>{/if}</p>
+    {#if c}
+      <h4>Requirements</h4>
+      {#if c.t.ids.length}
+        <ul class="refs">{#each c.t.ids as id}<li>{@render idlink(id, known.has(id) ? req(id) : { tab: "requirements", q: id })} <span class="muted">{byId.get(id) ? plain(byId.get(id)!.text).slice(0, 140) : "not in any spec"}</span></li>{/each}</ul>
+      {:else}<p class="muted">Untagged: no requirement ID in its tag.</p>{/if}
+    {/if}
+    <h4>Source</h4>
+    {#if code?.path === route.path}
+      <table class="code snip">
+        <tbody>
+          {#each lines.slice(lo - 1, lo - 1 + TEST_BEFORE + TEST_AFTER + 1) as l, i}
+            <tr class:hl={route.line === lo + i}>
+              <td class="ln"><a href={u({ tab: "code", path: route.path, line: lo + i })}>{lo + i}</a></td>
+              <td class="src">{@html l}</td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+      <p class="muted note"><a href={u({ tab: "code", path: route.path, line: route.line })}>Open the whole file</a>. A tag is evidence, not proof that the test passes.</p>
+    {:else}<p class="muted">Loading {route.path}…</p>{/if}
+  {/if}
+{/snippet}
+
 <header>
   <h1><a href="/">spec11</a></h1>
-  <span class="dot" class:up={up === true} class:down={up === false} role="status" title={up === null ? "server: connecting" : up ? "server: connected" : "server: disconnected, retrying"}></span>
+  <span class="dot" data-tone={up === true ? "ok" : up === false ? "bad" : undefined} role="status" title={up === null ? "server: connecting" : up ? "server: connected" : "server: disconnected, retrying"}></span>
   <a class="root mono muted" href="/">{root}</a>
   <nav aria-label="views">
     {#each TABS.filter((t) => t !== "setup") as t}
       <a class="tab" class:on={route.tab === t} aria-current={route.tab === t ? "page" : undefined} href={u({ tab: t })} title={t} aria-label={t}>
-        <span aria-hidden="true">{EMOJI[t]}</span><span class="lbl">{t}</span>{#if t === "dashboard" && report?.total_problems}<span class="badge bad" title="{report.total_problems} problems">{report.total_problems}</span>{/if}
+        <span aria-hidden="true">{EMOJI[t]}</span><span class="lbl">{t}</span>{#if t === "dashboard" && report?.total_problems}<span class="badge" data-tone="bad" title="{report.total_problems} problems">{report.total_problems}</span>{/if}
       </a>
     {/each}
   </nav>
   <button class="icon" onclick={load} title="Rescan the repo" aria-label="rescan">↻</button>
   <button class="icon" onclick={() => (theme = nextTheme.v)} title="Theme: {curTheme.name} (click for {nextTheme.name})" aria-label="Theme: {curTheme.name}, switch to {nextTheme.name}">{curTheme.icon}</button>
-  <a class="tab icon" class:on={route.tab === "setup"} aria-current={route.tab === "setup" ? "page" : undefined} href={u({ tab: "setup" })} title={setup?.suggestions.length ? "Setup (not fully set up)" : "Setup"} aria-label="Setup">⚙️{#if setup?.suggestions.length}<span class="badge warn" title="not fully set up">!</span>{/if}</a>
+  <a class="tab icon" class:on={route.tab === "setup"} aria-current={route.tab === "setup" ? "page" : undefined} href={u({ tab: "setup" })} title={setup?.suggestions.length ? "Setup (not fully set up)" : "Setup"} aria-label="Setup">⚙️{#if setup?.suggestions.length}<span class="badge" data-tone="warn" title="not fully set up">!</span>{/if}</a>
 </header>
 
 {#if error}<p class="error">{error}</p>{/if}
@@ -518,13 +465,12 @@
         {#if report.manual} · <a href={u({ tab: "requirements", state: "manual" })}>{report.manual} manual</a>{/if}
         {#if report.later} · <a href={u({ tab: "requirements", state: "later" })}>{report.later} later</a>{/if}
         {#if report.refs} · <a href={u({ tab: "requirements", state: "ref" })}>{report.refs} reference docs</a>{/if}
-        · <b class={report.total_problems ? "bad" : "ok"}>{report.total_problems ? `${report.total_problems} problems` : "no problems found"}</b>
+        · <b data-tone={report.total_problems ? "bad" : "ok"}>{report.total_problems ? `${report.total_problems} problems` : "no problems found"}</b>
       </p>
     </section>
     {#if !report.index}<p class="note-line muted">No CodeGraph index: test-to-code links and uncovered code are not checked.</p>{/if}
     {#if modules?.modules.length}
-      <details open>
-        <summary><span>Modules</span> <b class="count">{modules.modules.length}</b></summary>
+      <Section title="Modules" count={modules.modules.length}>
         <table>
           <tbody>
             {#each [...modules.modules].sort((a, b) => b.tests - a.tests || a.path.localeCompare(b.path)).slice(0, 8) as m}
@@ -539,15 +485,14 @@
           </tbody>
         </table>
         <p><a href="/modules">All {modules.modules.length} modules</a></p>
-      </details>
+      </Section>
     {/if}
 
-    {#snippet ids(title: string, list: string[], sev: string)}
+    {#snippet ids(title: string, list: string[], sev: Tone)}
       {#if list.length}
-        <details class={sev} open>
-          <summary><span>{title}</span> <b class="count">{list.length}</b></summary>
+        <Section {title} count={list.length} tone={sev}>
           <p class="ids">{#each list as id}{@render idlink(id, req(id))}{/each}</p>
-        </details>
+        </Section>
       {/if}
     {/snippet}
     {@render ids("Unimplemented: due, no test and no code", report.unimplemented, "bad")}
@@ -555,74 +500,51 @@
     {@render ids("Marked later but already has tests or code", report.built, "warn")}
 
     {#if report.unproven.length}
-      <details class="warn" open>
-        <summary><span>Check-marked done without proof</span> <b class="count">{report.unproven.length}</b></summary>
+      <Section title="Check-marked done without proof" count={report.unproven.length} tone="warn">
         <ul>{#each report.unproven as x}<li>{@render idlink(x.id, req(x.id))} <code>{x.verdict}</code> <a href={u({ tab: "specs", file: x.file, id: x.id })}>{x.file}:{x.line}</a> <span class="muted">{plain(x.text).slice(0, 80)}</span></li>{/each}</ul>
-      </details>
+      </Section>
     {/if}
     {#if invalidN}
-      <details class="bad" open>
-        <summary><span>Invalid tests</span> <b class="count">{invalidN}</b></summary>
+      <Section title="Invalid tests" count={invalidN} tone="bad">
         {#each Object.entries(report.invalid_tests) as [kind, list]}
           {#if (list as any[]).length}<p><code>{kind}</code> {#each list as any[] as p}{@render idlink(p.id, req(p.id))} <a class="muted mono" href={u({ tab: "code", path: p.file, line: p.line })}>{p.file}:{p.line}</a> {/each}</p>{/if}
         {/each}
-      </details>
+      </Section>
     {/if}
     {#if report.spec_issues.length}
-      <details class="bad" open>
-        <summary><span>Spec issues</span> <b class="count">{report.spec_issues.length}</b></summary>
+      <Section title="Spec issues" count={report.spec_issues.length} tone="bad">
         <ul>{#each report.spec_issues as x}<li class="mono">{x}</li>{/each}</ul>
-      </details>
+      </Section>
     {/if}
     {#if report.dangling_tests.length + report.dangling_sources.length}
-      <details class="warn" open>
-        <summary><span>Dangling citations</span> <b class="count">{report.dangling_tests.length + report.dangling_sources.length}</b></summary>
+      <Section title="Dangling citations" count={report.dangling_tests.length + report.dangling_sources.length} tone="warn">
         <p class="mono">{#if report.dangling_tests.length}tests: {report.dangling_tests.join(", ")}<br />{/if}{#if report.dangling_sources.length}sources: {report.dangling_sources.join(", ")}{/if}</p>
-      </details>
+      </Section>
     {/if}
   {:else if route.tab === "requirements"}
-    <div class="reqpage">
+    <div class="page">
     <div class="bar">
-      <div class="seg" role="radiogroup" aria-label="Filter by state" title="Press 1–7 to pick a state, S for the next one, ⇧S for the previous one">
-        <span class="name" aria-hidden="true">State <kbd>S</kbd></span>
-        {#each states as st, i}<button type="button" role="radio" class:zero={!stateN[st] && stateFilter !== st} aria-checked={stateFilter === st} tabindex={stateFilter === st ? 0 : -1} title="{STATE_HINT[st]} ({i + 1})" onclick={() => filter({ state: st })} onkeydown={(e) => arrow(e, states, stateFilter, (k) => filter({ state: k }))}>{#if st !== "all"}<i class="dot {st}"></i>{/if}{st} <b>{stateN[st] ?? 0}</b></button>{/each}
-      </div>
-      <div class="seg" role="radiogroup" aria-label="Filter by level" title="Press L for the next level, ⇧L for the previous one">
-        <span class="name" aria-hidden="true">Level <kbd>L</kbd></span>
-        {#each levelKeys as l}<button type="button" role="radio" class:zero={!levelN[l] && (levelFilter || "all") !== l} aria-checked={(levelFilter || "all") === l} tabindex={(levelFilter || "all") === l ? 0 : -1} onclick={() => filter({ level: l === "all" ? undefined : l })} onkeydown={(e) => arrow(e, levelKeys, levelFilter || "all", (k) => filter({ level: k === "all" ? undefined : k }))}>{l} <b>{levelN[l] ?? 0}</b></button>{/each}
-      </div>
+      <Seg label="State" keycap="S" hint="Press 1–7 to pick a state, S for the next one, ⇧S for the previous one" options={stateOpts} value={stateFilter} onpick={(k) => filter({ state: k })} />
+      <Seg label="Level" keycap="L" hint="Press L for the next level, ⇧L for the previous one" options={levelOpts} value={levelFilter || "all"} onpick={(k) => filter({ level: k === "all" ? undefined : k })} />
       <input name="filter" aria-label="filter" placeholder="Filter ID, text, file   ( / )" value={query} oninput={(e) => filter({ q: e.currentTarget.value })} />
       <span class="found muted nowrap" aria-live="polite">{#if filtering}{shown.length} of {rows.length} <a href={u({ tab: "requirements" })} title="Clear every filter (0)">Clear filters <kbd>0</kbd></a>{/if}</span>
-      <button type="button" class="icon" onclick={() => save("spec11.split", (split = split === "v" ? "h" : "v"))} title={split === "v" ? "List left, preview right (click: list on top)" : "List on top, preview below (click: list left)"} aria-label="Split layout: {split === 'v' ? 'list left, preview right' : 'list on top, preview below'}">{split === "v" ? "◫" : "⬒"}</button>
+      <SplitToggle />
     </div>
-    <div class="split" class:h={split === "h"} style="--a: {listPct}fr; --b: {100 - listPct}fr">
-      <div class="list"><table>
-        <thead><tr>{@render th("ID", "id", reqSort)}{@render th("level", "level", reqSort)}{@render th("state", "state", reqSort)}{@render th("requirement", "text", reqSort)}{@render th("location", "file", reqSort)}</tr></thead>
-        <tbody>
-          {#each reqGroups as g (g.prefix)}
-            {#if grouped}
-              <tr class="grp" class:sel={curGroup() === g.prefix}><td colspan="5"><button type="button" aria-expanded={isOpen(g.prefix)} onclick={() => pick(g.prefix)}><span class="caret">{isOpen(g.prefix) ? "▾" : "▸"}</span> <b class="mono">{g.prefix}</b> <span class="muted">{g.rows.length}</span></button></td></tr>
-            {/if}
-            {#if isOpen(g.prefix)}
-          {#each g.rows as r (r.id)}
-            <tr onclick={() => navigate({ ...route, id: r.id })} class:sel={route.id === r.id} class="st-{r.state}">
-              <td class="mono nowrap"><a href={u({ ...route, id: r.id })}>{r.id}</a></td>
-              <td class="nowrap">{#if /^(MUST|SHOULD|MAY)$/.test(r.level)}<span class="rfc {r.level.toLowerCase()}">{r.level}</span>{/if}</td>
-              <td><span class="pill {r.state}">{r.state}</span>{#if r.done}<span class="pill done" title="check-marked: {r.verdict}">✓ {r.verdict}</span>{/if}</td>
-              <td title={plain(r.text)}><div class="txt">{@html inline(r.text)}</div></td>
-              <td class="mono muted nowrap"><a href={u({ tab: "specs", file: r.file, id: r.id })}>{r.file}:{r.line}</a></td>
-            </tr>
-          {/each}
-            {/if}
-          {/each}
-        </tbody>
-      </table></div>
-      <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
-      <div class="gutter" role="separator" tabindex="0" aria-label="resize list and preview" aria-orientation={sideBySide() ? "vertical" : "horizontal"} aria-valuemin="15" aria-valuemax="85" aria-valuenow={listPct} title="Drag to resize; double-click or Home to reset" onpointerdown={dragSplit} onpointermove={dragSplit} onpointerup={() => setPos(listPct)} ondblclick={() => setPos(null)} onkeydown={keySplit}></div>
-      {@render tracePanel()}
-    </div>
-    {#if !shown.length}<p class="muted empty">No requirement matches. <a href={u({ tab: "requirements" })}>Clear filters</a></p>{/if}
-    {#if shown.length > REQ_CAP}<p class="muted">First {REQ_CAP} shown; narrow the filter.</p>{/if}
+    <Split>
+      {#snippet list()}
+        <DataTable rows={shown} columns={reqCols} rowKey={(r) => r.id} selected={route.id} onselect={(k, how) => navigate({ ...route, id: k }, how === "key")} value={reqVal} groupOf={(r) => prefixOf(r.id)} tone={(r) => edgeTone(r.state)} storageKey="spec11.collapsed">
+          {#snippet cell(r, k)}
+            {#if k === "id"}<a href={u({ ...route, id: r.id })}>{r.id}</a>
+            {:else if k === "level"}{#if /^(MUST|SHOULD|MAY)$/.test(r.level)}<span class="rfc {r.level.toLowerCase()}">{r.level}</span>{/if}
+            {:else if k === "state"}<Pill tone={stateTone[r.state]}>{r.state}</Pill>{#if r.done}<Pill tone="accent" title="check-marked: {r.verdict}">✓ {r.verdict}</Pill>{/if}
+            {:else if k === "text"}<div class="txt" title={plain(r.text)}>{@html inline(r.text)}</div>
+            {:else}<a href={u({ tab: "specs", file: r.file, id: r.id })}>{r.file}:{r.line}</a>{/if}
+          {/snippet}
+          {#snippet empty()}<p class="muted empty">No requirement matches. <a href={u({ tab: "requirements" })}>Clear filters</a></p>{/snippet}
+        </DataTable>
+      {/snippet}
+      {#snippet preview()}{@render tracePanel()}{/snippet}
+    </Split>
     </div>
   {:else if route.tab === "code"}
     {#if !route.path}<p class="muted">No file selected: open one from a requirement's tests or citations.</p>
@@ -652,8 +574,8 @@
       {#snippet row(title: string, where: any, global: boolean)}
         <div class="card block setup">
           <h3>{title}</h3>
-          <p><span class="pill {where.skill === 'current' ? 'tested' : where.skill === 'outdated' ? 'src-only' : 'none'}">skill {where.skill}</span> <span class="mono muted">{where.skill_path}</span></p>
-          <p><span class="pill {where.mcp === 'ok' ? 'tested' : where.mcp === 'other' ? 'src-only' : 'none'}">mcp {where.mcp === "ok" ? "installed" : where.mcp === "other" ? "other port" : "missing"}</span> <span class="mono muted">{where.mcp_path ?? "~/.claude.json (user scope, read-only here)"}</span></p>
+          <p><Pill tone={where.skill === "current" ? "ok" : where.skill === "outdated" ? "warn" : "bad"}>skill {where.skill}</Pill> <span class="mono muted">{where.skill_path}</span></p>
+          <p><Pill tone={where.mcp === "ok" ? "ok" : where.mcp === "other" ? "warn" : "bad"}>mcp {where.mcp === "ok" ? "installed" : where.mcp === "other" ? "other port" : "missing"}</Pill> <span class="mono muted">{where.mcp_path ?? "~/.claude.json (user scope, read-only here)"}</span></p>
           <p>
             <button disabled={busy} onclick={() => runSetup("spec_install", global)}>{where.skill === "missing" ? "Install" : "Reinstall"}{global ? " skill globally" : " in this repo"}</button>
             <button disabled={busy || (where.skill === "missing" && where.mcp !== "ok")} onclick={() => runSetup("spec_uninstall", global)}>Uninstall</button>
@@ -668,7 +590,7 @@
         <tbody>
           {#each checks as k}
             <tr>
-              <td class="nowrap"><span class="pill {k.level === 'ok' ? 'tested' : k.level === 'warn' ? 'src-only' : 'none'}">{k.level}</span></td>
+              <td class="nowrap"><Pill tone={levelTone(k.level)}>{k.level}</Pill></td>
               <td class="nowrap">{k.name}</td>
               <td>
                 {k.detail}{#if k.hint}<div class="muted">→ {k.hint}</div>{/if}
@@ -690,13 +612,13 @@
       <section class="card block">
         <h2 class="mono">{modOf.path}</h2>
         <p>
-          {#if modOf.manifest}<span class="pill">{modOf.manifest}</span>{/if}
-          {#each modOf.languages as l}<span class="pill">{l}</span>{/each}
+          {#if modOf.manifest}<Pill>{modOf.manifest}</Pill>{/if}
+          {#each modOf.languages as l}<Pill>{l}</Pill>{/each}
           <span class="muted">{plural(modOf.src_files, "source file")} · {plural(modOf.test_files, "test file")} · {plural(symbolsOf(modOf), "symbol")}</span>
         </p>
         {#if Object.keys(modOf.symbols).length}<p class="muted">{Object.entries(modOf.symbols).map(([k, n]) => `${n} ${k}`).join(" · ")}</p>{/if}
-        {#if modOf.depends_on.length}<p>depends on {#each modOf.depends_on as d}<a class="id" href={u({ tab: "modules", module: d.module })} title="{d.edges} edges">{d.module}</a>{" "}{/each}</p>{/if}
-        {#if usedBy.length}<p>used by {#each usedBy as d}<a class="id" href={u({ tab: "modules", module: d.path })}>{d.path}</a>{" "}{/each}</p>{/if}
+        {#if modOf.depends_on.length}<p>depends on {#each modOf.depends_on as d}<IdLink href={u({ tab: "modules", module: d.module })}>{d.module}</IdLink>{" "}{/each}</p>{/if}
+        {#if usedBy.length}<p>used by {#each usedBy as d}<IdLink href={u({ tab: "modules", module: d.path })}>{d.path}</IdLink>{" "}{/each}</p>{/if}
       </section>
       <h2>Tests <span class="muted">{modOf.tests}</span> <a class="more" href={u({ tab: "tests", module: modOf.path })}>filter in Tests</a></h2>
       {#if tests === null}<p class="muted">Loading tests…</p>
@@ -711,9 +633,7 @@
       {#if modView === "list" && modules?.hidden?.length}
         <label class="muted nowrap"><input type="checkbox" checked={showHidden} onchange={(e) => save("spec11.hidden", (showHidden = e.currentTarget.checked) ? "1" : "0")} /> show hidden ({modules.hidden.length})</label>
       {/if}
-      <div class="chips" role="group" aria-label="view">
-        {#each ["list", "graph"] as v}<button class="chip" class:on={modView === v} aria-pressed={modView === v} onclick={() => save("spec11.modules", (modView = v))}>{v === "list" ? "📋 list" : "🕸️ graph"}</button>{/each}
-      </div>
+      <Seg label="View" options={VIEWS} value={modView} onpick={(k) => save("spec11.modules", (modView = k))} />
     </div>
     {#if modules && !modules.index}<p class="note-line muted">{modules.note}</p>{/if}
     {#if modView === "graph"}
@@ -751,32 +671,46 @@
       </table>
     {:else if modules}<p class="muted empty">No module matches. <a href="/modules">Clear filter</a></p>{/if}
   {:else if route.tab === "tests"}
+    <div class="page">
     <div class="bar">
-      <div class="chips" role="group" aria-label="tagged">
-        {#each testStates as st}<button class="chip" class:on={stateFilter === st} aria-pressed={stateFilter === st} onclick={() => filter({ state: st })}>{st} <b>{tcounts[st]}</b></button>{/each}
-      </div>
+      <Seg label="Tagged" options={testOpts} value={stateFilter} onpick={(k) => filter({ state: k })} />
       <select aria-label="module" value={route.module ?? ""} onchange={(e) => filter({ module: e.currentTarget.value || undefined })}>
         <option value="">all modules</option>
         {#each modules?.modules ?? [] as m}<option value={m.path}>{m.path}</option>{/each}
       </select>
       <input name="filter" aria-label="filter tests" placeholder="Filter test, file, requirement ID   ( / )" value={query} oninput={(e) => filter({ q: e.currentTarget.value })} />
+      <SplitToggle />
     </div>
     {#if tests === null}<p class="muted">Loading…</p>
     {:else}
-      <p class="muted">{tests.total} tests detected in {tests.modules.length} modules, {taggedN} tagged with a requirement. {tests.note}</p>
-      {#each groups as g (g.module)}
-        <h2 class="mono modh"><a href={u({ tab: "modules", module: g.module })}>{g.module}</a> <span class="muted">{g.files.reduce((n, f) => n + f.tests.length, 0)} tests</span></h2>
-        {@render cases(g.files)}
-      {/each}
-      {#if !matched.length}<p class="muted empty">No test matches. <a href="/tests">Clear filters</a></p>{/if}
-      {#if matched.length > TEST_CAP}<p class="muted">First {TEST_CAP} of {matched.length} shown; narrow the filter.</p>{/if}
+      <p class="muted found">{tests.total} tests detected in {tests.modules.length} modules, {taggedN} tagged with a requirement. {tests.note}</p>
+      <Split>
+        {#snippet list()}
+          <DataTable rows={testRows} columns={testCols} rowKey={(c) => c.key} selected={selTest} onselect={(k, how) => { const c = testRows.find((x) => x.key === k); navigate({ ...route, path: c?.file, line: c?.t.line }, how === "key"); }} value={testVal} groupOf={(c) => c.module} storageKey="spec11.collapsed.tests">
+            {#snippet cell(c, k)}
+              {#if k === "name"}<span class="mono" title={c.t.qualified}>{c.t.name}</span>
+              {:else if k === "file"}<a href={u({ tab: "code", path: c.file, line: c.t.line })}>{c.file}:{c.t.line}</a>
+              {:else}{#each c.t.ids as id}{@render idlink(id, known.has(id) ? req(id) : { tab: "requirements", q: id })}{" "}{/each}{#if !c.t.ids.length}<span class="muted">untagged</span>{/if}{/if}
+            {/snippet}
+            {#snippet empty()}<p class="muted empty">No test matches. <a href="/tests">Clear filters</a></p>{/snippet}
+          </DataTable>
+        {/snippet}
+        {#snippet preview()}{@render testPanel()}{/snippet}
+      </Split>
     {/if}
+    </div>
   {:else if route.tab === "specs"}
     {#if specFiles === null}<p class="muted">Loading…</p>
     {:else}
-      <div class="specs">
-        <ul class="files">{#each specFiles as f}<li><a class="fileLink" class:on={f === (route.file ?? specFiles[0])} href={u({ tab: "specs", file: f })}>{f.replace(/\.md$/, "")}</a></li>{/each}</ul>
-        <article><Markdown source={specMd} /></article>
+      <div class="page">
+        <Split name="specs" def={22}>
+          {#snippet list()}
+            <DataTable headless rows={specRows} columns={[{ key: "file", label: "spec" }]} rowKey={(r) => r.file} selected={route.file ?? specFiles![0]} onselect={(k, how) => k && navigate({ tab: "specs", file: k }, how === "key")}>
+              {#snippet cell(r)}<a href={u({ tab: "specs", file: r.file })}>{r.file.replace(/\.md$/, "")}</a>{/snippet}
+            </DataTable>
+          {/snippet}
+          {#snippet preview()}<article><Markdown source={specMd} /></article>{/snippet}
+        </Split>
       </div>
     {/if}
   {:else if route.tab === "overlap"}
@@ -791,7 +725,7 @@
           {/each}
         </div>
       {/each}
-      {@render tracePanel()}
+      {@render tracePanel(true)}
     {/if}
   {:else if route.tab === "uncovered"}
     {#if uncovered === null}<p class="muted">Loading…</p>
@@ -821,29 +755,26 @@
 
 <style>
   /* layout */
-  header { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 10px; padding: 10px 20px; background: color-mix(in srgb, var(--bg) 92%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
+  header { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: var(--gap); padding: 10px var(--gutter); background: color-mix(in srgb, var(--bg) 92%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
   header > :not(.root):not(nav) { flex-shrink: 0; }
-  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); margin-left: -4px; } .dot.up { background: var(--ok); } .dot.down { background: var(--bad); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--tone, var(--muted)); margin-left: -4px; }
   h1 { margin: 0; font-size: 18px; letter-spacing: -0.01em; }
   nav { margin-left: auto; display: flex; gap: 6px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
   nav a { flex-shrink: 0; white-space: nowrap; }
-  main { padding: 20px; max-width: 100%; overflow-x: clip; }
-  footer { padding: 24px 16px; text-align: center; font-size: 12px; }
-  .muted { color: var(--muted); }
-  .nowrap { white-space: nowrap; }
+  main { padding: var(--gutter); max-width: 100%; overflow-x: clip; }
+  footer { padding: 24px 16px; text-align: center; font-size: var(--text-xs); }
   .grow { flex: 1; }
-  .error { margin: 12px 20px; padding: 10px 14px; border: 1px solid var(--bad); background: color-mix(in srgb, var(--bad) 10%, var(--card)); color: var(--bad); border-radius: var(--radius); }
-  .banner { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0; padding: 8px 20px; background: color-mix(in srgb, var(--warn) 13%, var(--bg)); border-bottom: 1px solid color-mix(in srgb, var(--warn) 35%, var(--line)); font-size: 13px; }
+  .error { margin: 12px var(--gutter); padding: 10px 14px; border: 1px solid var(--bad); background: color-mix(in srgb, var(--bad) 10%, var(--card)); color: var(--bad); border-radius: var(--radius); }
+  .banner { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0; padding: 8px var(--gutter); background: color-mix(in srgb, var(--warn) 13%, var(--bg)); border-bottom: 1px solid color-mix(in srgb, var(--warn) 35%, var(--line)); font-size: var(--text-sm); }
   button:disabled { opacity: 0.5; cursor: default; }
 
   /* header controls */
   a.tab { color: var(--fg); background: var(--raised); text-decoration: none; border-radius: var(--radius); padding: 5px 12px; text-transform: capitalize; }
-  a.tab:hover { background: color-mix(in srgb, var(--accent) 16%, var(--raised)); color: var(--accent); }
-  a.tab.on { background: color-mix(in srgb, var(--accent) 26%, var(--raised)); color: var(--accent); font-weight: 600; }
+  a.tab:hover { background: var(--tint-btn); color: var(--accent); }
+  a.tab.on { background: var(--tint-on); color: var(--accent); font-weight: 600; }
   h1 a, a.root { color: inherit; text-decoration: none; }
   a.root { color: var(--muted); max-width: 32ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
-  .badge { display: inline-block; min-width: 18px; margin-left: 6px; padding: 0 5px; border-radius: 2px; font-size: 11px; font-weight: 700; line-height: 18px; text-align: center; color: var(--card); }
-  .badge.bad { background: var(--bad); } .badge.warn { background: var(--warn); }
+  .badge { display: inline-block; min-width: 18px; margin-left: 6px; padding: 0 5px; border-radius: 2px; font-size: 11px; font-weight: 700; line-height: 18px; text-align: center; color: var(--card); background: var(--tone); }
   a.tab.on .badge { outline: 1px solid var(--raised); }
   .icon { padding: 5px 9px; line-height: 1.2; }
   a.tab.icon .badge { margin-left: 3px; }
@@ -859,117 +790,43 @@
   .pct b { font-size: 34px; line-height: 1.1; letter-spacing: -0.02em; }
   .meter { height: 8px; margin: 10px 0 8px; border-radius: 4px; background: var(--raised); overflow: hidden; }
   .meter i { display: block; height: 100%; background: var(--ok); border-radius: 4px; }
-  .facts { margin: 0; font-size: 13px; }
-  b.bad { color: var(--bad); } b.ok { color: var(--ok); }
+  .facts { margin: 0; font-size: var(--text-sm); }
   tr.hidden-row { opacity: 0.6; }
-  button.ignore { padding: 1px 8px; font-size: 13px; }
-  .note-line { font-size: 13px; margin: 0 0 12px; }
-  details { background: var(--card); border: 1px solid var(--line); border-left: 4px solid var(--line); border-radius: var(--radius); padding: 10px 14px; margin-bottom: 10px; }
-  details.bad { border-left-color: var(--bad); background: color-mix(in srgb, var(--bad) 5%, var(--card)); }
-  details.warn { border-left-color: var(--warn); background: color-mix(in srgb, var(--warn) 5%, var(--card)); }
-  summary { cursor: pointer; display: flex; align-items: center; gap: 8px; font-weight: 600; }
-  summary span { flex: 1; }
-  details > :not(summary) { margin-top: 10px; }
-  .count { font-size: 12px; padding: 0 7px; border-radius: 2px; color: var(--card); }
-  details.bad .count { background: var(--bad); } details.warn .count { background: var(--warn); }
-  details ul { margin: 0; padding-left: 18px; } details li { margin: 4px 0; }
+  button.ignore { padding: 1px 8px; font-size: var(--text-sm); }
+  .note-line { font-size: var(--text-sm); margin: 0 0 12px; }
+  b[data-tone] { color: var(--tone); }
   .ids { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 0; }
 
-  h4, h3.file { margin: 12px 0 4px; font-size: 13px; }
+  h4, h3.file { margin: 12px 0 4px; font-size: var(--text-sm); }
   h2 { margin: 18px 0 6px; font-size: 16px; }
-  h2.modh { padding-bottom: 4px; border-bottom: 1px solid var(--line); margin-top: 26px; }
-  h2.modh .muted { font-size: 13px; font-weight: 400; font-family: var(--sans, inherit); }
-  details.plain { margin: 12px 0 0; padding: 6px 10px; }
-  th { text-align: left; font-size: 12px; font-weight: 600; color: var(--muted); padding: 7px 10px; border-bottom: 1px solid var(--line); }
-  th button.sort { all: unset; cursor: pointer; display: inline-flex; gap: 4px; align-items: baseline; }
-  th button.sort:hover, th button.sort:focus-visible { color: var(--fg, inherit); }
-  th .arrow { font-size: 9px; min-width: 9px; }
-  th.num button.sort { flex-direction: row-reverse; }
-  tr.grp td { padding: 0; background: color-mix(in srgb, var(--accent) 5%, transparent); }
-  tr.grp button { all: unset; box-sizing: border-box; width: 100%; padding: 6px 10px; cursor: pointer; display: flex; gap: 8px; align-items: baseline; }
-  tr.grp button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-  tr.grp .caret { width: 10px; color: var(--muted); }
-  .num { text-align: right; font-variant-numeric: tabular-nums; }
-  a.more { font-size: 13px; font-weight: 400; margin-left: 8px; }
+  details.plain { margin: 12px 0 0; padding: 6px 10px; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); }
+  a.more { font-size: var(--text-sm); font-weight: 400; margin-left: 8px; }
   select { font: inherit; }
 
-  /* ids, links, pills */
-  a.id { font-family: var(--mono); font-size: 12.5px; padding: 1px 7px; white-space: nowrap; text-decoration: none; border: 1px solid var(--line); border-radius: 6px; background: var(--card); }
-  a.id:hover { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--card)); }
-  td a, .refs a, li a { text-decoration: none; }
-  td a:hover, .refs a:hover, li a:hover { text-decoration: underline; }
-  .pill { font-size: 11.5px; padding: 1px 8px; border-radius: 2px; border: 0; margin-right: 4px; white-space: nowrap; background: color-mix(in srgb, currentColor 10%, transparent); }
-  .pill.tested { color: var(--ok); } .pill.none { color: var(--bad); } .pill.src-only { color: var(--warn); } .pill.done { color: var(--accent); }
-  .pill.manual, .pill.later, .pill.ref { color: var(--muted); }
-  :global(.rfc) { font-size: 11px; font-weight: 600; letter-spacing: .02em; padding: 0 6px; border-radius: 2px; white-space: nowrap; background: color-mix(in srgb, currentColor 12%, transparent); }
-  /* level is weight, not colour: red and amber belong to the state (none, src-only) */
-  :global(.rfc.must) { background: var(--fg); color: var(--card); } :global(.rfc.should) { background: none; box-shadow: inset 0 0 0 1px currentColor; } :global(.rfc.may) { color: var(--muted); }
 
   /* requirements */
-  .bar { display: flex; gap: 10px; align-items: center; margin-bottom: 14px; flex-wrap: wrap; }
+  .bar { display: flex; gap: var(--gap); align-items: center; margin-bottom: 14px; flex-wrap: wrap; }
   .bar input:not([type=checkbox]) { flex: 1; min-width: 200px; }
   .bar input[type=checkbox] { padding: 0; margin: 0; }
   .bar label { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; cursor: pointer; }
-  .chips { display: flex; gap: 6px; flex-wrap: wrap; }
-  .chip { font-size: 13px; padding: 3px 10px; }
-  .chip b { font-weight: 600; opacity: 0.75; margin-left: 2px; }
   
-  /* a labelled segmented control: one choice, joined buttons; the state dot keeps its colour when the segment is selected */
-  .seg { display: inline-flex; flex-wrap: wrap; align-items: center; row-gap: 4px; }
-  .seg .name { color: var(--muted); font-size: 13px; margin-right: 8px; }
-  .seg button { min-height: 28px; padding: 2px 10px; font-size: 13px; border-radius: 0; border: 1px solid var(--line); margin-left: -1px; white-space: nowrap; background: var(--card); }
-  .seg .name + button { border-radius: var(--radius) 0 0 var(--radius); margin-left: 0; }
-  .seg button:last-child { border-radius: 0 var(--radius) var(--radius) 0; }
-  .seg button[aria-checked=true] { position: relative; z-index: 1; background: color-mix(in srgb, var(--accent) 18%, var(--card)); border-color: var(--accent); color: var(--fg); font-weight: 600; }
-  .seg button[aria-checked=true]:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 24%, var(--card)); color: var(--fg); }
-  .seg button.zero { color: var(--muted); opacity: .6; }
-  .seg b { font-weight: 600; font-variant-numeric: tabular-nums; opacity: .75; margin-left: 2px; }
-  .seg .dot { display: inline-block; margin: 0 6px 1px 0; }
-  .dot.tested { background: var(--ok); } .dot.none { background: var(--bad); } .dot.src-only { background: var(--warn); }
-  kbd { font: 11px/1 var(--mono); color: var(--muted); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 3px; padding: 1px 4px; margin-left: 3px; vertical-align: 1px; }
-  .found { font-size: 13px; }
+  .found { font-size: var(--text-sm); }
   .found a { margin-left: 6px; }
-  .reqpage { display: flex; flex-direction: column; height: calc(100dvh - 100px); min-height: 440px; }
   /* list and preview are panes that scroll on their own: side by side (wide screens, default) or stacked (.h, and always on narrow screens) */
-  .split { display: grid; grid-template: minmax(0, 1fr) / minmax(0, 1fr); flex: 1; min-height: 360px; }
-  .split:has(aside) { grid-template: minmax(0, var(--a)) 14px minmax(0, var(--b)) / minmax(0, 1fr); }
   aside.stale { opacity: .55; }
-  @media (min-width: 1000px) { .split:has(aside):not(.h) { grid-template: minmax(0, 1fr) / minmax(0, var(--a)) 14px minmax(0, var(--b)); } }
-  .gutter { position: relative; touch-action: none; cursor: row-resize; }
-  @media (min-width: 1000px) { .split:not(.h) .gutter { cursor: col-resize; } }
-  .gutter::before { content: ""; position: absolute; inset: 6px 0; border-radius: 2px; background: var(--line); }
-  @media (min-width: 1000px) { .split:not(.h) .gutter::before { inset: 0 6px; } }
-  .gutter:hover::before, .gutter:focus-visible::before { background: var(--accent); }
-  .gutter:focus-visible { outline: none; }
-  .list { overflow: auto; min-height: 0; }
-  .list th { position: sticky; top: 0; background: var(--bg); z-index: 1; }
-  .split aside { position: static; max-height: none; min-height: 0; }
-  table { width: 100%; border-collapse: collapse; }
-  td { padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: baseline; }
-  tr[onclick] { cursor: pointer; }
-  tr[onclick] td:first-child { border-left: 3px solid transparent; }
-  tr.st-none td:first-child { border-left-color: var(--bad); }
-  tr.st-src-only td:first-child { border-left-color: var(--warn); }
-  tr.st-tested td:first-child { border-left-color: var(--ok); }
-  tr.sel, tr[onclick]:hover { background: color-mix(in srgb, var(--accent) 9%, transparent); }
+  .refs a, li a { text-decoration: none; }
+  .refs a:hover, li a:hover { text-decoration: underline; }
+  .page { display: flex; flex-direction: column; height: calc(100dvh - 100px); min-height: 440px; }
   .txt { display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-  .empty { padding: 24px 0; text-align: center; }
-  aside { position: sticky; top: 64px; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 16px 14px; overflow: auto; max-height: calc(100vh - 80px); box-shadow: var(--shadow); }
-  .ahead { display: flex; align-items: center; gap: 8px; }
-  .ahead .x { margin-left: auto; text-decoration: none; padding: 0 8px; color: var(--muted); }
-  aside h4 { margin: 14px 0 4px; font-size: 13px; }
-  .refs { margin: 0; padding-left: 16px; font-size: 13px; }
-  .note { font-size: 12px; margin: 10px 0 0; }
+  /* a trace panel outside a split (overlap) is a floating card; inside one, Split draws the card */
+  aside.float { position: sticky; top: 64px; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 16px 14px; overflow: auto; max-height: calc(100vh - 80px); box-shadow: var(--shadow); }
+  table.snip { margin-top: 4px; }
+  aside h4 { margin: 14px 0 4px; font-size: var(--text-sm); }
+  .refs { margin: 0; padding-left: 16px; font-size: var(--text-sm); }
+  .note { font-size: var(--text-xs); margin: 10px 0 0; }
   pre { margin: 0; white-space: pre-wrap; word-break: break-word; }
 
   /* specs, code, setup */
-  .specs { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 16px; align-items: start; }
-  .files { list-style: none; margin: 0; padding: 0; position: sticky; top: 64px; max-height: 80vh; overflow: auto; display: flex; flex-direction: column; gap: 2px; }
-  a.fileLink { display: block; color: inherit; text-decoration: none; border-radius: var(--radius); padding: 5px 10px; }
-  a.fileLink:hover { background: var(--raised); }
-  a.fileLink.on { background: var(--raised); color: var(--accent); font-weight: 600; }
-  article { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 4px 20px 14px; box-shadow: var(--shadow); }
-  @media (max-width: 800px) { .specs { grid-template-columns: 1fr; } .files { position: static; max-height: 30vh; } }
   .crumb { margin: 0 0 8px; }
   table.code { display: block; max-width: 100%; overflow-x: auto; font-family: var(--mono); font-size: 13.5px; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); }
   table.code td { border: none; padding: 0 10px; white-space: pre; }
@@ -979,9 +836,9 @@
   td.src { overflow-x: auto; }
   table.code.wrap td.src { white-space: pre-wrap; overflow-wrap: anywhere; }
   .crumb { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-  .crumb .small { font-size: 12px; padding: 2px 8px; }
+  .crumb .small { font-size: var(--text-xs); padding: 2px 8px; }
   a.btn { background: var(--raised); color: var(--fg); border-radius: var(--radius); text-decoration: none; }
-  a.btn:hover { background: color-mix(in srgb, var(--accent) 16%, var(--raised)); color: var(--accent); }
+  a.btn:hover { background: var(--tint-btn); color: var(--accent); }
   /* highlight.js token colours (the markup comes from {@html}, hence :global) */
   :global(.hljs-comment, .hljs-quote) { color: var(--muted); font-style: italic; }
   :global(.hljs-keyword, .hljs-selector-tag, .hljs-literal, .hljs-built_in, .hljs-doctag) { color: light-dark(#8a2be2, #c9a7ff); }
