@@ -42,7 +42,7 @@ export async function call<T = any>(tool: string, args: Record<string, unknown> 
     return { text, data: r.structuredContent as T };
   }
   // standalone: the same `tools/call` over /mcp (indexing can outlast the default 60 s timeout)
-  const r = await (await connect()).callTool({ name: tool, arguments: args }, { timeout: tool === "spec_codegraph" ? 600_000 : undefined });
+  const r = await (await connect()).callTool({ name: tool, arguments: args }, { timeout: tool === "codegraph" ? 600_000 : undefined });
   const text = (r.content ?? []).map((c) => ("text" in c ? c.text : "")).join("\n");
   if (r.isError) throw new Error(text);
   return { text, data: r.structuredContent as T };
