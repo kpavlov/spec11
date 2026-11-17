@@ -6,7 +6,7 @@ spec11: Rust workspace (`core`, `server`) + Svelte dashboard (`web`) + the agent
 
 - `cargo test --workspace` (debug) and `SKIP_WEB_BUILD=1 cargo test --release --workspace` (the embedded-UI test runs only in release; needs `web/dist`)
 - `make parity` (optional) compares with the old Python scripts if they are vendored in `ROOT/.agents/skills/spec-driven`; the scripts are no longer in this repo.
-- `cd web && pnpm run build && pnpm exec svelte-check`
+- `cd web && pnpm run build && pnpm run check`
 - `make dev` / `make run`; override `ROOT`, `PORT`, `OPEN=0`
 
 ## Rules
