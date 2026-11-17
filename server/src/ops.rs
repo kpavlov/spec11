@@ -23,6 +23,7 @@ pub fn tools() -> Vec<Tool> {
         "changed": {"type": "string", "description": "requirements touched by the working tree vs this git ref (e.g. HEAD)"},
         "staged": {"type": "boolean", "description": "with changed (HEAD if not given): only what is staged"},
         "include_untracked": {"type": "boolean", "description": "with changed: count untracked files (default true)"},
+        "ignore_whitespace": {"type": "boolean", "description": "with changed: leave out changes that only touch whitespace"},
         "built": {"type": "boolean", "description": "requirements marked later/deferred that already have tests or code"},
         "done": {"type": "boolean", "description": "check-marked requirements, each with its evidence verdict"},
         "unproven": {"type": "boolean", "description": "check-marked requirements with no test or no link to code"},
@@ -31,15 +32,21 @@ pub fn tools() -> Vec<Tool> {
         "limit": {"type": "integer", "description": "max listed lines (default 200)"}
     });
     let change_props = json!({
+        "ref": {"type": "string", "description": "git ref the working tree is compared with (default HEAD), e.g. main or origin/main"},
+        "commit": {"type": "string", "description": "explain this one commit against its first parent (sha or ref; ignores ref, staged and include_untracked)"},
         "staged": {"type": "boolean", "description": "only what is staged"},
-        "include_untracked": {"type": "boolean", "description": "count untracked files (default true)"}
+        "include_untracked": {"type": "boolean", "description": "count untracked files (default true)"},
+        "ignore_whitespace": {"type": "boolean", "description": "leave out changes that only touch whitespace"},
+        "show_ignored": {"type": "boolean", "description": "also files .aiignore, .spec11ignore and .agents hide (default false)"},
+        "show_all": {"type": "boolean", "description": "also files spec11 does not scan: kind other (default false)"}
     });
     let path = json!({"path": {"type": "string", "description": "only files whose path contains this"}});
     vec![
         Tool { name: "report", description: "Whole-project spec-driven status: coverage headline, problem tally and one section per problem kind. Deterministic. Evidence, not truth.", schema: obj(json!({"limit": {"type": "integer", "description": "lines per problem section (default 12)"}})), ui: false },
         Tool { name: "status", description: "Per-spec-file summary, or one line per requirement when a list filter is given (missing, changed, built, done, unproven, issues, all). Deterministic. Evidence, not truth.", schema: obj(status_props), ui: false },
-        Tool { name: "changes", description: "What the working tree changed against HEAD: every changed file (staged, modified, untracked, deleted; spec, test, src or other) and the requirements those files may affect. Evidence of edits, not that anything is done.", schema: obj(change_props), ui: false },
-        Tool { name: "diff", description: "Unified diff against HEAD of one changed file (staged and unstaged together; an untracked file is all additions). Only files `changes` lists. Shows what was edited, not whether it is right.", schema: required(obj(json!({"path": {"type": "string", "description": "repo-relative path of a changed file, as in `changes`"}})), "path"), ui: false },
+        Tool { name: "changes", description: "What changed against a git ref (HEAD by default) or in one commit: every changed file (added, modified, deleted, renamed; staged, unstaged, untracked or committed; spec, test, src, and other with show_all) and the requirements the changed lines touch: a removed bullet, an edited test or a cited function, with what happened to it. Evidence of edits, not that anything is done.", schema: obj(change_props.clone()), ui: false },
+        Tool { name: "diff", description: "Unified diff of one changed file against a ref or in one commit (a rename shows both paths; an untracked file is all additions), and under each hunk the requirements it touches. Takes the same arguments as `changes`, and only files it lists. Shows what was edited, not whether it is right.", schema: required(obj(merge(change_props.clone(), json!({"path": {"type": "string", "description": "repo-relative path of a changed file, as in `changes`"}}))), "path"), ui: false },
+        Tool { name: "history", description: "Commits on a branch (HEAD by default) that are not on the base branch (main or master by default), newest first, and how many files are uncommitted. Explain one with `changes commit=<sha>`. Needs git.", schema: obj(json!({"base": {"type": "string", "description": "branch the commits are not on (default: main, master, origin/main or origin/master)"}, "head": {"type": "string", "description": "branch to list (default HEAD)"}, "limit": {"type": "integer", "description": "max commits (default 50)"}})), ui: false },
         Tool { name: "trace", description: "One requirement in depth: spec text, tests tagged with it, source citations with their declaration, related code. Evidence, not truth.", schema: required(obj(json!({"id": {"type": "string", "description": "requirement ID, e.g. DOC-25"}})), "id"), ui: false },
         Tool { name: "overlap", description: "Code covered by 2+ requirements (CodeGraph index): where two specs may conflict or complement each other. A candidate list, not a verdict.", schema: obj(merge(path.clone(), json!({"all": {"type": "boolean", "description": "also pairs from the same spec file"}}))), ui: false },
         Tool { name: "uncovered", description: "Code no requirement covers (CodeGraph index): candidates for a missing requirement, not proof.", schema: obj(merge(path, json!({"fanin": {"type": "integer"}, "min": {"type": "integer"}}))), ui: false },
@@ -53,6 +60,14 @@ pub fn tools() -> Vec<Tool> {
         Tool { name: "module", description: "WRITES FILES: set a module hidden (true) or shown (false) by adding or removing its folder line in <repo>/.spec11ignore (gitignore syntax), keeping every other line. To hide, path is a module listed by spec11://modules; to show, one of its `hidden`. Only when the user asked for it.", schema: merge(obj(json!({"path": {"type": "string", "description": "module path, e.g. server"}, "hidden": {"type": "boolean", "description": "true: leave the module out of every scan; false: list it again"}})), json!({"required": ["path", "hidden"]})), ui: false },
         Tool { name: "dashboard", description: "URL of the spec11 web dashboard served by this process; in an MCP Apps host this tool opens the dashboard. view (optional) picks the page: a tab, or a tab with its selection and filters, e.g. modules, changes, requirements/DOC-25, requirements?changed=1, tests?module=core&state=untagged, specs?file=04-documents.md, setup.", schema: obj(json!({"view": {"type": "string", "description": "tab or route to open, e.g. requirements/DOC-25?state=none (default: the dashboard)"}})), ui: true },
     ]
+}
+
+fn change_opts(args: &Value) -> ChangeOpts {
+    let on = |k: &str| args[k].as_bool().unwrap_or(false);
+    ChangeOpts {
+        reference: txt(args, "ref").into(), commit: txt(args, "commit").into(), staged: on("staged"), no_untracked: args["include_untracked"].as_bool() == Some(false),
+        ignore_whitespace: on("ignore_whitespace"), show_ignored: on("show_ignored"), show_all: on("show_all"),
+    }
 }
 
 /// The install tools: they write the skill and `.mcp.json`, so they never run an analysis.
@@ -131,6 +146,7 @@ pub fn call(root: Option<&Path>, name: &str, args: &Value, dashboard: &str, mcp_
                 changed: args.get("changed").and_then(Value::as_str).filter(|s| !s.is_empty()).map(str::to_owned),
                 staged: args["staged"].as_bool().unwrap_or(false),
                 no_untracked: args["include_untracked"].as_bool() == Some(false),
+                ignore_whitespace: args["ignore_whitespace"].as_bool().unwrap_or(false),
                 built: args["built"].as_bool().unwrap_or(false),
                 done: args["done"].as_bool().unwrap_or(false),
                 unproven: args["unproven"].as_bool().unwrap_or(false),
@@ -148,13 +164,16 @@ pub fn call(root: Option<&Path>, name: &str, args: &Value, dashboard: &str, mcp_
             (text, json!(st))
         }
         "changes" => {
-            let c = a.changes(&ChangeOpts { staged: args["staged"].as_bool().unwrap_or(false), no_untracked: args["include_untracked"].as_bool() == Some(false) })?;
+            let c = a.changes(&change_opts(args))?;
             (c.text(), json!(c))
         }
         "diff" => {
-            let want = txt(args, "path");
-            let (change, diff) = a.p.file_diff(want)?;
-            (diff.clone(), json!({"path": want, "change": change, "diff": diff}))
+            let d = a.file_diff(txt(args, "path"), &change_opts(args))?;
+            (d.text(), json!(d))
+        }
+        "history" => {
+            let h = a.p.history(txt(args, "base"), txt(args, "head"), num(args, "limit").unwrap_or(50).clamp(1, 500) as usize)?;
+            (h.text(), json!(h))
         }
         "file" => {
             let names = a.p.spec_files();
@@ -321,7 +340,7 @@ fn shape(props: Value, required: &[&str]) -> Value {
 /// JSON Schema of a result's structured content: `report`, `status`, `trace`, `overlap`, `uncovered`, `modules`, `tests`,
 /// `file`, `source`, `doctor`, `codegraph`, `install`, `dashboard`. Typed from the core structs where there are any.
 pub fn schema(name: &str) -> Option<Value> {
-    use spec11_core::{Changes, Report, Status, Trace, coverage::{OverlapRow, Uncovered}, modules::{ModulesView, TestsView}};
+    use spec11_core::{Changes, FileDiff, History, Report, Status, Trace, coverage::{OverlapRow, Uncovered}, modules::{ModulesView, TestsView}};
     #[derive(schemars::JsonSchema)]
     #[allow(dead_code)]
     struct Overlap {
@@ -344,7 +363,8 @@ pub fn schema(name: &str) -> Option<Value> {
         "tests" => of::<TestsView>(),
         "doctor" => of::<Doctor>(),
         "file" => shape(json!({"files": strs(), "name": {"type": "string"}, "markdown": {"type": "string"}}), &[]),
-        "diff" => shape(json!({"path": {"type": "string"}, "change": {"type": "string"}, "diff": {"type": "string"}}), &["path", "change", "diff"]),
+        "diff" => of::<FileDiff>(),
+        "history" => of::<History>(),
         "source" => shape(json!({"path": {"type": "string"}, "text": {"type": "string"}}), &["path", "text"]),
         "codegraph" => shape(json!({"output": {"type": "string"}}), &["output"]),
         "install" => shape(json!({"status": {"type": "object"}, "suggestions": strs()}), &["status", "suggestions"]),
@@ -390,7 +410,7 @@ pub fn stamp(root: Option<&Path>) -> u64 {
     let Ok(p) = spec11_core::scan::Project::open(root) else { return 0 };
     let db = if p.cfg.codegraph.is_empty() { ".codegraph/codegraph.db".to_string() } else { p.cfg.codegraph.clone() };
     let mut h = std::collections::hash_map::DefaultHasher::new();
-    let extra = ["spec11.json".to_string(), ".git/index".to_string(), ".git/HEAD".to_string(), format!("{db}-wal"), format!("{db}-shm"), db];
+    let extra = ["spec11.json".to_string(), ".git/index".to_string(), ".git/HEAD".to_string(), ".git/logs/HEAD".to_string(), format!("{db}-wal"), format!("{db}-shm"), db];
     for rel in p.files.iter().chain(&p.spec_files()).chain(&extra) {
         if let Ok(m) = std::fs::metadata(p.root.join(rel)) {
             (rel, m.len(), m.modified().ok()).hash(&mut h);

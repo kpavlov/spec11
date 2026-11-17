@@ -117,6 +117,9 @@
   // the working tree against HEAD: undefined until loaded, null when it cannot be read (not a git work tree)
   let changes = $state<any>(undefined);
   let custom = $state<any>(undefined);
+  // commits not on the base branch, for the Changes page
+  let history = $state<any>(null);
+  let diffPath = $state<string | undefined>();
   let modules = $state<any>(null);
   let tests = $state<any>(null);
   let rows = $state<Row[]>([]);
@@ -224,11 +227,16 @@
   });
 
   // the Changes page asks for its own scope when it is not the default (staged + unstaged + untracked)
-  const scope = $derived({ staged: route.staged === "1", include_untracked: route.untracked !== "0" });
-  const defaultScope = $derived(!scope.staged && scope.include_untracked);
+  const scope = $derived({
+    ref: route.ref ?? "", commit: route.commit ?? "", staged: route.staged === "1", include_untracked: route.untracked !== "0",
+    ignore_whitespace: route.ws === "1", show_ignored: route.ignored === "1", show_all: route.all === "1",
+  });
+  const defaultScope = $derived(!scope.ref && !scope.commit && !scope.staged && scope.include_untracked && !scope.ignore_whitespace && !scope.show_ignored && !scope.show_all);
   $effect(() => {
-    if (route.tab !== "changes" || defaultScope) return;
+    if (route.tab !== "changes") return;
     void gen;
+    call("history").then((r) => (history = r.data)).catch(() => (history = null));
+    if (defaultScope) return;
     call("changes", scope).then((r) => (custom = r.data)).catch(() => (custom = null));
   });
 
@@ -339,6 +347,12 @@
   const nOf = (kind: string) => (view?.files ?? []).filter((f: any) => f.kind === kind).length;
   const viewMods = $derived(new Set<string>((view?.files ?? []).map((f: any) => moduleOfFile(f.path))));
   const noTestN = $derived((changes?.requirements ?? []).filter((r: Row) => r.state === "none" || r.state === "src-only").length);
+  // one pill per kind of note, the files it happened in as its title
+  const noteGroups = (notes: { role: string; action: string; file: string }[]) => {
+    const g = new Map<string, Set<string>>();
+    for (const n of notes) g.set(`${n.role} ${n.action}`, (g.get(`${n.role} ${n.action}`) ?? new Set()).add(n.file));
+    return [...g].map(([k, v]) => [k, [...v]] as const);
+  };
   const tallyBy = (files: any[]) => CHANGES.map((c) => [c, files.filter((f) => f.change === c).length] as const).filter(([, n]) => n);
   const taggedN = $derived(tests ? tests.modules.reduce((n: number, m: any) => n + m.files.reduce((k: number, f: any) => k + f.tests.filter((t: any) => t.ids.length).length, 0), 0) : 0);
   const plain = (t: string) => t.replace(/[`*~]/g, "");
@@ -793,12 +807,38 @@
     {/if}
   {:else if route.tab === "changes"}
     <div class="bar">
-      <Seg label="Scope" hint="Against HEAD" options={[{ key: "all", label: "staged + unstaged" }, { key: "staged", label: "staged only" }]} value={scope.staged ? "staged" : "all"} onpick={(k) => filter({ staged: k === "staged" ? "1" : undefined })} />
-      <label class="muted nowrap"><input type="checkbox" checked={scope.include_untracked && !scope.staged} disabled={scope.staged} onchange={(e) => filter({ untracked: e.currentTarget.checked ? undefined : "0" })} /> untracked files</label>
+      {#if history?.base && !history.on_base}
+        <Seg label="Compare with" hint="What the changes are measured against" options={[{ key: "head", label: "HEAD" }, { key: "base", label: history.base }, ...(scope.commit ? [{ key: "commit", label: scope.commit.slice(0, 7) }] : [])]} value={scope.commit ? "commit" : scope.ref === history.base ? "base" : "head"} onpick={(k) => filter({ ref: k === "base" ? history.base : undefined, commit: k === "commit" ? scope.commit : undefined })} />
+      {/if}
+      {#if !scope.commit}
+        <Seg label="Scope" hint="Staged, unstaged and untracked, or only the index" options={[{ key: "all", label: "staged + unstaged" }, { key: "staged", label: "staged only" }]} value={scope.staged ? "staged" : "all"} onpick={(k) => filter({ staged: k === "staged" ? "1" : undefined })} />
+        <label class="muted nowrap"><input type="checkbox" checked={scope.include_untracked && !scope.staged} disabled={scope.staged} onchange={(e) => filter({ untracked: e.currentTarget.checked ? undefined : "0" })} /> untracked files</label>
+      {/if}
+      <label class="muted nowrap"><input type="checkbox" checked={scope.ignore_whitespace} onchange={(e) => filter({ ws: e.currentTarget.checked ? "1" : undefined })} /> ignore whitespace</label>
+      <label class="muted nowrap" title="Files .aiignore, .spec11ignore and .agents hide"><input type="checkbox" checked={scope.show_ignored} onchange={(e) => filter({ ignored: e.currentTarget.checked ? "1" : undefined })} /> ignored files</label>
+      <label class="muted nowrap" title="Files spec11 does not scan"><input type="checkbox" checked={scope.show_all} onchange={(e) => filter({ all: e.currentTarget.checked ? "1" : undefined })} /> unscanned files</label>
     </div>
+    {#if history?.commits.length}
+      <Section title={history.on_base ? "Recent commits" : `Commits not on ${history.base}`} count={history.commits.length} tone={history.on_base ? undefined : "accent"}>
+        {#each history.commits.filter((c: any) => scope.commit && (c.sha === scope.commit || c.short === scope.commit)) as c}<p class="note"><b>Explaining</b> <span class="mono">{c.short}</span> {c.subject} <a href={u({ tab: "changes" })}>clear</a></p>{/each}
+        <div class="commits"><table>
+          <tbody>
+            {#each history.commits as c (c.sha)}
+              <tr class:sel={scope.commit === c.sha || scope.commit === c.short}>
+                <td class="mono nowrap"><a href={u({ tab: "changes", commit: c.sha })} title="Explain this commit">{c.short}</a></td>
+                <td class="muted nowrap">{c.date.slice(0, 10)}</td>
+                <td class="muted nowrap">{c.author}</td>
+                <td>{c.subject}</td>
+              </tr>
+            {/each}
+          </tbody>
+        </table></div>
+        {#if history.uncommitted}<p class="muted note">{plural(history.uncommitted, "file")} uncommitted{scope.commit ? "; pick HEAD above to see them" : ""}.</p>{/if}
+      </Section>
+    {/if}
     {#if view === undefined}<p class="muted">Loading…</p>
     {:else if view === null}<p class="muted empty">Not checked: this is not a git work tree, or git is not available.</p>
-    {:else if !view.files.length}<p class="muted empty">Working tree clean: nothing {scope.staged ? "staged" : "changed"} against HEAD.</p>
+    {:else if !view.files.length}<p class="muted empty">{view.commit ? "This commit changed no scanned file." : `Nothing ${scope.staged ? "staged" : "changed"} against ${view.reference}.`}</p>
     {:else}
       <Section title="Files" count={view.files.length} tone="accent">
         <table>
@@ -812,23 +852,26 @@
                   {#if f.change === "deleted" || f.kind === "other"}{f.path}
                   {:else if f.kind === "spec"}<a href={u({ tab: "specs", file: f.path })}>{f.path}</a>
                   {:else}<a href={u({ tab: "code", path: f.path })}>{f.path}</a>{/if}
+                  {#if f.old_path}<span class="muted"> ← {f.old_path}</span>{/if}
                 </td>
+                <td class="nowrap"><button class="icon" class:on={diffPath === f.path} aria-pressed={diffPath === f.path} title={diffPath === f.path ? "Hide the diff" : "Show the diff"} aria-label="{diffPath === f.path ? 'Hide' : 'Show'} the diff of {f.path}" onclick={() => { diffPath = diffPath === f.path ? undefined : f.path; setTimeout(() => document.getElementById("file-diff")?.scrollIntoView({ block: "nearest", behavior: "smooth" }), 50); }}>±</button></td>
               </tr>
             {/each}
           </tbody>
         </table>
+        {#if diffPath && view.files.some((f: any) => f.path === diffPath)}<div id="file-diff"><DiffView paths={[diffPath]} {gen} scope={scope} /></div>{/if}
       </Section>
       <Section title="Requirements that may be affected" count={view.requirements.length} tone={view.requirements.length ? "accent" : undefined}>
-        {#if !view.requirements.length}<p class="muted">No requirement's spec line, tagged test or citing source file is among the changes.</p>
+        {#if !view.requirements.length}<p class="muted">No requirement's bullet, tagged test or cited code is among the changed lines.</p>
         {:else}
           <table>
             <tbody>
               {#each view.requirements as r (r.id)}
                 <tr>
-                  <td class="mono nowrap">{@render idlink(r.id, req(r.id))}</td>
-                  <td class="nowrap"><Pill tone={stateTone[r.state]}>{r.state}</Pill>{#each r.changed as k}<Pill tone="accent" title="its {k} changed">✎ {k}</Pill>{/each}</td>
+                  <td class="mono nowrap">{#if r.deleted || !known.has(r.id)}{r.id}{:else}{@render idlink(r.id, req(r.id))}{/if}</td>
+                  <td class="nowrap"><Pill tone={r.deleted ? "bad" : stateTone[r.state]}>{r.state}</Pill>{#each noteGroups(r.notes) as [what, files]}<Pill tone={r.deleted ? "bad" : "accent"} title={files.join(", ")}>✎ {what}</Pill>{/each}</td>
                   <td><div class="txt" title={plain(r.text)}>{@html inline(r.text)}</div></td>
-                  <td class="mono muted nowrap"><a href={u({ tab: "specs", file: r.file, id: r.id })}>{r.file}:{r.line}</a></td>
+                  <td class="mono muted nowrap">{#if r.line}<a href={u({ tab: "specs", file: r.file, id: r.id })}>{r.file}:{r.line}</a>{:else}{r.file}{/if}</td>
                 </tr>
               {/each}
             </tbody>
@@ -886,6 +929,8 @@
 </footer>
 
 <style>
+  .commits { max-height: 13rem; overflow: auto; }
+  tr.sel { background: color-mix(in srgb, var(--accent) 10%, transparent); }
   /* layout */
   header { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: var(--gap); padding: 10px var(--gutter); background: color-mix(in srgb, var(--bg) 92%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
   header > :not(.root):not(nav) { flex-shrink: 0; }
