@@ -5,20 +5,19 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "check": "svelte-check --tsgo"
+    "check": "svelte-check-native"
   },
   "devDependencies": {
     "@modelcontextprotocol/client": "^2.4.0",
     "@sveltejs/vite-plugin-svelte": "^7.3.1",
     "@types/d3-force": "^3.0.10",
-    "@typescript/native": "npm:typescript@^7.0.2",
     "d3-force": "^3.0.1",
     "highlight.js": "^11.12.0",
-    "svelte": "^5.0.0",
-    "svelte-check": "^4.0.0",
-    "typescript": "~6.0.3",
+    "svelte": "^5.57.3",
+    "svelte-check-native": "^1.12.1",
+    "typescript": "^7.0.2",
     "vite": "^8.3.8",
-    "vite-plugin-singlefile": "^2.3.0"
+    "vite-plugin-singlefile": "^2.3.4"
   },
   "packageManager": "pnpm@12.21.0"
 }
