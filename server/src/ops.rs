@@ -1,7 +1,7 @@
 //! The tools, defined once: the CLI and `/mcp` (the dashboard included) both run these over `spec11-core`.
 //! Every tool returns plain text (what the Python scripts printed) and a JSON object (the same data, typed).
 use serde_json::{Value, json};
-use spec11_core::{Analysis, StatusOpts};
+use spec11_core::{Analysis, ChangeOpts, StatusOpts};
 use std::path::{Path, PathBuf};
 
 pub struct Tool {
@@ -21,6 +21,8 @@ pub fn tools() -> Vec<Tool> {
         "all": {"type": "boolean", "description": "list every requirement"},
         "missing": {"type": "boolean", "description": "due requirements with no test"},
         "changed": {"type": "string", "description": "requirements touched by the working tree vs this git ref (e.g. HEAD)"},
+        "staged": {"type": "boolean", "description": "with changed (HEAD if not given): only what is staged"},
+        "include_untracked": {"type": "boolean", "description": "with changed: count untracked files (default true)"},
         "built": {"type": "boolean", "description": "requirements marked later/deferred that already have tests or code"},
         "done": {"type": "boolean", "description": "check-marked requirements, each with its evidence verdict"},
         "unproven": {"type": "boolean", "description": "check-marked requirements with no test or no link to code"},
@@ -28,10 +30,16 @@ pub fn tools() -> Vec<Tool> {
         "effort": {"type": "string", "enum": ["low", "medium", "high"], "description": "evidence per listed line"},
         "limit": {"type": "integer", "description": "max listed lines (default 200)"}
     });
+    let change_props = json!({
+        "staged": {"type": "boolean", "description": "only what is staged"},
+        "include_untracked": {"type": "boolean", "description": "count untracked files (default true)"}
+    });
     let path = json!({"path": {"type": "string", "description": "only files whose path contains this"}});
     vec![
         Tool { name: "report", description: "Whole-project spec-driven status: coverage headline, problem tally and one section per problem kind. Deterministic. Evidence, not truth.", schema: obj(json!({"limit": {"type": "integer", "description": "lines per problem section (default 12)"}})), ui: false },
         Tool { name: "status", description: "Per-spec-file summary, or one line per requirement when a list filter is given (missing, changed, built, done, unproven, issues, all). Deterministic. Evidence, not truth.", schema: obj(status_props), ui: false },
+        Tool { name: "changes", description: "What the working tree changed against HEAD: every changed file (staged, modified, untracked, deleted; spec, test, src or other) and the requirements those files may affect. Evidence of edits, not that anything is done.", schema: obj(change_props), ui: false },
+        Tool { name: "diff", description: "Unified diff against HEAD of one changed file (staged and unstaged together; an untracked file is all additions). Only files `changes` lists. Shows what was edited, not whether it is right.", schema: required(obj(json!({"path": {"type": "string", "description": "repo-relative path of a changed file, as in `changes`"}})), "path"), ui: false },
         Tool { name: "trace", description: "One requirement in depth: spec text, tests tagged with it, source citations with their declaration, related code. Evidence, not truth.", schema: required(obj(json!({"id": {"type": "string", "description": "requirement ID, e.g. DOC-25"}})), "id"), ui: false },
         Tool { name: "overlap", description: "Code covered by 2+ requirements (CodeGraph index): where two specs may conflict or complement each other. A candidate list, not a verdict.", schema: obj(merge(path.clone(), json!({"all": {"type": "boolean", "description": "also pairs from the same spec file"}}))), ui: false },
         Tool { name: "uncovered", description: "Code no requirement covers (CodeGraph index): candidates for a missing requirement, not proof.", schema: obj(merge(path, json!({"fanin": {"type": "integer"}, "min": {"type": "integer"}}))), ui: false },
@@ -43,7 +51,7 @@ pub fn tools() -> Vec<Tool> {
         Tool { name: "install", description: "WRITES FILES: install the spec11 skill into <repo>/.agents/skills (global=true: ~/.agents/skills) and add the spec11 entry to <repo>/.mcp.json, keeping other servers. Same as `spec11 install`.", schema: obj(json!({"global": {"type": "boolean", "description": "install the skill into ~/.agents/skills instead of this repo"}, "port": {"type": "integer", "description": "MCP port for the .mcp.json entry (default: the port this server runs on)"}})), ui: false },
         Tool { name: "uninstall", description: "WRITES FILES: remove what install added (the skill, and the spec11 entry in .mcp.json), keeping everything else. Same as `spec11 uninstall`.", schema: obj(json!({"global": {"type": "boolean"}})), ui: false },
         Tool { name: "module", description: "WRITES FILES: set a module hidden (true) or shown (false) by adding or removing its folder line in <repo>/.spec11ignore (gitignore syntax), keeping every other line. To hide, path is a module listed by spec11://modules; to show, one of its `hidden`. Only when the user asked for it.", schema: merge(obj(json!({"path": {"type": "string", "description": "module path, e.g. server"}, "hidden": {"type": "boolean", "description": "true: leave the module out of every scan; false: list it again"}})), json!({"required": ["path", "hidden"]})), ui: false },
-        Tool { name: "dashboard", description: "URL of the spec11 web dashboard served by this process; in an MCP Apps host this tool opens the dashboard. view (optional) picks the page: a tab, or a tab with its selection and filters, e.g. modules, requirements/DOC-25, tests?module=core&state=untagged, specs?file=04-documents.md, setup.", schema: obj(json!({"view": {"type": "string", "description": "tab or route to open, e.g. requirements/DOC-25?state=none (default: the dashboard)"}})), ui: true },
+        Tool { name: "dashboard", description: "URL of the spec11 web dashboard served by this process; in an MCP Apps host this tool opens the dashboard. view (optional) picks the page: a tab, or a tab with its selection and filters, e.g. modules, changes, requirements/DOC-25, requirements?changed=1, tests?module=core&state=untagged, specs?file=04-documents.md, setup.", schema: obj(json!({"view": {"type": "string", "description": "tab or route to open, e.g. requirements/DOC-25?state=none (default: the dashboard)"}})), ui: true },
     ]
 }
 
@@ -121,6 +129,8 @@ pub fn call(root: Option<&Path>, name: &str, args: &Value, dashboard: &str, mcp_
                 all: args["all"].as_bool().unwrap_or(false),
                 missing: args["missing"].as_bool().unwrap_or(false),
                 changed: args.get("changed").and_then(Value::as_str).filter(|s| !s.is_empty()).map(str::to_owned),
+                staged: args["staged"].as_bool().unwrap_or(false),
+                no_untracked: args["include_untracked"].as_bool() == Some(false),
                 built: args["built"].as_bool().unwrap_or(false),
                 done: args["done"].as_bool().unwrap_or(false),
                 unproven: args["unproven"].as_bool().unwrap_or(false),
@@ -136,6 +146,15 @@ pub fn call(root: Option<&Path>, name: &str, args: &Value, dashboard: &str, mcp_
                 text = format!("(first {limit} of {} listed; narrow with spec/prefix or raise limit)\n{text}", limit + more);
             }
             (text, json!(st))
+        }
+        "changes" => {
+            let c = a.changes(&ChangeOpts { staged: args["staged"].as_bool().unwrap_or(false), no_untracked: args["include_untracked"].as_bool() == Some(false) })?;
+            (c.text(), json!(c))
+        }
+        "diff" => {
+            let want = txt(args, "path");
+            let (change, diff) = a.p.file_diff(want)?;
+            (diff.clone(), json!({"path": want, "change": change, "diff": diff}))
         }
         "file" => {
             let names = a.p.spec_files();
@@ -213,7 +232,8 @@ pub const RESOURCES: [(&str, &str, &str, fn(&Analysis) -> serde_json::Result<Str
 
 /// The read-only tools that take no argument, also as plain-text MCP resources: (uri, name, tool). The text is what the CLI prints.
 /// The description is the tool's. Tools with arguments (`trace`, status filters) and the writing ones stay tools only.
-pub const VIEWS: [(&str, &str, &str); 4] = [
+pub const VIEWS: [(&str, &str, &str); 5] = [
+    ("spec11://changes", "spec11 changes", "changes"),
     ("spec11://report", "spec11 report", "report"),
     ("spec11://status", "spec11 status", "status"),
     ("spec11://uncovered", "spec11 uncovered", "uncovered"),
@@ -223,7 +243,8 @@ pub const VIEWS: [(&str, &str, &str); 4] = [
 /// The same tools as JSON resources, `<view uri>.json`: (uri, name, tool). The JSON is the tool's `structuredContent`, typed by
 /// the schema at `spec11://schemas/<name>`. Without a CodeGraph index `uncovered` and `overlap` cannot be typed data: reading
 /// them is an error that says why.
-pub const DATA: [(&str, &str, &str); 4] = [
+pub const DATA: [(&str, &str, &str); 5] = [
+    ("spec11://changes.json", "spec11 changes (JSON)", "changes"),
     ("spec11://report.json", "spec11 report (JSON)", "report"),
     ("spec11://status.json", "spec11 status (JSON)", "status"),
     ("spec11://uncovered.json", "spec11 uncovered (JSON)", "uncovered"),
@@ -253,7 +274,7 @@ pub fn schema_uri(resource: &str) -> Option<String> {
 }
 
 /// Names that have a published schema (`spec11://schemas/<name>`): the JSON resources.
-pub const SCHEMAS: [&str; 6] = ["report", "status", "uncovered", "overlap", "modules", "tests"];
+pub const SCHEMAS: [&str; 7] = ["report", "status", "changes", "uncovered", "overlap", "modules", "tests"];
 
 /// The schema of a type. schemars' numeric `format` hints (`uint`, `int64`, ...) are not JSON Schema formats: validators warn on them.
 fn of<T: schemars::JsonSchema>() -> Value {
@@ -300,7 +321,7 @@ fn shape(props: Value, required: &[&str]) -> Value {
 /// JSON Schema of a result's structured content: `report`, `status`, `trace`, `overlap`, `uncovered`, `modules`, `tests`,
 /// `file`, `source`, `doctor`, `codegraph`, `install`, `dashboard`. Typed from the core structs where there are any.
 pub fn schema(name: &str) -> Option<Value> {
-    use spec11_core::{Report, Status, Trace, coverage::{OverlapRow, Uncovered}, modules::{ModulesView, TestsView}};
+    use spec11_core::{Changes, Report, Status, Trace, coverage::{OverlapRow, Uncovered}, modules::{ModulesView, TestsView}};
     #[derive(schemars::JsonSchema)]
     #[allow(dead_code)]
     struct Overlap {
@@ -315,6 +336,7 @@ pub fn schema(name: &str) -> Option<Value> {
     Some(match name {
         "report" => of::<Report>(),
         "status" => of::<Status>(),
+        "changes" => of::<Changes>(),
         "trace" => of::<Trace>(),
         "uncovered" => of::<Uncovered>(),
         "overlap" => of::<Overlap>(),
@@ -322,6 +344,7 @@ pub fn schema(name: &str) -> Option<Value> {
         "tests" => of::<TestsView>(),
         "doctor" => of::<Doctor>(),
         "file" => shape(json!({"files": strs(), "name": {"type": "string"}, "markdown": {"type": "string"}}), &[]),
+        "diff" => shape(json!({"path": {"type": "string"}, "change": {"type": "string"}, "diff": {"type": "string"}}), &["path", "change", "diff"]),
         "source" => shape(json!({"path": {"type": "string"}, "text": {"type": "string"}}), &["path", "text"]),
         "codegraph" => shape(json!({"output": {"type": "string"}}), &["output"]),
         "install" => shape(json!({"status": {"type": "object"}, "suggestions": strs()}), &["status", "suggestions"]),
@@ -367,7 +390,7 @@ pub fn stamp(root: Option<&Path>) -> u64 {
     let Ok(p) = spec11_core::scan::Project::open(root) else { return 0 };
     let db = if p.cfg.codegraph.is_empty() { ".codegraph/codegraph.db".to_string() } else { p.cfg.codegraph.clone() };
     let mut h = std::collections::hash_map::DefaultHasher::new();
-    let extra = ["spec11.json".to_string(), format!("{db}-wal"), format!("{db}-shm"), db];
+    let extra = ["spec11.json".to_string(), ".git/index".to_string(), ".git/HEAD".to_string(), format!("{db}-wal"), format!("{db}-shm"), db];
     for rel in p.files.iter().chain(&p.spec_files()).chain(&extra) {
         if let Ok(m) = std::fs::metadata(p.root.join(rel)) {
             (rel, m.len(), m.modified().ok()).hash(&mut h);

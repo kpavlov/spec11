@@ -7,4 +7,4 @@ pub mod modules;
 pub mod report;
 pub mod scan;
 
-pub use report::{Analysis, Report, Status, StatusOpts, Trace};
+pub use report::{Analysis, ChangeOpts, Changes, Report, Status, StatusOpts, Trace};

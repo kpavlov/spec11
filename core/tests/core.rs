@@ -445,3 +445,42 @@ fn a_tests_body_stops_at_its_closing_brace() {
     let ls: Vec<String> = ["@Test(\"[A-1]\")", "func f() {", "  x()", "}", "other"].iter().map(|s| s.to_string()).collect();
     assert_eq!(spec11_core::scan::body(&ls, 1, 200).len(), 4);
 }
+
+#[doc = "[SCAN-18, SCAN-19]"]
+#[test]
+fn changes_split_staged_unstaged_and_untracked() {
+    use spec11_core::ChangeOpts;
+    let d = scratch("changes");
+    write(&d, "spec11.json", r#"{"src":["src"],"tests":["tests"],"ext":["kt"],"comment":["//"]}"#);
+    write(&d, "specs/a.md", "- **AAA-01** MUST — one.\n- **AAA-02** MUST — two.\n");
+    write(&d, "src/a.kt", "// (AAA-01)\nclass A\n");
+    write(&d, "src/b.kt", "// (AAA-02)\nclass B\n");
+    let git = |a: &[&str]| assert!(std::process::Command::new("git").args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(a).current_dir(&d).output().unwrap().status.success(), "{a:?}");
+    git(&["init", "-q"]);
+    git(&["add", "."]);
+    git(&["commit", "-qm", "x"]);
+    write(&d, "src/a.kt", "// (AAA-01)\nclass A2\n"); // staged below
+    git(&["add", "src/a.kt"]);
+    write(&d, "specs/a.md", "- **AAA-01** MUST — one.\n- **AAA-02** MUST — two, edited.\n"); // unstaged
+    write(&d, "src/c.kt", "// (AAA-01)\nclass C\n"); // untracked
+    let changes = |o: ChangeOpts| Analysis::load(Some(&d)).unwrap().changes(&o).unwrap();
+    let states = |c: &spec11_core::Changes| c.files.iter().map(|f| format!("{}:{}:{}:{}", f.path, f.change, f.stage, f.kind)).collect::<Vec<_>>();
+    let all = changes(ChangeOpts::default());
+    assert_eq!(states(&all), ["specs/a.md:modified:unstaged:spec", "src/a.kt:modified:staged:src", "src/c.kt:added:untracked:src"]);
+    assert_eq!(all.requirements.iter().map(|r| (r.id.as_str(), r.changed.join(","))).collect::<Vec<_>>(), [("AAA-01", "src".to_string()), ("AAA-02", "spec".to_string())]);
+    let tracked = changes(ChangeOpts { no_untracked: true, ..Default::default() });
+    assert_eq!(states(&tracked), ["specs/a.md:modified:unstaged:spec", "src/a.kt:modified:staged:src"]);
+    let staged = changes(ChangeOpts { staged: true, ..Default::default() });
+    assert_eq!(states(&staged), ["src/a.kt:modified:staged:src"]);
+    assert_eq!(staged.requirements.len(), 1);
+    let a = Analysis::load(Some(&d)).unwrap();
+    let (change, diff) = a.p.file_diff("src/c.kt").unwrap();
+    assert!(change == "added" && diff.contains("+class C") && diff.contains("@@ -0,0 +1,2 @@"), "{diff}");
+    assert!(a.p.file_diff("src/a.kt").unwrap().1.contains("+class A2"));
+    assert!(a.p.file_diff("src/b.kt").is_err() && a.p.file_diff("../x").is_err());
+    // status takes the same switches
+    let o = StatusOpts { staged: true, ..Default::default() };
+    assert_eq!(Analysis::load(Some(&d)).unwrap().status(&o).unwrap().rows.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), ["AAA-01"]);
+    let o = StatusOpts { changed: Some("HEAD".into()), no_untracked: true, ..Default::default() };
+    assert_eq!(Analysis::load(Some(&d)).unwrap().status(&o).unwrap().rows.len(), 2);
+}

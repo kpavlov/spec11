@@ -12,7 +12,10 @@
   import IdLink from "./IdLink.svelte";
   import Section from "./Section.svelte";
   import PaneHead from "./PaneHead.svelte";
-  import { stateTone, edgeTone, levelTone, type Tone } from "./tone";
+  import { stateTone, edgeTone, levelTone, changeTone, type Tone } from "./tone";
+  import { preview } from "./layout.svelte";
+  import DiffView from "./DiffView.svelte";
+  import ViewSwitch from "./ViewSwitch.svelte";
   import { sorted, toggleSort, type Sort } from "./sort";
   import { inline } from "./markdown";
   import { highlightLines } from "./highlight";
@@ -59,7 +62,7 @@
   let dismissed = $state(stored("spec11.banner"));
   const dismiss = (m: string) => { dismissed = m; try { localStorage.setItem("spec11.banner", m); } catch { /* storage blocked */ } };
   // nav emoji; below 1350px only these show (the label is hidden, the title keeps the name)
-  const EMOJI: Record<string, string> = { dashboard: "📊", requirements: "📋", modules: "📦", tests: "🧪", specs: "📄", overlap: "🔀", uncovered: "🚫" };
+  const EMOJI: Record<string, string> = { dashboard: "📊", changes: "📝", requirements: "📋", modules: "📦", tests: "🧪", specs: "📄", overlap: "🔀", uncovered: "🚫" };
   const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
 
   // ---- theme: auto (OS) | light | dark, remembered per browser ----
@@ -89,7 +92,7 @@
         // filter shortcuts: 1-7 pick a state, S/L step through states/levels (⇧ goes back), 0 clears every filter
         const k = e.key.toLowerCase(), d = e.shiftKey ? -1 : 1;
         const step = (keys: string[], cur: string) => keys[(keys.indexOf(cur) + d + keys.length) % keys.length];
-        if (k === "0") filter({ state: undefined, level: undefined, q: undefined });
+        if (k === "0") filter({ state: undefined, level: undefined, q: undefined, changed: undefined });
         else if (k === "s") filter({ state: step(states, stateFilter) });
         else if (k === "l") { const n = step(levelKeys, levelFilter || "all"); filter({ level: n === "all" ? undefined : n }); }
         else if (+k <= states.length) filter({ state: states[+k - 1] });
@@ -111,6 +114,9 @@
   let specMd = $state("");
   let code = $state<{ path: string; text: string } | null>(null);
   let report = $state<any>(null);
+  // the working tree against HEAD: undefined until loaded, null when it cannot be read (not a git work tree)
+  let changes = $state<any>(undefined);
+  let custom = $state<any>(undefined);
   let modules = $state<any>(null);
   let tests = $state<any>(null);
   let rows = $state<Row[]>([]);
@@ -137,6 +143,7 @@
     up = true;
     // the modules views are optional: a failed resource read leaves them empty instead of failing the load
     read("spec11://modules").then((m) => (modules = m)).catch(() => (modules = null));
+    call("changes").then((c) => (changes = c.data)).catch(() => (changes = null));
     gen++;
     if (!root) fetch("/api/info").then((x) => x.json()).then((i) => (root = i.root ?? "")).catch(() => {});
   }
@@ -216,6 +223,15 @@
     if (route.tab === "uncovered") fetchOnce("uncovered", () => call("uncovered").then((r) => void (uncovered = r.data)));
   });
 
+  // the Changes page asks for its own scope when it is not the default (staged + unstaged + untracked)
+  const scope = $derived({ staged: route.staged === "1", include_untracked: route.untracked !== "0" });
+  const defaultScope = $derived(!scope.staged && scope.include_untracked);
+  $effect(() => {
+    if (route.tab !== "changes" || defaultScope) return;
+    void gen;
+    call("changes", scope).then((r) => (custom = r.data)).catch(() => (custom = null));
+  });
+
   // scroll to what the URL points at once it is rendered (the lists scroll their own selection: DataTable)
   $effect(() => {
     void [specMd, code, route.id, route.line];
@@ -230,7 +246,7 @@
   let reloadTimer: ReturnType<typeof setTimeout> | undefined;
   // throttled: the first push reloads at once, a burst after it collapses into one trailing reload at most every 2 s
   let lastLoad = 0;
-  $effect(() => watch(["spec11://report", "spec11://status"], () => {
+  $effect(() => watch(["spec11://report", "spec11://status", "spec11://changes"], () => {
     clearTimeout(reloadTimer);
     reloadTimer = setTimeout(() => { lastLoad = Date.now(); load().catch(() => {}); }, Math.max(0, lastLoad + 2000 - Date.now()));
   }, (s) => (up = s)));
@@ -256,6 +272,17 @@
     later: "Marked later or deferred",
     ref: "Reference document, never due",
   };
+  // (WEB-22) what the working tree changed: files by path, the kinds a requirement is touched by, the modules holding changed files
+  const fileOf = $derived(new Map<string, any>((changes?.files ?? []).map((f: any) => [f.path, f])));
+  const reqKinds = $derived(new Map<string, string[]>((changes?.requirements ?? []).map((r: Row & { changed: string[] }) => [r.id, r.changed])));
+  const moduleOfFile = (path: string) => (modules?.modules ?? []).map((m: any) => m.path).filter((m: string) => m !== "." && path.startsWith(`${m}/`)).sort((a: string, b: string) => b.length - a.length)[0] ?? ".";
+  const changedMods = $derived(new Set<string>((changes?.files ?? []).map((f: any) => moduleOfFile(f.path))));
+  const onlyChanged = $derived(route.changed === "1");
+  const changeMark = (path: string) => fileOf.get(path)?.change ?? "";
+  // (WEB-25) the preview of a changed item shows the diff when the remembered view is "diff"
+  const diffOn = (changed: boolean) => changed && preview.view === "diff";
+  // the changed files behind a requirement: its spec file when the bullet was edited, and its tests and citing sources that changed
+  const reqFiles = (t: any, kinds: string[] = []) => [...new Set<string>([...(kinds.includes("spec") && t.spec ? [t.spec.file] : []), ...(t.tests ?? []).map((x: any) => x.file), ...(t.source_cites ?? []).map((x: any) => x.file)].filter((f) => fileOf.has(f)))];
   const stateFilter = $derived(route.state ?? "all");
   const query = $derived(route.q ?? "");
   const levels = ["MUST", "SHOULD", "MAY"];
@@ -263,13 +290,17 @@
   // SHALL and reference docs have no chip of their own: they group under "other"
   const levelOf = (r: Row) => (levels.includes(r.level) ? r.level : "other");
   // the rows that pass every filter except the one named: what a chip of that filter would show
-  const facet = (skip?: "state" | "level") => rows.filter((r) => (skip === "state" || stateFilter === "all" || r.state === stateFilter) && (skip === "level" || !levelFilter || levelOf(r) === levelFilter) && (!query || `${r.id} ${r.text} ${r.file}`.toLowerCase().includes(query.toLowerCase())));
+  const facet = (skip?: "state" | "level") => rows.filter((r) => (skip === "state" || stateFilter === "all" || r.state === stateFilter) && (skip === "level" || !levelFilter || levelOf(r) === levelFilter) && (!onlyChanged || reqKinds.has(r.id)) && (!query || `${r.id} ${r.text} ${r.file}`.toLowerCase().includes(query.toLowerCase())));
   const tally = (list: Row[], key: (r: Row) => string) => list.reduce<Record<string, number>>((m, r) => ((m[key(r)] = (m[key(r)] ?? 0) + 1), m), {});
   const shown = $derived(facet());
   const stateN = $derived.by(() => { const l = facet("state"); return { ...tally(l, (r) => r.state), all: l.length } as Record<string, number>; });
   const levelN = $derived.by(() => { const l = facet("level"); return { ...tally(l, levelOf), all: l.length } as Record<string, number>; });
   const levelKeys = $derived(["all", ...levels, ...(levelN.other || levelFilter === "other" ? ["other"] : [])]);
-  const filtering = $derived(stateFilter !== "all" || !!levelFilter || !!query);
+  const filtering = $derived(stateFilter !== "all" || !!levelFilter || !!query || onlyChanged);
+  // a "changed only" switch with its count; shown once something changed (or while it is on, so it can be turned off)
+  const changedSeg = (n: number) => [{ key: "all", label: "all" }, { key: "changed", label: "changed", count: n }];
+  const showChanged = $derived(!!changes?.files.length || onlyChanged);
+  const pickChanged = (k: string) => filter({ changed: k === "changed" ? "1" : undefined });
   const stateOpts = $derived(states.map((st, i) => ({ key: st, label: st, count: stateN[st] ?? 0, tone: st === "all" ? undefined : stateTone[st], title: `${STATE_HINT[st]} (${i + 1})` })));
   const levelOpts = $derived(levelKeys.map((l) => ({ key: l, label: l, count: levelN[l] ?? 0 })));
   // the modules table sorts here; the requirement, test and spec lists sort inside DataTable
@@ -281,7 +312,7 @@
   const reqCols = [{ key: "id", label: "ID", cls: "mono nowrap" }, { key: "level", label: "level", cls: "nowrap" }, { key: "state", label: "state" }, { key: "text", label: "requirement" }, { key: "file", label: "location", cls: "mono muted nowrap" }];
   const invalidN = $derived(report ? Object.values(report.invalid_tests).reduce((n: number, v: any) => n + v.length, 0) : 0);
   const known = $derived(new Set(rows.map((r) => r.id)));
-  const mods = $derived<any[]>(sorted((modules?.modules ?? []).filter((m: any) => !query || m.path.toLowerCase().includes(query.toLowerCase())), modSort, modVal));
+  const mods = $derived<any[]>(sorted((modules?.modules ?? []).filter((m: any) => (!onlyChanged || changedMods.has(m.path)) && (!query || m.path.toLowerCase().includes(query.toLowerCase()))), modSort, modVal));
   const hiddenMods = $derived<string[]>((modules?.hidden ?? []).filter((m: string) => !query || m.toLowerCase().includes(query.toLowerCase())));
   const modOf = $derived(modules?.modules.find((m: any) => m.path === route.module));
   const usedBy = $derived((modules?.modules ?? []).filter((m: any) => modOf && m.depends_on.some((d: any) => d.module === modOf.path)));
@@ -292,7 +323,7 @@
   const VIEWS = [{ key: "list", label: "📋 list" }, { key: "graph", label: "🕸️ graph" }];
   const allCases = $derived<any[]>((tests?.modules ?? []).filter((m: any) => !route.module || m.module === route.module).flatMap((m: any) => m.files.flatMap((f: any) => f.tests.map((t: any) => ({ module: m.module, file: f.file, t })))));
   const tcounts = $derived({ all: allCases.length, tagged: allCases.filter((c) => c.t.ids.length).length, untagged: allCases.filter((c) => !c.t.ids.length).length } as Record<string, number>);
-  const matched = $derived(allCases.filter((c) => (stateFilter === "all" || (stateFilter === "tagged") === c.t.ids.length > 0) && (!query || `${c.file} ${c.t.name} ${c.t.ids.join(" ")}`.toLowerCase().includes(query.toLowerCase()))));
+  const matched = $derived(allCases.filter((c) => (stateFilter === "all" || (stateFilter === "tagged") === c.t.ids.length > 0) && (!onlyChanged || fileOf.has(c.file)) && (!query || `${c.file} ${c.t.name} ${c.t.ids.join(" ")}`.toLowerCase().includes(query.toLowerCase()))));
   // list rows: a test is told apart by file and line, which is also how the URL selects it (`path` + `line`)
   const testRows = $derived(matched.map((c) => ({ ...c, key: `${c.file}:${c.t.line}` })));
   const testCols = [{ key: "name", label: "test", cls: "wrap" }, { key: "ids", label: "requirements", cls: "nowrap" }, { key: "file", label: "location", cls: "mono muted nowrap" }];
@@ -301,7 +332,14 @@
   const byId = $derived(new Map(rows.map((r) => [r.id, r])));
   // the preview shows the lines of the selected test: a few before it and the start of its body
   const TEST_BEFORE = 3, TEST_AFTER = 24;
-  const specRows = $derived((specFiles ?? []).map((file) => ({ file })));
+  const specRows = $derived((specFiles ?? []).filter((file) => !onlyChanged || fileOf.has(file)).map((file) => ({ file })));
+  // the Changes page: files grouped by state, and the counts that link to the filtered views
+  const view = $derived(defaultScope ? changes : custom);
+  const CHANGES = ["added", "modified", "renamed", "deleted"];
+  const nOf = (kind: string) => (view?.files ?? []).filter((f: any) => f.kind === kind).length;
+  const viewMods = $derived(new Set<string>((view?.files ?? []).map((f: any) => moduleOfFile(f.path))));
+  const noTestN = $derived((changes?.requirements ?? []).filter((r: Row) => r.state === "none" || r.state === "src-only").length);
+  const tallyBy = (files: any[]) => CHANGES.map((c) => [c, files.filter((f) => f.change === c).length] as const).filter(([, n]) => n);
   const taggedN = $derived(tests ? tests.modules.reduce((n: number, m: any) => n + m.files.reduce((k: number, f: any) => k + f.tests.filter((t: any) => t.ids.length).length, 0), 0) : 0);
   const plain = (t: string) => t.replace(/[`*~]/g, "");
   const req = (id: string): Route => ({ tab: "requirements", id });
@@ -375,6 +413,12 @@
       {:else}
       {@const sp = trace.data?.spec}
       <PaneHead title={trace.data.id} close={u({ ...route, id: undefined })}>{#if sp}<Pill>{sp.level}</Pill>{/if}</PaneHead>
+      {@const dfiles = reqFiles(trace.data, reqKinds.get(trace.data.id))}
+      {#if dfiles.length}<p><ViewSwitch n={dfiles.length} /></p>{/if}
+      {#if diffOn(dfiles.length > 0)}
+        <DiffView paths={dfiles} {gen} href={(p) => u({ tab: "code", path: p })} />
+        <p class="muted note">What changed against HEAD in the files that spec, tag or cite this requirement. Evidence of edits, not that it is done.</p>
+      {:else}
       {#if sp}
         <p class="muted mono nowrap"><a href={u({ tab: "specs", file: sp.file, id: trace.data.id })}>{sp.file}:{sp.line}</a></p>
         <Markdown source={sp.text} />
@@ -394,6 +438,7 @@
       <details class="plain"><summary class="muted">plain text</summary><pre>{trace.text}</pre></details>
       <p class="muted note">Evidence, not truth.</p>
       {/if}
+      {/if}
     </aside>
   {/if}
 {/snippet}
@@ -406,6 +451,10 @@
     {@const lo = Math.max(1, (route.line ?? 1) - TEST_BEFORE)}
     <PaneHead title={c?.t.name ?? route.path} close={u({ ...route, path: undefined, line: undefined })} />
     <p class="muted mono nowrap"><a href={u({ tab: "code", path: route.path, line: route.line })}>{route.path}:{route.line}</a>{#if c}{" "}in <a href={u({ tab: "modules", module: c.module })}>{c.module}</a>{/if}</p>
+    {#if fileOf.has(route.path)}<p><ViewSwitch /></p>{/if}
+    {#if diffOn(fileOf.has(route.path))}
+      <DiffView paths={[route.path]} {gen} />
+    {:else}
     {#if c}
       <h4>Requirements</h4>
       {#if c.t.ids.length}
@@ -426,6 +475,7 @@
       </table>
       <p class="muted note"><a href={u({ tab: "code", path: route.path, line: route.line })}>Open the whole file</a>. A tag is evidence, not proof that the test passes.</p>
     {:else}<p class="muted">Loading {route.path}…</p>{/if}
+    {/if}
   {/if}
 {/snippet}
 
@@ -436,7 +486,7 @@
   <nav aria-label="views">
     {#each TABS.filter((t) => t !== "setup") as t}
       <a class="tab" class:on={route.tab === t} aria-current={route.tab === t ? "page" : undefined} href={u({ tab: t })} title={t} aria-label={t}>
-        <span aria-hidden="true">{EMOJI[t]}</span><span class="lbl">{t}</span>{#if t === "dashboard" && report?.total_problems}<span class="badge" data-tone="bad" title="{report.total_problems} problems">{report.total_problems}</span>{/if}
+        <span aria-hidden="true">{EMOJI[t]}</span><span class="lbl">{t}</span>{#if t === "dashboard" && report?.total_problems}<span class="badge" data-tone="bad" title="{report.total_problems} problems">{report.total_problems}</span>{/if}{#if t === "changes" && changes?.requirements.length}<span class="badge" data-tone="accent" title="{changes.requirements.length} requirements may be affected">{changes.requirements.length}</span>{/if}
       </a>
     {/each}
   </nav>
@@ -472,6 +522,19 @@
       </p>
     </section>
     {#if !report.index}<p class="note-line muted">No CodeGraph index: test-to-code links and uncovered code are not checked.</p>{/if}
+    {#if changes}
+      <Section title="Changes" count={changes.files.length} tone={changes.files.length ? "accent" : undefined}>
+        {#if !changes.files.length}<p class="muted">Working tree clean: nothing to compare with HEAD.</p>
+        {:else}
+          <p>{#each tallyBy(changes.files) as [c, n]}<Pill tone={changeTone(c)}>{n} {c}</Pill>{/each}</p>
+          <p>
+            <a href={u({ tab: "requirements", changed: "1" })}>{plural(changes.requirements.length, "requirement")}</a> may be affected{#if noTestN} · <b data-tone="bad">{noTestN} without a test</b>{/if}
+            <span class="muted"> · evidence of edits, not of done</span>
+          </p>
+        {/if}
+        <p><a href={u({ tab: "changes" })}>All changes</a></p>
+      </Section>
+    {/if}
     {#if modules?.modules.length}
       <Section title="Modules" count={modules.modules.length}>
         <table>
@@ -529,6 +592,7 @@
     <div class="bar">
       <Seg label="State" keycap="S" hint="Press 1–7 to pick a state, S for the next one, ⇧S for the previous one" options={stateOpts} value={stateFilter} onpick={(k) => filter({ state: k })} />
       <Seg label="Level" keycap="L" hint="Press L for the next level, ⇧L for the previous one" options={levelOpts} value={levelFilter || "all"} onpick={(k) => filter({ level: k === "all" ? undefined : k })} />
+      {#if showChanged}<Seg label="Changes" hint="Only what the working tree changed against HEAD" options={changedSeg(rows.filter((r) => reqKinds.has(r.id)).length)} value={onlyChanged ? "changed" : "all"} onpick={pickChanged} />{/if}
       <input name="filter" aria-label="filter" placeholder="Filter ID, text, file   ( / )" value={query} oninput={(e) => filter({ q: e.currentTarget.value })} />
       <span class="found muted nowrap" aria-live="polite">{#if filtering}{shown.length} of {rows.length} <a href={u({ tab: "requirements" })} title="Clear every filter (0)">Clear filters <kbd>0</kbd></a>{/if}</span>
       <SplitToggle />
@@ -539,7 +603,7 @@
           {#snippet cell(r, k)}
             {#if k === "id"}<a href={u({ ...route, id: r.id })}>{r.id}</a>
             {:else if k === "level"}{#if /^(MUST|SHOULD|MAY)$/.test(r.level)}<span class="rfc {r.level.toLowerCase()}">{r.level}</span>{/if}
-            {:else if k === "state"}<Pill tone={stateTone[r.state]}>{r.state}</Pill>{#if r.done}<Pill tone="accent" title="check-marked: {r.verdict}">✓ {r.verdict}</Pill>{/if}
+            {:else if k === "state"}<Pill tone={stateTone[r.state]}>{r.state}</Pill>{#if r.done}<Pill tone="accent" title="check-marked: {r.verdict}">✓ {r.verdict}</Pill>{/if}{#if reqKinds.has(r.id)}<Pill tone="accent" title="the working tree changed its {reqKinds.get(r.id)!.join(", ")}: it may be affected, not proof">✎ {reqKinds.get(r.id)!.join("+")}</Pill>{/if}
             {:else if k === "text"}<div class="txt" title={plain(r.text)}>{@html inline(r.text)}</div>
             {:else}<a href={u({ tab: "specs", file: r.file, id: r.id })}>{r.file}:{r.line}</a>{/if}
           {/snippet}
@@ -559,7 +623,10 @@
         {#if root}<a class="btn small" title="Open in {editor}" href={EDITORS[editor](`${root}/${code.path}`, route.line ?? 1)}>Open in</a>{/if}
         <select class="small" bind:value={editor} onchange={() => save("spec11.editor", editor)} aria-label="Editor">{#each Object.keys(EDITORS) as e}<option>{e}</option>{/each}</select>
         <button class="small" class:on={wrap} aria-pressed={wrap} onclick={() => { wrap = !wrap; save("spec11.wrap", wrap ? "1" : "0"); }}>Wrap</button>
+        {#if fileOf.has(code.path)}<ViewSwitch />{/if}
       </p>
+      {#if diffOn(fileOf.has(code.path))}<DiffView paths={[code.path]} {gen} />
+      {:else}
       <table class="code" class:wrap>
         <tbody>
           {#each lines as l, i}
@@ -570,6 +637,7 @@
           {/each}
         </tbody>
       </table>
+      {/if}
     {/if}
   {:else if route.tab === "setup"}
     {#if !setup}<p class="muted">Checking…</p>
@@ -632,6 +700,7 @@
   {:else if route.tab === "modules"}
     <div class="bar">
       <input name="filter" aria-label="filter modules" placeholder="Filter modules" value={query} oninput={(e) => filter({ q: e.currentTarget.value })} />
+      {#if showChanged}<Seg label="Changes" options={changedSeg(changedMods.size)} value={onlyChanged ? "changed" : "all"} onpick={pickChanged} />{/if}
       <span class="muted">{modules?.modules.length ?? 0} modules</span>
       {#if modView === "list" && modules?.hidden?.length}
         <label class="muted nowrap"><input type="checkbox" checked={showHidden} onchange={(e) => save("spec11.hidden", (showHidden = e.currentTarget.checked) ? "1" : "0")} /> show hidden ({modules.hidden.length})</label>
@@ -650,7 +719,7 @@
         <tbody>
           {#each mods as m (m.path)}
             <tr>
-              <td class="mono nowrap"><a href={u({ tab: "modules", module: m.path })}>{m.path}</a></td>
+              <td class="mono nowrap"><a href={u({ tab: "modules", module: m.path })}>{m.path}</a>{#if changedMods.has(m.path)}{" "}<Pill tone="accent" title="files of this module changed in the working tree">✎ changed</Pill>{/if}</td>
               <td class="muted">{m.manifest ?? ""}</td>
               <td class="muted">{m.languages.join(", ")}</td>
               <td class="num">{m.src_files}</td>
@@ -677,6 +746,7 @@
     <div class="page">
     <div class="bar">
       <Seg label="Tagged" options={testOpts} value={stateFilter} onpick={(k) => filter({ state: k })} />
+      {#if showChanged}<Seg label="Changes" options={changedSeg(allCases.filter((c) => fileOf.has(c.file)).length)} value={onlyChanged ? "changed" : "all"} onpick={pickChanged} />{/if}
       <select aria-label="module" value={route.module ?? ""} onchange={(e) => filter({ module: e.currentTarget.value || undefined })}>
         <option value="">all modules</option>
         {#each modules?.modules ?? [] as m}<option value={m.path}>{m.path}</option>{/each}
@@ -691,7 +761,7 @@
         {#snippet list()}
           <DataTable rows={testRows} columns={testCols} rowKey={(c) => c.key} selected={selTest} onselect={(k, how) => { const c = testRows.find((x) => x.key === k); navigate({ ...route, path: c?.file, line: c?.t.line }, how === "key"); }} value={testVal} groupOf={(c) => c.module} storageKey="spec11.collapsed.tests">
             {#snippet cell(c, k)}
-              {#if k === "name"}<span class="mono" title={c.t.qualified}>{c.t.name}</span>
+              {#if k === "name"}<span class="mono" title={c.t.qualified}>{c.t.name}</span>{#if changeMark(c.file)}{" "}<Pill tone={changeTone(changeMark(c.file))} title="its file is {changeMark(c.file)} in the working tree">✎ {changeMark(c.file)}</Pill>{/if}
               {:else if k === "file"}<a href={u({ tab: "code", path: c.file, line: c.t.line })}>{c.file}:{c.t.line}</a>
               {:else}{#each c.t.ids as id}{@render idlink(id, known.has(id) ? req(id) : { tab: "requirements", q: id })}{" "}{/each}{#if !c.t.ids.length}<span class="muted">untagged</span>{/if}{/if}
             {/snippet}
@@ -706,15 +776,74 @@
     {#if specFiles === null}<p class="muted">Loading…</p>
     {:else}
       <div class="page">
+        {#if showChanged}<div class="bar"><Seg label="Changes" options={changedSeg(specFiles.filter((f) => fileOf.has(f)).length)} value={onlyChanged ? "changed" : "all"} onpick={pickChanged} /></div>{/if}
         <Split name="specs" def={22}>
           {#snippet list()}
             <DataTable headless rows={specRows} columns={[{ key: "file", label: "spec" }]} rowKey={(r) => r.file} selected={route.file ?? specFiles![0]} onselect={(k, how) => k && navigate({ tab: "specs", file: k }, how === "key")}>
-              {#snippet cell(r)}<a href={u({ tab: "specs", file: r.file })}>{r.file.replace(/\.md$/, "")}</a>{/snippet}
+              {#snippet cell(r)}<a href={u({ tab: "specs", file: r.file })}>{r.file.replace(/\.md$/, "")}</a>{#if changeMark(r.file)}{" "}<Pill tone={changeTone(changeMark(r.file))} title="{changeMark(r.file)} in the working tree">✎ {changeMark(r.file)}</Pill>{/if}{/snippet}
             </DataTable>
           {/snippet}
-          {#snippet preview()}<article><Markdown source={specMd} /></article>{/snippet}
+          {#snippet preview()}
+            {@const f = route.file ?? specFiles![0]}
+            {#if fileOf.has(f)}<p><ViewSwitch /></p>{/if}
+            {#if diffOn(fileOf.has(f))}<DiffView paths={[f]} {gen} />{:else}<article><Markdown source={specMd} /></article>{/if}
+          {/snippet}
         </Split>
       </div>
+    {/if}
+  {:else if route.tab === "changes"}
+    <div class="bar">
+      <Seg label="Scope" hint="Against HEAD" options={[{ key: "all", label: "staged + unstaged" }, { key: "staged", label: "staged only" }]} value={scope.staged ? "staged" : "all"} onpick={(k) => filter({ staged: k === "staged" ? "1" : undefined })} />
+      <label class="muted nowrap"><input type="checkbox" checked={scope.include_untracked && !scope.staged} disabled={scope.staged} onchange={(e) => filter({ untracked: e.currentTarget.checked ? undefined : "0" })} /> untracked files</label>
+    </div>
+    {#if view === undefined}<p class="muted">Loading…</p>
+    {:else if view === null}<p class="muted empty">Not checked: this is not a git work tree, or git is not available.</p>
+    {:else if !view.files.length}<p class="muted empty">Working tree clean: nothing {scope.staged ? "staged" : "changed"} against HEAD.</p>
+    {:else}
+      <Section title="Files" count={view.files.length} tone="accent">
+        <table>
+          <tbody>
+            {#each view.files as f (f.path)}
+              <tr>
+                <td class="nowrap"><Pill tone={changeTone(f.change)}>{f.change}</Pill></td>
+                <td class="muted nowrap">{f.stage}</td>
+                <td class="muted nowrap">{f.kind}</td>
+                <td class="mono">
+                  {#if f.change === "deleted" || f.kind === "other"}{f.path}
+                  {:else if f.kind === "spec"}<a href={u({ tab: "specs", file: f.path })}>{f.path}</a>
+                  {:else}<a href={u({ tab: "code", path: f.path })}>{f.path}</a>{/if}
+                </td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </Section>
+      <Section title="Requirements that may be affected" count={view.requirements.length} tone={view.requirements.length ? "accent" : undefined}>
+        {#if !view.requirements.length}<p class="muted">No requirement's spec line, tagged test or citing source file is among the changes.</p>
+        {:else}
+          <table>
+            <tbody>
+              {#each view.requirements as r (r.id)}
+                <tr>
+                  <td class="mono nowrap">{@render idlink(r.id, req(r.id))}</td>
+                  <td class="nowrap"><Pill tone={stateTone[r.state]}>{r.state}</Pill>{#each r.changed as k}<Pill tone="accent" title="its {k} changed">✎ {k}</Pill>{/each}</td>
+                  <td><div class="txt" title={plain(r.text)}>{@html inline(r.text)}</div></td>
+                  <td class="mono muted nowrap"><a href={u({ tab: "specs", file: r.file, id: r.id })}>{r.file}:{r.line}</a></td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        {/if}
+        <p class="muted note">A changed file may affect a requirement; it does not say the requirement is done or its test passes. Evidence, not truth.</p>
+      </Section>
+      <Section title="Tests, specs and modules">
+        <p>
+          <a href={u({ tab: "tests", changed: "1" })}>{plural(nOf("test"), "test file")}</a> ·
+          <a href={u({ tab: "specs", changed: "1" })}>{plural(nOf("spec"), "spec file")}</a> ·
+          <a href={u({ tab: "modules", changed: "1" })}>{plural(viewMods.size, "module")}</a>
+          <span class="muted"> changed ({plural(nOf("src"), "source file")}, {plural(nOf("other"), "other file")} not scanned)</span>
+        </p>
+      </Section>
     {/if}
   {:else if route.tab === "overlap"}
     {#if overlap === null}<p class="muted">Loading…</p>

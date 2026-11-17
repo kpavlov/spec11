@@ -28,3 +28,7 @@ export const setPos = (name: string, n: number | null, keep = true) => {
 };
 // beside (wide screens, orientation "v") or stacked
 export const sideBySide = () => layout.split === "v" && matchMedia("(min-width: 1000px)").matches;
+
+// What the preview of a changed item shows: the item as it is, or what changed against HEAD. One choice for every preview.
+export const preview = $state<{ view: "actual" | "diff" }>({ view: read("spec11.view") === "diff" ? "diff" : "actual" });
+export const setView = (v: string) => { preview.view = v === "diff" ? "diff" : "actual"; write("spec11.view", preview.view); };
