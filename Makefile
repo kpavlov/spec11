@@ -10,7 +10,7 @@ ARCH := $(shell uname -m | sed s/arm64/aarch64/)
 OPENER := $(shell command -v open || command -v xdg-open)
 VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
 
-.PHONY: help dev serve web build run install uninstall dist report test parity upgrade clean mcp-inspector
+.PHONY: help dev serve web build run install uninstall dist report test parity bench upgrade clean mcp-inspector
 
 help:
 	@echo "make dev      Vite (HMR, :5173) + Rust server on :$(PORT) proxying to it, scanning $(ROOT)"
@@ -21,6 +21,7 @@ help:
 	@echo "make dist      dist/spec11-$(VERSION)-$(OS)-$(ARCH).tar.gz for this machine (macOS or Linux)"
 	@echo "make report   print the text report for $(ROOT)"
 	@echo "make test     cargo tests; make parity compares with the old Python scripts if vendored in $(ROOT)"
+	@echo "make bench    time spec11 on a generated repo at REVS (default: main HEAD; . = working tree), SCALE=1 RUNS=10 JSON=1"
 	@echo "make upgrade   bump web (pnpm, to latest) and Rust (cargo update; cargo upgrade --incompatible if cargo-edit is installed) dependencies"
 	@echo "override: make dev ROOT=/path/to/repo PORT=7500 OPEN=0   (OPEN=0: don't open the browser)"
 
@@ -94,3 +95,9 @@ mcp-inspector: ## Launch MCP Inspector UI
 	@echo "🧐 MCP Inspector"
 	@export MCP_INSPECTOR_SECRET_STORE=memory && \
 	npx -y @modelcontextprotocol/inspector --config mcp-inspector.json
+
+REVS ?= main HEAD
+SCALE ?= 1
+RUNS ?= 10
+bench:
+	@python3 bench/bench.py $(REVS) --scale $(SCALE) --runs $(RUNS) $(if $(JSON),--json)
