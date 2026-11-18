@@ -8,7 +8,7 @@ One Rust binary, three interfaces over the same core:
 
 | Interface | How |
 |---|---|
-| CLI | `spec11 report`, `spec11 status [flags]` (`--changed [REF] [--staged] [--no-untracked] [--ignore-whitespace]`), `spec11 trace ID`, `spec11 changes|diff|history` (`--json`, `--root DIR`) |
+| CLI | `spec11 report`, `spec11 status [flags]` (`--changed [REF] [--staged] [--no-untracked] [--ignore-whitespace]`), `spec11 trace ID`, `spec11 changes|diff|history`, `spec11 overlap|uncovered`, `spec11 doctor`, `spec11 install|uninstall`; every command takes `--json` and `--root DIR` |
 | MCP (streamable HTTP) | `spec11` / `spec11 serve` → `http://127.0.0.1:7411/mcp` |
 | Web dashboard | `spec11` / `spec11 serve` → `http://127.0.0.1:7411/` (same or separate port) |
 
@@ -32,7 +32,19 @@ make run                      # release binary with the UI embedded, serves on :
 make report                   # text report
 make test                     # cargo tests
 make parity                   # Rust output == the old Python scripts' output (needs them vendored in ROOT)
+make bench                    # time the scan at main vs HEAD (see Benchmark)
 make dev ROOT=/path/to/repo PORT=7500 OPEN=0
+```
+
+Without `make`, build once (`cargo build --release`; `SKIP_WEB_BUILD=1` skips the UI build when `web/dist` exists) and call the binary:
+
+```sh
+spec11 report                          # whole-project status: coverage, problems, where to look next
+spec11 status --missing                # due requirements with no test (also --issues, --done, --unproven, --built, --all)
+spec11 status --changed HEAD           # requirements the working tree touches (--staged, --no-untracked, --ignore-whitespace)
+spec11 trace SCAN-01                   # one requirement: spec text, tests, citations, related code
+spec11 changes --ref main              # files and requirements changed against a ref (or one commit)
+spec11 report --json --root ../other   # JSON, for another repo
 ```
 
 `ROOT` defaults to this repo (spec11 scans itself: see `specs/` and `spec11.json`); point it at another repo with `ROOT=...`. Needs Rust, Node and pnpm; the release binary needs neither at runtime.
@@ -48,6 +60,32 @@ MCP client config:
 ```
 
 Tools: `report`, `status`, `changes` (what changed against a ref or in one commit: files, renames, deleted files and requirements, and the requirements the changed lines touch; also `spec11://changes`), `diff` (one changed file, with the requirements each hunk touches), `history` (commits not on the base branch), `trace`, `overlap`, `uncovered`, `file`, `source`, `dashboard`, `module` (hide or show a module: adds it to or removes it from `.spec11ignore`), and `install_status` / `install` / `uninstall` / `codegraph` (the last three write files). Plain-text resources with the same output as `report`, `status`, `uncovered` and `overlap`: `spec11://report`, `spec11://status`, `spec11://uncovered`, `spec11://overlap`; prefer them where the client reads resources (a client on 2026-07-28 can also `subscriptions/listen` to them and is notified when the repo changes). The tools stay for clients without resource support and for arguments. The same four as JSON (`spec11://report.json`, `status.json`, `uncovered.json`, `overlap.json`), typed by JSON Schemas readable at `spec11://schemas/<name>`; the tools declare them as `outputSchema`. Read-only JSON resources: `spec11://modules` (modules by build manifest, with CodeGraph symbols and the modules each depends on) and `spec11://tests` (test cases detected by marker, grouped by module, with the requirement IDs tagged on each; detected, not run). The dashboard is also an MCP Apps resource (`ui://spec11/dashboard`) for hosts that render it: only the `dashboard` tool opens it, and its optional `view` (e.g. `modules`, `requirements/DOC-25?state=none`) picks the page; elsewhere use the URL from `dashboard`.
+
+## Benchmark
+
+`make bench` times the CLI on a generated repo at several git revisions, so a change can be compared with a baseline. Each command is a full load (`Analysis::load`), so the numbers are mostly scan time.
+
+```sh
+make bench                                      # main vs HEAD, scale 1, 10 runs
+make bench REVS="main HEAD ." SCALE=4 RUNS=20   # `.` is the working tree, uncommitted changes included
+make bench JSON=1                               # one JSON document instead of a Markdown table (for scripts and agents)
+python3 bench/bench.py --help
+```
+
+- The repo is generated deterministically under `target/bench/repo-<scale>`: bullet specs only (so old and new revisions read it the same way) with non-ASCII text, source files citing requirements, test files tagging them, and markdown docs; no CodeGraph index. Scale 1 is 2,000 requirements, 400 source files, 100 test files and 100 docs.
+- Each revision is built once (release, no web UI) and cached in `target/bench/bin`; `.` is rebuilt every run. Revisions are exported with `git archive`, so nothing is written to `.git`.
+- The first revision listed is the baseline. The table has median, min and stdev in ms, the change of the median against the baseline, and a hash of each command's output; the run says whether the output is the same for every revision. A speed-up must not change the output.
+- Stdlib Python only.
+
+Results (scale 4: 8,000 requirements, 1,600 source files, 400 test files, 400 docs; median of 10 runs; one macOS machine, so compare the ratios, not the milliseconds):
+
+| command | `main` | `e1755f6` (new spec formats) | `HEAD` (+ scan speed-ups) |
+|---|--:|--:|--:|
+| `report` | 98 ms | 167 ms (+70%) | 113 ms (+15%) |
+| `status --all` | 125 ms | 180 ms (+44%) | 139 ms (+11%) |
+| `trace GEN-0001` | 102 ms | 160 ms (+57%) | 117 ms (+15%) |
+
+The output of every command is byte-identical across the three revisions. Supporting the new spec formats (heading and paragraph blocks, dotted IDs, OpenSpec deltas, UTF-8 cleaning) cost 44–70%; the speed-ups (one walk per folder, ASCII word boundaries, one pass for struck and removed IDs, slices instead of copies) won back about two thirds of it, and the scan is still 11–15% slower than before. The 1-second change poll behind `resources/updated` is not covered: the CLI does not expose it.
 
 ## Dashboard URLs
 
@@ -74,6 +112,7 @@ core/     spec11-core: scan, config, report, coverage, codegraph (the only SQL)
 server/   spec11 binary: CLI, axum API, MCP (rmcp), UI serving
 web/      Svelte 5 + Vite (no SvelteKit), builds to one dist/index.html
 skills/   the agent skill (SKILL.md), embedded in the binary
+bench/    bench.py: before/after timings (make bench)
 ```
 
 In debug builds the server proxies the UI to Vite (`localhost:5173`); in release it serves the embedded `web/dist`.
