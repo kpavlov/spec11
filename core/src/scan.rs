@@ -305,8 +305,8 @@ impl Project {
         // the config can move the specs folder, so look for spec11.json first
         let base = start.ancestors().find(|d| d.join("spec11.json").exists()).unwrap_or(&start);
         let first = Config::load(base)?;
-        let hint = |at: &str| format!("spec11: no specs (specs/, spec/, docs/specs/, SPEC.md, decisions/ ... or markdown with requirement lines) in {at}; set \"specs\" in spec11.json");
-        let root = if root.is_some() { start.clone() } else { find_root(&start, &first.specs).ok_or_else(|| hint(&format!("{} or above", start.display())))? };
+        // (SCAN-28) a repo with no specs still opens: only "no repo at all" is an error, so spec11 never walks `~` or `/` unasked
+        let root = if root.is_some() { start.clone() } else { find_root(&start, &first.specs).ok_or_else(|| format!("spec11: no repo here (no git work tree and no specs) in {} or above; run inside a repo or pass --root", start.display()))? };
         let mut cfg = if root == base { first } else { Config::load(&root)? };
         let allow = detect::allow_list(&root);
         let ignore = detect::Ignore::load(&root);
@@ -319,15 +319,12 @@ impl Project {
         // (SCAN-12) `specs` may name a folder or a file; left empty, the places come from the repo
         let spec_paths = if cfg.specs.is_empty() {
             let v = if read { detect::spec_paths(&root, &allow, &ignore) } else { detect::spec_places(&root, &allow, &ignore) };
-            if v.is_empty() && doc_dirs.is_empty() {
-                return Err(hint(&root.display().to_string()));
-            }
             cfg.specs = v.first().cloned().unwrap_or_default(); // the main one, as spec11.json would name it
             v
         } else if root.join(&cfg.specs).exists() {
             vec![cfg.specs.clone()]
         } else {
-            return Err(format!("spec11: no {} in {}", cfg.specs, root.display()));
+            vec![] // a configured path that is not there counts as no specs; `doctor` says so
         };
         // (SCAN-09) what spec11.json leaves out comes from the CodeGraph file list, else from a walk of the repo
         let graph = Graph::open(&root.join(&cfg.codegraph));
@@ -702,21 +699,23 @@ impl Project {
         }
     }
 
-    /// Name of the declaration a comment at 1-based line `n` belongs to: the next one for a `///` doc comment, else the nearest above.
+    // (SCAN-29)
+    /// Name of the declaration a comment at 1-based line `n` belongs to: the next one for a comment line that leads into a declaration
+    /// (only comment, doc and attribute lines between), else the nearest above.
     pub fn enclosing(&self, ls: &[String], n: usize) -> String {
-        let hit = |i: usize| self.rx.decl.captures(&ls[i]).map(|m| m[1].to_string());
-        if ls[n - 1].trim_start().starts_with("///") {
-            (n..(n + 8).min(ls.len())).find_map(hit)
-        } else {
-            (0..n).rev().find_map(hit)
+        let decl = |l: &String| self.rx.decl.captures(l).map(|m| m[1].to_string());
+        let lead = |l: &&String| { let l = l.trim_start(); self.is_comment(l) || l.starts_with("#[") || l.starts_with('@') };
+        if self.is_comment(ls[n - 1].trim_start()) && let Some(d) = ls[n..].iter().skip_while(lead).next().and_then(decl) {
+            return d;
         }
-        .unwrap_or_default()
+        ls[..n].iter().rev().find_map(decl).unwrap_or_default()
     }
 
     pub(crate) fn git(&self, args: &[&str]) -> Result<String, String> {
         let r = Command::new("git").args(args).current_dir(&self.root).output().map_err(|e| format!("git: {e}"))?;
         if !r.status.success() {
-            return Err(format!("spec11: git {} failed: {}", args.join(" "), String::from_utf8_lossy(&r.stderr).trim()));
+            // the first line only: outside a work tree git follows its warning with a page of usage text
+            return Err(format!("spec11: git {} failed: {}", args.join(" "), String::from_utf8_lossy(&r.stderr).lines().next().unwrap_or("").trim()));
         }
         Ok(String::from_utf8_lossy(&r.stdout).into_owned())
     }

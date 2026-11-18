@@ -30,6 +30,8 @@ Deterministic evidence only: same tree, same text. No LLM in the core.
 - **SCAN-21** MUST — refuse a `specs`, `src`, `tests` or `codegraph` path in `spec11.json` that leaves the repo (an absolute path, `..`, a symlink out), unless it resolves into `ALLOWED_PATHS`, so a repo's config cannot make spec11 read other files.
 - **SCAN-22** SHOULD — in `changes`, also list a requirement when a changed source file is one its tagged tests reach through the CodeGraph index (GRAPH-04), noted as reached by a test, not cited.
 - **SCAN-20** SHOULD — list the commits of a branch that are not on the base branch (`history`: main or master by default, newest first, with the number of uncommitted files), so each one can be explained with `changes commit=<sha>`; on the base branch itself it lists the latest commits. A commit that changes no file the filters show (whitespace-only changes, ignored files, files spec11 does not scan) is left out.
+- **SCAN-28** MUST — open a repo with no specs without an error: zero requirements and spec files, while the sources, tests and modules are still scanned, and `status` with no filter lists nothing instead of failing, while the `report` text says "no specs found" in a note, so zeros are not read as success; a `specs` path in `spec11.json` that does not exist counts as no specs. The root is the nearest ancestor with specs, else the nearest git work tree, else (only with `--root`) that folder; with none of these it is still an error, so spec11 never walks `~` or `/` on its own.
+- **SCAN-29** SHOULD — `trace` names, for each source citation, the declaration it belongs to: a comment line that leads into a declaration (only comment, doc or attribute lines between) belongs to that declaration, any other comment to the nearest one above, so a `// (ID)` placed above a doc comment is not credited to the function before it.
 
 ## CodeGraph
 
@@ -39,3 +41,4 @@ Deterministic evidence only: same tree, same text. No LLM in the core.
 - **GRAPH-03** MUST — treat a missing index as "not checked", not as an error: indexing is the user's decision.
 - **GRAPH-05** SHOULD — group the repo's files into modules (the nearest folder with a build manifest, else the folder above `src`), count a file as a test file only when it is test-named or in a tests folder that is not also a source folder (inline unit tests stay source), and from the index count each module's symbols and the dependencies between modules.
 - **GRAPH-04** SHOULD — link tests to code through the index.
+- **GRAPH-06** SHOULD — list each module's source files (`sources`), so the dashboard can show them with or without a requirement.

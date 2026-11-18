@@ -105,6 +105,7 @@
 
   // ---- data ----
   let setup = $state<{ status: any; suggestions: string[]; text: string } | null>(null);
+  let setupError = $state("");
   let busy = $state(false);
   let checks = $state<{ name: string; level: string; detail: string; hint: string | null }[]>([]);
   let indexAction = $state<"init" | "sync" | null>(null);
@@ -161,11 +162,27 @@
     } catch { /* guard shows it */ }
   }
 
+  // (WEB-27) Setup needs only these two calls, never the scan; a failure is shown there with a retry, not left at "Checking…"
   async function loadSetup() {
-    const [r, d] = await Promise.all([call("install_status"), call("doctor")]);
-    setup = { ...r.data, text: r.text };
-    checks = d.data.checks;
-    indexAction = d.data.index_action;
+    try {
+      const [r, d] = await Promise.all([call("install_status"), call("doctor")]);
+      setup = { ...r.data, text: r.text };
+      checks = d.data.checks;
+      indexAction = d.data.index_action;
+      setupError = "";
+    } catch (e: any) {
+      setupError = String(e.message ?? e);
+    }
+  }
+
+  // (WEB-30) the rescan button: sync the index (`refresh` syncs even beside a running codegraph), then reload; a failed sync is shown, the reload still happens
+  async function rescan() {
+    busy = true;
+    let sync = "";
+    try { await call("codegraph", { action: "refresh" }); } catch (e: any) { sync = String(e.message ?? e); }
+    await Promise.allSettled([load(), loadSetup()]);
+    if (sync) error = sync;
+    busy = false;
   }
 
   // the only thing here that indexes: runs when the user clicks, never on its own
@@ -183,11 +200,12 @@
     }
   }
 
-  async function runSetup(tool: "install" | "uninstall", global = false) {
+  // `server: "codegraph"` (WEB-29) only adds or removes the CodeGraph entry of .mcp.json
+  async function runSetup(tool: "install" | "uninstall", global = false, server?: "codegraph") {
     busy = true;
     try {
-      const r = await guard(call(tool, { global }));
-      setup = { ...r.data, text: r.text };
+      await guard(call(tool, { global, server }));
+      await loadSetup(); // the status and the checks name what is still missing
     } finally {
       busy = false;
     }
@@ -250,7 +268,11 @@
     });
   });
 
-  load();
+  // (WEB-27) the first run lands on Setup: nothing to scan and nothing installed, or a failed check; never inside a host that picks the view
+  Promise.allSettled([load(), loadSetup()]).then(() => {
+    const first = report && report.requirements + report.refs === 0 && setup?.suggestions.length;
+    if (!embedded && route.tab === "dashboard" && (first || checks.some((k) => k.level === "fail"))) navigate({ tab: "setup" }, true);
+  });
   // the server pushes `resources/updated` when the repo changes; one notification per subscribed resource arrives for one change
   let reloadTimer: ReturnType<typeof setTimeout> | undefined;
   // throttled: the first push reloads at once, a burst after it collapses into one trailing reload at most every 2 s
@@ -267,10 +289,11 @@
     }, 30_000);
     return () => clearInterval(t);
   });
-  loadSetup().catch(() => {});
 
   // ---- views ----
   // the states that need work come first; the hints say what the scanner saw, not that anything passes
+  const noReqs = $derived(report && report.requirements + report.refs === 0);
+  const sum = (key: string) => (modules?.modules ?? []).reduce((n: number, m: any) => n + m[key], 0);
   const states = ["all", "none", "src-only", "tested", "manual", "later", "ref"];
   const STATE_HINT: Record<string, string> = {
     all: "Every requirement",
@@ -344,6 +367,8 @@
   const specRows = $derived((specFiles ?? []).filter((file) => !onlyChanged || fileOf.has(file)).map((file) => ({ file })));
   // the Changes page: files grouped by state, and the counts that link to the filtered views
   const view = $derived(defaultScope ? changes : custom);
+  // (WEB-33) the short hash of the explained commit, for the section titles
+  const at = $derived(scope.commit ? ` (${history?.commits.find((c: any) => c.sha === scope.commit || c.short === scope.commit)?.short ?? scope.commit.slice(0, 7)})` : "");
   const CHANGES = ["added", "modified", "renamed", "deleted"];
   const nOf = (kind: string) => (view?.files ?? []).filter((f: any) => f.kind === kind).length;
   const viewMods = $derived(new Set<string>((view?.files ?? []).map((f: any) => moduleOfFile(f.path))));
@@ -505,7 +530,7 @@
       </a>
     {/each}
   </nav>
-  <button class="icon" onclick={load} title="Rescan the repo" aria-label="rescan">↻</button>
+  <button class="icon" disabled={busy} onclick={rescan} title="Rescan the repo (syncs the CodeGraph index first)" aria-label="rescan">↻</button>
   <button class="icon" onclick={() => (theme = nextTheme.v)} title="Theme: {curTheme.name} (click for {nextTheme.name})" aria-label="Theme: {curTheme.name}, switch to {nextTheme.name}">{curTheme.icon}</button>
   <a class="tab icon" class:on={route.tab === "setup"} aria-current={route.tab === "setup" ? "page" : undefined} href={u({ tab: "setup" })} title={setup?.suggestions.length ? "Setup (not fully set up)" : "Setup"} aria-label="Setup">⚙️{#if setup?.suggestions.length}<span class="badge" data-tone="warn" title="not fully set up">!</span>{/if}</a>
 </header>
@@ -522,9 +547,81 @@
 {/if}
 
 <main>
-  {#if !report}
-    <p class="muted">Scanning…</p>
+  {#if route.tab === "setup"}
+    {#if !setup}
+      {#if setupError}<p class="error">Could not check the setup: {setupError} <button onclick={loadSetup}>Retry</button></p>{:else}<p class="muted">Checking…</p>{/if}
+    {:else}
+      {#snippet row(title: string, where: any, global: boolean)}
+        <div class="card block setup">
+          <h3>{title}</h3>
+          <p><Pill tone={where.skill === "current" ? "ok" : where.skill === "outdated" ? "warn" : "bad"}>skill {where.skill}</Pill> <span class="mono muted">{where.skill_path}</span></p>
+          <p><Pill tone={where.mcp === "ok" ? "ok" : where.mcp === "other" ? "warn" : "bad"}>mcp {where.mcp === "ok" ? "installed" : where.mcp === "other" ? "other port" : "missing"}</Pill> <span class="mono muted">{where.mcp_path ?? "~/.claude.json (user scope, read-only here)"}</span></p>
+          <p>
+            <button disabled={busy} onclick={() => runSetup("install", global)}>{where.skill === "missing" ? "Install" : "Reinstall"}{global ? " skill globally" : " in this repo"}</button>
+            <button disabled={busy || (where.skill === "missing" && where.mcp !== "ok")} onclick={() => runSetup("uninstall", global)}>Uninstall</button>
+          </p>
+        </div>
+      {/snippet}
+      {#if noReqs}
+        <section class="card block">
+          <h3>No specs yet</h3>
+          <p>spec11 found no requirements in this repo and works without them: Modules and Tests still list its sources and tests. {setup.suggestions.length ? "Install the skill below, then ask" : "Ask"} your agent to draft <code>specs/01-name.md</code> with you (lines like <code>- **ABC-12** MUST — text</code>).</p>
+        </section>
+      {/if}
+      {@render row("This repo", setup.status.project, false)}
+      {@render row("Global (~/.agents/skills)", setup.status.global, true)}
+      <p class="muted">The skill tells the agent to use spec11's MCP tools. Installing in the repo also adds the MCP server to <code>.mcp.json</code> (created if missing, other servers are kept); the global install covers the skill only. The agent needs this server running: <code>spec11</code>.</p>
+      {@const cgBin = checks.find((k) => k.name === "codegraph binary")}
+      {@const cgIdx = checks.find((k) => k.name === "codegraph index")}
+      {@const cgMcp = setup.status.project.codegraph_mcp === "ok" ? "this repo" : setup.status.global.codegraph_mcp === "ok" ? "global" : ""}
+      <div class="card block setup">
+        <h3>CodeGraph <small class="muted">optional: test-to-code links, overlap, uncovered code</small></h3>
+        <p><b>1. Install</b> <Pill tone={cgBin?.level === "ok" ? "ok" : "warn"}>{cgBin?.level === "ok" ? `installed ${cgBin.detail}` : "not on PATH"}</Pill></p>
+        {#if cgBin && cgBin.level !== "ok"}
+          <pre class="log">curl -fsSL https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.sh | sh
+npm i -g @colbymchenry/codegraph
+irm https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.ps1 | iex   # Windows PowerShell</pre>
+          <p class="muted">Pick one, then press ↻ below. <a href="https://colbymchenry.github.io/codegraph/getting-started/installation/" target="_blank" rel="noreferrer">Installation docs</a>. spec11 never installs it for you.</p>
+        {/if}
+        <p>
+          <b>2. Connect the agent</b> <Pill tone={cgMcp ? "ok" : "warn"}>{cgMcp ? `codegraph server set (${cgMcp})` : "codegraph server missing"}</Pill>
+          <button disabled={busy || setup.status.project.codegraph_mcp === "ok"} onclick={() => runSetup("install", false, "codegraph")} title="Adds the codegraph MCP server to .mcp.json (created if missing; an entry that is there is kept)">Add CodeGraph to .mcp.json</button>
+          <button disabled={busy || setup.status.project.codegraph_mcp !== "ok"} onclick={() => confirm("Remove the codegraph server from .mcp.json? Your agent loses CodeGraph until it is added again, and a customised entry is not restored.") && runSetup("uninstall", false, "codegraph")} title="Removes only the codegraph entry from .mcp.json; the skill and the spec11 entry stay">Remove</button>
+        </p>
+        <p><b>3. Index</b> {#if cgIdx}<Pill tone={levelTone(cgIdx.level)}>{cgIdx.level}</Pill> <span class="muted">{cgIdx.detail}</span>{/if}</p>
+        {#if cgBin?.level === "ok"}
+          <p>
+            {#if indexAction === "init"}<button class="primary" disabled={busy} onclick={() => runIndex("init")}>Create the index (codegraph init)</button>
+            {:else if cgIdx?.level === "ok" || indexAction === "sync"}<button disabled={busy} onclick={() => runIndex("sync")}>Sync now (codegraph sync)</button>{/if}
+          </p>
+        {/if}
+      </div>
+      <h3>Checks <button onclick={loadSetup}>↻</button></h3>
+      <table>
+        <tbody>
+          {#each checks as k}
+            <tr>
+              <td class="nowrap"><Pill tone={levelTone(k.level)}>{k.level}</Pill></td>
+              <td class="nowrap">{k.name}</td>
+              <td>
+                {k.detail}{#if k.hint}<div class="muted">→ {k.hint}</div>{/if}
+              </td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+      {#if indexLog}<pre class="log">{indexLog}</pre>{/if}
+    {/if}
+  {:else if !report}
+    {#if error}<p class="muted">The scan failed (see above). <a href="/setup">Setup</a> shows what is missing.</p>{:else}<p class="muted">Scanning…</p>{/if}
   {:else if route.tab === "dashboard"}
+    {#if noReqs}
+      <section class="hero card">
+        <h2>No requirements yet</h2>
+        <p>spec11 found none. Write them as <code>- **ABC-12** MUST — text</code> in <code>specs/01-name.md</code> or <code>SPEC.md</code>, tag tests <code>[ABC-12]</code> and cite <code>// (ABC-12)</code> in code. <a href="/setup">Setup</a> installs the skill so your agent drafts them with you.</p>
+        {#if modules}<p class="facts muted"><a href={u({ tab: "modules" })}>{plural(sum("src_files"), "source file")}</a> · {plural(sum("test_files"), "test file")} · <a href={u({ tab: "tests" })}>{plural(sum("tests"), "test")} detected</a></p>{/if}
+      </section>
+    {:else}
     <section class="hero card">
       <div class="pct"><b>{report.tested_pct}%</b><span>of due requirements have a tagged test <small class="muted">({report.tested}/{report.due})</small></span></div>
       <div class="meter" role="img" aria-label="{report.tested_pct}% tested"><i style="width:{report.tested_pct}%"></i></div>
@@ -536,6 +633,7 @@
         · <b data-tone={report.total_problems ? "bad" : "ok"}>{report.total_problems ? `${report.total_problems} problems` : "no problems found"}</b>
       </p>
     </section>
+    {/if}
     {#if !report.index}<p class="note-line muted">No CodeGraph index: test-to-code links and uncovered code are not checked.</p>{/if}
     {#if changes}
       <Section title="Changes" count={changes.files.length} tone={changes.files.length ? "accent" : undefined}>
@@ -602,6 +700,8 @@
         <p class="mono">{#if report.dangling_tests.length}tests: {report.dangling_tests.join(", ")}<br />{/if}{#if report.dangling_sources.length}sources: {report.dangling_sources.join(", ")}{/if}</p>
       </Section>
     {/if}
+  {:else if route.tab === "requirements" && noReqs}
+    <p class="muted empty">No requirements found. <a href="/setup">Setup</a> says what spec11 looks for.</p>
   {:else if route.tab === "requirements"}
     <div class="page">
     <div class="bar">
@@ -654,42 +754,6 @@
       </table>
       {/if}
     {/if}
-  {:else if route.tab === "setup"}
-    {#if !setup}<p class="muted">Checking…</p>
-    {:else}
-      {#snippet row(title: string, where: any, global: boolean)}
-        <div class="card block setup">
-          <h3>{title}</h3>
-          <p><Pill tone={where.skill === "current" ? "ok" : where.skill === "outdated" ? "warn" : "bad"}>skill {where.skill}</Pill> <span class="mono muted">{where.skill_path}</span></p>
-          <p><Pill tone={where.mcp === "ok" ? "ok" : where.mcp === "other" ? "warn" : "bad"}>mcp {where.mcp === "ok" ? "installed" : where.mcp === "other" ? "other port" : "missing"}</Pill> <span class="mono muted">{where.mcp_path ?? "~/.claude.json (user scope, read-only here)"}</span></p>
-          <p>
-            <button disabled={busy} onclick={() => runSetup("install", global)}>{where.skill === "missing" ? "Install" : "Reinstall"}{global ? " skill globally" : " in this repo"}</button>
-            <button disabled={busy || (where.skill === "missing" && where.mcp !== "ok")} onclick={() => runSetup("uninstall", global)}>Uninstall</button>
-          </p>
-        </div>
-      {/snippet}
-      {@render row("This repo", setup.status.project, false)}
-      {@render row("Global (~/.agents/skills)", setup.status.global, true)}
-      <p class="muted">The skill tells the agent to use spec11's MCP tools. Installing in the repo also adds the MCP server to <code>.mcp.json</code> (other servers are kept); the global install covers the skill only. The agent needs this server running: <code>spec11</code>.</p>
-      <h3>Checks <button onclick={loadSetup}>↻</button></h3>
-      <table>
-        <tbody>
-          {#each checks as k}
-            <tr>
-              <td class="nowrap"><Pill tone={levelTone(k.level)}>{k.level}</Pill></td>
-              <td class="nowrap">{k.name}</td>
-              <td>
-                {k.detail}{#if k.hint}<div class="muted">→ {k.hint}</div>{/if}
-                {#if k.name === "codegraph index" && indexAction}
-                  <div><button class="primary" disabled={busy} onclick={() => runIndex(indexAction!)}>{indexAction === "init" ? "Create the index (codegraph init)" : "Refresh the index (codegraph sync)"}</button></div>
-                {/if}
-              </td>
-            </tr>
-          {/each}
-        </tbody>
-      </table>
-      {#if indexLog}<pre class="log">{indexLog}</pre>{/if}
-    {/if}
   {:else if route.tab === "modules" && route.module}
     <p class="mono nowrap crumb"><a href="/modules">modules</a> / {route.module}</p>
     {#if !modules}<p class="muted">Loading…</p>
@@ -706,6 +770,8 @@
         {#if modOf.depends_on.length}<p>depends on {#each modOf.depends_on as d}<IdLink href={u({ tab: "modules", module: d.module })}>{d.module}</IdLink>{" "}{/each}</p>{/if}
         {#if usedBy.length}<p>used by {#each usedBy as d}<IdLink href={u({ tab: "modules", module: d.path })}>{d.path}</IdLink>{" "}{/each}</p>{/if}
       </section>
+      <h2>Sources <span class="muted">{modOf.sources.length}</span></h2>
+      {#if modOf.sources.length}<p class="mono">{#each modOf.sources as f}<IdLink href={u({ tab: "code", path: f })}>{f}</IdLink>{" "}{/each}</p>{:else}<p class="muted">No source files in this module.</p>{/if}
       <h2>Tests <span class="muted">{modOf.tests}</span> <a class="more" href={u({ tab: "tests", module: modOf.path })}>filter in Tests</a></h2>
       {#if tests === null}<p class="muted">Loading tests…</p>
       {:else if !testsOf(modOf.path)}<p class="muted">No tests detected in this module.</p>
@@ -789,6 +855,7 @@
     </div>
   {:else if route.tab === "specs"}
     {#if specFiles === null}<p class="muted">Loading…</p>
+    {:else if !specFiles.length}<p class="muted empty">No spec files found. <a href="/setup">Setup</a> says what spec11 looks for.</p>
     {:else}
       <div class="page">
         {#if showChanged}<div class="bar"><Seg label="Changes" options={changedSeg(specFiles.filter((f) => fileOf.has(f)).length)} value={onlyChanged ? "changed" : "all"} onpick={pickChanged} /></div>{/if}
@@ -820,7 +887,7 @@
       <label class="muted nowrap" title="Files spec11 does not scan"><input type="checkbox" checked={scope.show_all} onchange={(e) => filter({ all: e.currentTarget.checked ? "1" : undefined })} /> unscanned files</label>
     </div>
     {#if history?.commits.length}
-      <Section title={history.on_base ? "Recent commits" : `Commits not on ${history.base}`} count={history.commits.length} tone={history.on_base ? undefined : "accent"}>
+      <Section id="changes-commits" title={history.on_base ? "Recent commits" : `Commits not on ${history.base}`} count={history.commits.length} tone={history.on_base ? undefined : "accent"}>
         {#each history.commits.filter((c: any) => scope.commit && (c.sha === scope.commit || c.short === scope.commit)) as c}<p class="note"><b>Explaining</b> <span class="mono">{c.short}</span> {c.subject} <a href={u({ tab: "changes" })}>clear</a></p>{/each}
         <div class="commits"><table>
           <tbody>
@@ -838,10 +905,31 @@
       </Section>
     {/if}
     {#if view === undefined}<p class="muted">Loading…</p>
-    {:else if view === null}<p class="muted empty">Not checked: this is not a git work tree, or git is not available.</p>
+    {:else if view === null}<p class="muted empty">Not checked: this is not a git work tree, it has no commits yet, or git is not available.</p>
     {:else if !view.files.length}<p class="muted empty">{view.commit ? "This commit changed no scanned file." : `Nothing ${scope.staged ? "staged" : "changed"} against ${view.reference}.`}{#if !scope.show_all} Lockfiles, CI and build files are not scanned: <a href={u({ ...route, all: "1" })}>show unscanned files</a>.{/if}</p>
     {:else}
-      <Section title="Files" count={view.files.length} tone="accent">
+      <Section id="changes-requirements" title={`Requirements that may be affected${at}`} count={view.requirements.length} tone={view.requirements.length ? "accent" : undefined}>
+        {#if !view.requirements.length}<p class="muted">No requirement's bullet, tagged test or cited code is among the changed lines.</p>
+        {:else}
+          <table>
+            <tbody>
+              {#each view.requirements as r (r.id)}
+                <tr>
+                  <td class="mono nowrap">{#if r.deleted || !known.has(r.id)}{r.id}{:else}{@render idlink(r.id, req(r.id))}{/if}</td>
+                  <td class="nowrap"><Pill tone={r.deleted ? "bad" : stateTone[r.state]}>{r.state}</Pill></td>
+                  <td>
+                    <div class="txt" title={plain(r.text)}>{@html inline(r.text)}</div>
+                    <div class="notes">{#each noteGroups(r.notes) as [what, files]}<Pill tone={r.deleted ? "bad" : "accent"} title={files.join(", ")}>✎ {what}</Pill>{/each}</div>
+                  </td>
+                  <td class="mono muted nowrap">{#if r.line}<a href={u({ tab: "specs", file: r.file, id: r.id })}>{r.file}:{r.line}</a>{:else}{r.file}{/if}</td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        {/if}
+        <p class="muted note">A changed file may affect a requirement; it does not say the requirement is done or its test passes. Evidence, not truth.</p>
+      </Section>
+      <Section id="changes-files" title={`Files${at}`} count={view.files.length} tone="accent">
         <p class="note"><button onclick={() => (openDiffs = view.files.map((f: any) => f.path))}>Expand all diffs</button> <button onclick={() => (openDiffs = [])} disabled={!openDiffs.length}>Collapse all diffs</button></p>
         <table>
           <tbody>
@@ -862,24 +950,6 @@
             {/each}
           </tbody>
         </table>
-      </Section>
-      <Section title="Requirements that may be affected" count={view.requirements.length} tone={view.requirements.length ? "accent" : undefined}>
-        {#if !view.requirements.length}<p class="muted">No requirement's bullet, tagged test or cited code is among the changed lines.</p>
-        {:else}
-          <table>
-            <tbody>
-              {#each view.requirements as r (r.id)}
-                <tr>
-                  <td class="mono nowrap">{#if r.deleted || !known.has(r.id)}{r.id}{:else}{@render idlink(r.id, req(r.id))}{/if}</td>
-                  <td class="nowrap"><Pill tone={r.deleted ? "bad" : stateTone[r.state]}>{r.state}</Pill>{#each noteGroups(r.notes) as [what, files]}<Pill tone={r.deleted ? "bad" : "accent"} title={files.join(", ")}>✎ {what}</Pill>{/each}</td>
-                  <td><div class="txt" title={plain(r.text)}>{@html inline(r.text)}</div></td>
-                  <td class="mono muted nowrap">{#if r.line}<a href={u({ tab: "specs", file: r.file, id: r.id })}>{r.file}:{r.line}</a>{:else}{r.file}{/if}</td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        {/if}
-        <p class="muted note">A changed file may affect a requirement; it does not say the requirement is done or its test passes. Evidence, not truth.</p>
       </Section>
       <Section title="Tests, specs and modules">
         <p>
@@ -998,6 +1068,7 @@
   .refs a, li a { text-decoration: none; }
   .refs a:hover, li a:hover { text-decoration: underline; }
   .page { display: flex; flex-direction: column; height: calc(100dvh - 100px); min-height: 440px; }
+  .notes { margin-top: 3px; line-height: 1.7; }
   .txt { display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   /* a trace panel outside a split (overlap) is a floating card; inside one, Split draws the card */
   aside.float { position: sticky; top: 64px; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 16px 14px; overflow: auto; max-height: calc(100vh - 80px); box-shadow: var(--shadow); }

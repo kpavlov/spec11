@@ -54,6 +54,8 @@ pub struct ModuleInfo {
     pub src_files: usize,
     pub test_files: usize,
     pub tests: usize,
+    /// The module's source files, repo-relative and sorted (GRAPH-06).
+    pub sources: Vec<String>,
     /// Symbols per kind, from the CodeGraph index.
     pub symbols: BTreeMap<String, i64>,
     pub depends_on: Vec<Dep>,
@@ -113,12 +115,12 @@ impl Analysis {
         TestsView { note: NOTE, total: modules.iter().map(|m| m.tests).sum(), modules }
     }
 
-    // (GRAPH-05)
+    // (GRAPH-05, GRAPH-06)
     /// Modules of the repo with their files, languages, tests, CodeGraph symbols and the modules they depend on.
     pub fn modules_view(&self) -> ModulesView {
         let mut seen = HashMap::new();
         let mut mods: BTreeMap<String, ModuleInfo> = BTreeMap::new();
-        let blank = |path: &str, manifest: Option<&str>| ModuleInfo { path: path.to_string(), manifest: manifest.map(str::to_owned), languages: vec![], src_files: 0, test_files: 0, tests: 0, symbols: BTreeMap::new(), depends_on: vec![] };
+        let blank = |path: &str, manifest: Option<&str>| ModuleInfo { path: path.to_string(), manifest: manifest.map(str::to_owned), languages: vec![], src_files: 0, test_files: 0, tests: 0, sources: vec![], symbols: BTreeMap::new(), depends_on: vec![] };
         let mut module = |file: &str, mods: &mut BTreeMap<String, ModuleInfo>| -> String {
             let (path, manifest) = detect::module_of(&self.p.root, file, &mut seen);
             mods.entry(path.clone()).or_insert_with(|| blank(&path, manifest));
@@ -129,7 +131,7 @@ impl Analysis {
             let Some(case) = detect::case_of(f) else { continue };
             let m = module(f, &mut mods);
             let info = mods.get_mut(&m).unwrap();
-            if self.p.is_test_only(f) { info.test_files += 1 } else { info.src_files += 1 }
+            if self.p.is_test_only(f) { info.test_files += 1 } else { info.src_files += 1; info.sources.push(f.clone()) }
             langs.entry(m).or_default().insert(&case.profile.name);
         }
         for t in self.tests_view().modules {
@@ -164,6 +166,7 @@ impl Analysis {
         for m in &mut modules {
             m.languages = langs.get(&m.path).map(|s| s.iter().map(|x| x.to_string()).collect()).unwrap_or_default();
             m.depends_on.sort_by(|a, b| b.edges.cmp(&a.edges).then_with(|| a.module.cmp(&b.module)));
+            m.sources.sort();
         }
         ModulesView { index, note, modules, hidden: detect::Ignore::hidden_modules(&self.p.root) }
     }

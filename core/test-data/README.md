@@ -7,3 +7,4 @@ Small repos, one per spec layout, that `core/tests/core.rs` loads with `Analysis
 - `superpowers/`: Superpowers design docs (scanned) and plans (not).
 - `kiro/`: Kiro requirements, which carry no IDs.
 - `fallback/`: no spec folder, a block requirement in other markdown.
+- `nospecs/`: sources and a test, no markdown at all: spec11 must still open it (SCAN-28).

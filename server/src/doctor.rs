@@ -1,6 +1,7 @@
-//! `spec11 doctor`: is this repo set up for spec11, and is CodeGraph usable here? `run` only looks and suggests. The one thing that writes is `index`, which runs only when the user asks (`doctor --fix`, the Setup tab button).
+//! `spec11 doctor`: is this repo set up for spec11, and is CodeGraph usable here? `run` only looks and suggests. The one thing that writes is `index`, which runs only when the user asks (`doctor --fix`, the Setup tab buttons, the dashboard's rescan).
 use serde::Serialize;
 use spec11_core::{Analysis, codegraph::{Graph, GraphError}, scan::Project};
+use crate::skill::McpState;
 use std::path::Path;
 use std::time::SystemTime;
 
@@ -31,24 +32,35 @@ fn codegraph_version() -> Option<String> {
     Some(text.lines().next().unwrap_or("").to_string())
 }
 
+/// How to install CodeGraph (its docs: getting-started/installation); spec11 never runs these. The Setup tab shows the same commands.
+const INSTALL_HINT: &str = "install CodeGraph: `curl -fsSL https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.sh | sh` or `npm i -g @colbymchenry/codegraph` (Windows: `irm https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.ps1 | iex`), then `codegraph init` in the repo; https://colbymchenry.github.io/codegraph/getting-started/installation/; spec11 never installs it";
+
 /// Build or refresh the CodeGraph index by running the `codegraph` binary: `init` when there is no index yet, `sync` when there is.
 /// Never called by `run` or on its own: indexing is the user's decision.
+/// `refresh` (SETUP-08) is the rescan button: `sync` whenever there is an index and the binary, running codegraph or not (its watcher may be off); it answers `Ok` with the reason when it does nothing.
 // (SETUP-07)
 pub fn index(root: Option<&Path>, action: &str) -> Result<String, String> {
     let p = Project::open(root)?;
     let exists = p.root.join(&p.cfg.codegraph).exists();
+    let action = if action == "refresh" {
+        if !exists { return Ok("no CodeGraph index: nothing to refresh\n".into()); }
+        if codegraph_version().is_none() { return Ok("the codegraph binary is not on PATH: index not refreshed\n".into()); }
+        "sync"
+    } else {
+        action
+    };
     let args: [&str; 2] = match (action, exists) {
         ("init", false) => ["init", "-y"],
         ("sync", true) => ["sync", ""],
         ("init", true) => return Err("an index already exists; use sync to refresh it".into()),
         ("sync", false) => return Err("no index yet; use init first".into()),
-        _ => return Err(format!("unknown action '{action}': use init or sync")),
+        _ => return Err(format!("unknown action '{action}': use init, sync or refresh")),
     };
     codegraph_version().ok_or("the codegraph binary is not on PATH: install CodeGraph first")?;
     let out = std::process::Command::new("codegraph").args(args.iter().filter(|a| !a.is_empty())).arg(&p.root).current_dir(&p.root).output().map_err(|e| e.to_string())?;
     let text = String::from_utf8_lossy(&[out.stdout, out.stderr].concat()).trim().to_string();
     let tail = text.lines().rev().take(12).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("\n");
-    if out.status.success() { Ok(format!("codegraph {action} finished\n{tail}\n")) } else { Err(format!("codegraph {action} failed\n{tail}")) }
+    if out.status.success() { Ok(format!("codegraph {action} finished\n{tail}\n")) } else { Err(format!("codegraph {action} failed\n{tail}{}", if tail.contains("lock") { "\n(a running codegraph holds the lock only briefly: try again; `codegraph unlock` removes a stale one)" } else { "" })) }
 }
 
 /// Which index action the checks call for, if any: `init` when missing, `sync` when stale.
@@ -63,7 +75,7 @@ pub fn run(root: Option<&Path>, mcp_port: u16) -> Vec<Check> {
     let mut out = vec![];
     let p = match Project::open(root) {
         Ok(p) => p,
-        Err(e) => return vec![c("repo", "fail", e, Some("run inside a repo with a specs folder (specs/, spec/, docs/specs/ ...), or pass --root; other layouts: spec11.json"))],
+        Err(e) => return vec![c("repo", "fail", e, Some("run inside a git repo, or pass --root"))],
     };
     out.push(c("repo", "ok", p.root.display().to_string(), None));
     let cfg_file = p.root.join("spec11.json");
@@ -72,9 +84,11 @@ pub fn run(root: Option<&Path>, mcp_port: u16) -> Vec<Check> {
     match Analysis::load(Some(&p.root)) {
         Ok(a) => {
             let r = a.report();
-            let (level, hint) = if r.requirements + r.refs == 0 { ("warn", Some("no requirements found: expected lines like `- **ABC-12** MUST — text` or `- ABC-12: the system MUST …` in a specs folder or SPEC.md, or links from an ID to a doc (a markdown link whose text is the ID, e.g. to decisions/0003-x.md); set \"specs\" in spec11.json to point at them")) } else { ("ok", None) };
+            // (SETUP-06) no specs is a warning: everything else still works
+            let (level, hint) = if r.requirements + r.refs == 0 { ("warn", Some("no requirements found: write lines like `- **ABC-12** MUST — text` or `- ABC-12: the system MUST …` in specs/01-name.md (folders specs/, spec/, docs/specs/, openspec/specs/) or SPEC.md, or link an ID to a doc (a markdown link whose text is the ID, e.g. to decisions/0003-x.md); set \"specs\" in spec11.json to point at them")) } else { ("ok", None) };
             let refs = if r.refs > 0 { format!(", {} reference docs", r.refs) } else { String::new() };
-            out.push(c("specs", level, format!("{} requirements in {} spec files{refs}; scanned {}", r.requirements, r.spec_files, a.p.spec_paths().join(", ")), hint));
+            let detail = if a.p.spec_files().is_empty() { "no specs found".to_string() } else { format!("{} requirements in {} spec files{refs}; scanned {}", r.requirements, r.spec_files, a.p.spec_paths().join(", ")) };
+            out.push(c("specs", level, detail, hint));
             if !r.spec_issues.is_empty() {
                 out.push(c("spec issues", "warn", format!("{} (first: {})", r.spec_issues.len(), r.spec_issues[0]), Some("spec11 status --issues")));
             }
@@ -89,7 +103,7 @@ pub fn run(root: Option<&Path>, mcp_port: u16) -> Vec<Check> {
         if !missing.is_empty() {
             out.push(c(name, "warn", format!("not found: {}", missing.iter().map(|d| d.as_str()).collect::<Vec<_>>().join(", ")), Some("set the folders in spec11.json (\"tests\", \"src\", \"ext\")")));
         } else if n == 0 {
-            out.push(c(name, "warn", format!("no .{} files in {list}", p.cfg.ext.join("/.")), Some("check \"ext\" in spec11.json")));
+            out.push(c(name, "warn", if p.cfg.ext.is_empty() { format!("no source files of a known language in {list}") } else { format!("no .{} files in {list}", p.cfg.ext.join("/.")) }, Some("check \"ext\" in spec11.json")));
         } else {
             out.push(c(name, "ok", format!("{n} files in {list}"), None));
         }
@@ -102,19 +116,20 @@ pub fn run(root: Option<&Path>, mcp_port: u16) -> Vec<Check> {
     let bin = codegraph_version();
     out.push(match &bin {
         Some(v) => c("codegraph binary", "ok", if v.is_empty() { "on PATH".to_string() } else { v.clone() }, None),
-        None => c("codegraph binary", "warn", "not on PATH", Some("optional: install CodeGraph for links, overlap and uncovered code; spec11 works without it")),
+        None => c("codegraph binary", "warn", "not on PATH", Some(INSTALL_HINT)), // (SETUP-09) optional: spec11 works without it
     });
     let db = p.root.join(&p.cfg.codegraph);
     out.push(match Graph::open(&db) {
         Ok(None) => {
-            let hint = if bin.is_some() { "run `codegraph init` in the repo if you want it (indexing is your call; spec11 never does it)" } else { "needs the codegraph binary first" };
+            let hint = if bin.is_some() { "run `codegraph init` in the repo if you want it (indexing is your call: spec11 does it only when you ask, with `doctor --fix` or the dashboard's Setup)" } else { "needs the codegraph binary first" };
             Check { action: Some("init"), ..c("codegraph index", "warn", format!("{} not found: not initialized", p.cfg.codegraph), Some(hint)) }
         }
         Ok(Some(_)) => {
             let newest = p.src_files().into_iter().chain(p.test_files()).filter_map(|f| mtime(&p.root.join(f))).max();
+            // (SETUP-09) the index's last write against the newest file, whatever runs beside it: a codegraph MCP server can have its watcher off
             match (mtime(&db), newest) {
-                (Some(d), Some(n)) if n > d => Check { action: Some("sync"), ..c("codegraph index", "warn", "initialized, but older than the newest source or test file", Some("run `codegraph sync`")) },
-                _ => c("codegraph index", "ok", format!("{} readable, schema supported", p.cfg.codegraph), None),
+                (Some(d), Some(n)) if n > d => Check { action: Some("sync"), ..c("codegraph index", "warn", "initialized, but older than the newest source or test file", Some("run `codegraph sync` (the rescan button does)")) },
+                _ => c("codegraph index", "ok", format!("{} readable, schema supported, no source or test file is newer", p.cfg.codegraph), None),
             }
         }
         Err(GraphError::SchemaDrift(m)) => c("codegraph index", "warn", format!("schema not supported by this spec11: {m}"), Some("update spec11 or CodeGraph; those checks show as \"not checked\"")),
@@ -128,6 +143,10 @@ pub fn run(root: Option<&Path>, mcp_port: u16) -> Vec<Check> {
                 out.push(c("agent setup", "ok", "skill and MCP entry installed", None));
             } else {
                 todo.iter().for_each(|t| out.push(c("agent setup", "warn", t.clone(), Some("spec11 install"))));
+            }
+            // (SETUP-10) CodeGraph is on this machine but the agent is not told about it
+            if bin.is_some() && st.project.codegraph_mcp != McpState::Ok && st.global.codegraph_mcp != McpState::Ok {
+                out.push(c("agent setup", "warn", "no codegraph server in .mcp.json: the agent cannot use CodeGraph", Some("spec11 install --codegraph")));
             }
         }
         Err(e) => out.push(c("agent setup", "warn", e, None)),
@@ -196,10 +215,46 @@ mod tests {
 
     #[doc = "[SETUP-06]"]
     #[test]
-    fn no_specs_folder_is_a_failure() {
+    fn no_specs_is_a_warning_and_every_other_check_still_runs() {
         let d = std::env::temp_dir().join(format!("spec11-doctor-bare-{}", std::process::id()));
-        std::fs::create_dir_all(&d).unwrap();
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("src")).unwrap();
+        std::fs::write(d.join("src/a.py"), "def a():\n    pass\n").unwrap();
         let cs = run(Some(&d), 7411);
-        assert_eq!((cs.len(), cs[0].level), (1, "fail"));
+        assert_eq!((level(&cs, "repo"), level(&cs, "specs"), level(&cs, "sources")), ("ok", "warn", "ok"));
+        assert!(cs.iter().all(|k| k.level != "fail"), "{}", text(&cs));
+        assert!(cs.iter().any(|k| k.name == "codegraph index"));
+        let t = text(&cs);
+        assert!(t.contains("no specs found") && t.contains("works,"), "{t}");
+    }
+
+    #[doc = "[SETUP-08, SETUP-09]"]
+    #[test]
+    fn refresh_syncs_an_index_that_is_behind_and_the_check_sees_it() {
+        let d = std::env::temp_dir().join(format!("spec11-doctor-refresh-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("src")).unwrap();
+        std::fs::write(d.join("src/a.py"), "def a():\n    pass\n").unwrap();
+        assert!(index(Some(&d), "refresh").unwrap().contains("nothing to refresh")); // no index: no error, no sync
+        if codegraph_version().is_none() { return } // the rest needs the real binary
+        index(Some(&d), "init").unwrap();
+        let state = || run(Some(&d), 7411).into_iter().find(|k| k.name == "codegraph index").unwrap();
+        assert_eq!(state().level, "ok");
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        std::fs::write(d.join("src/a.py"), "def a():\n    pass\n\n\ndef b():\n    pass\n").unwrap();
+        let behind = state();
+        assert_eq!((behind.level, behind.action), ("warn", Some("sync")), "{}", behind.detail);
+        assert!(index(Some(&d), "refresh").unwrap().contains("sync finished"));
+        assert_eq!(state().level, "ok");
+    }
+
+    #[doc = "[SETUP-09]"]
+    #[test]
+    fn missing_codegraph_comes_with_install_instructions() {
+        assert!(INSTALL_HINT.contains("install.sh") && INSTALL_HINT.contains("npm i -g @colbymchenry/codegraph") && INSTALL_HINT.contains("never installs"));
+        let d = std::env::temp_dir().join(format!("spec11-doctor-hint-{}", std::process::id()));
+        std::fs::create_dir_all(d.join("specs")).unwrap();
+        let k = run(Some(&d), 7411).into_iter().find(|k| k.name == "codegraph binary").unwrap();
+        assert!(k.level == "ok" || k.hint.as_deref() == Some(INSTALL_HINT)); // the binary may or may not be on this machine
     }
 }

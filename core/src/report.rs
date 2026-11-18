@@ -259,6 +259,10 @@ impl Report {
         ));
         let probs: Vec<String> = self.problems.iter().map(|(k, v)| format!("{} {v}", k.replace('_', " "))).collect();
         o.push_str(&format!("problems: {} | total {}\n", probs.join(" | "), self.total_problems));
+        // (SCAN-28)
+        if self.requirements + self.refs == 0 {
+            o.push_str("note: no specs found, so there is nothing to measure yet: draft requirements with the user first (`spec11 doctor` says where spec11 looks and what a requirement line is)\n");
+        }
         if !self.index {
             o.push_str("note: no CodeGraph index, so test-to-code links and uncovered code are not checked\n");
             if let Some(n) = &self.index_note {
@@ -373,7 +377,7 @@ pub struct Status {
 impl Analysis {
     pub fn status(&self, o: &StatusOpts) -> Result<Status, String> {
         let mut ids: Vec<String> = self.s.iter().filter(|(i, s)| !(o.spec.as_ref().is_some_and(|x| !s.file.contains(x.as_str())) || o.prefix.as_ref().is_some_and(|x| !i.starts_with(&format!("{x}-"))))).map(|(i, _)| i.clone()).collect();
-        if ids.is_empty() {
+        if ids.is_empty() && (o.spec.is_some() || o.prefix.is_some()) {
             return Err("spec11: no requirement matches --spec/--prefix".into());
         }
         ids.sort_by_key(|i| id_key(i));

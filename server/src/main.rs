@@ -108,11 +108,17 @@ enum Cmd {
         /// Port of `spec11 serve` that the MCP entry points at.
         #[arg(long, default_value_t = DEFAULT_PORT)]
         port: u16,
+        /// Only add the CodeGraph MCP server to <repo>/.mcp.json (an existing entry is kept); the skill and the spec11 entry are left alone.
+        #[arg(long, conflicts_with = "global")]
+        codegraph: bool,
     },
     /// Remove what `install` added; other skills and MCP servers stay.
     Uninstall {
         #[arg(long)]
         global: bool,
+        /// Only remove the CodeGraph MCP server from <repo>/.mcp.json, whatever it holds; the skill and the spec11 entry are left alone.
+        #[arg(long, conflicts_with = "global")]
+        codegraph: bool,
     },
     /// Check the repo setup: specs, tests, sources, git, the codegraph binary and index, skill and MCP entry.
     Doctor {
@@ -336,8 +342,10 @@ fn run(cli: Cli) -> Result<u8, String> {
             if cli.json { println!("{}", serde_json::to_string_pretty(&checks).unwrap()) } else { print!("{}", doctor::text(&checks)) }
             return Ok(u8::from(checks.iter().any(|k| k.level == "fail")));
         }
-        Cmd::Install { global, port } => return install(cli.root.as_deref(), global, Some(port)),
-        Cmd::Uninstall { global } => return install(cli.root.as_deref(), global, None),
+        Cmd::Install { codegraph: true, .. } => { skill::apply_codegraph(cli.root.as_deref(), true)?.iter().for_each(|l| println!("{l}")); return Ok(0) }
+        Cmd::Uninstall { codegraph: true, .. } => { skill::apply_codegraph(cli.root.as_deref(), false)?.iter().for_each(|l| println!("{l}")); return Ok(0) }
+        Cmd::Install { global, port, .. } => return install(cli.root.as_deref(), global, Some(port)),
+        Cmd::Uninstall { global, .. } => return install(cli.root.as_deref(), global, None),
         _ => {}
     }
     // (API-14) the CLI is one more client of the tools: what MCP returns, printed
@@ -676,6 +684,34 @@ mod tests {
         assert!(body.contains(r#""skill":"missing""#), "{body}");
         assert!(!repo.join(".agents/skills/spec11/SKILL.md").exists());
         assert!(std::fs::read_to_string(repo.join(".mcp.json")).unwrap().contains("\"other\""));
+    }
+
+    #[doc = "[SCAN-28, SETUP-06, SETUP-10]"]
+    #[tokio::test]
+    async fn a_repo_with_no_specs_serves_every_tool_and_installs_codegraph() {
+        let d = std::env::temp_dir().join(format!("spec11-srv-nospecs-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("src")).unwrap();
+        std::fs::write(d.join("src/a.py"), "def a():\n    pass\n").unwrap();
+        let (app, _) = routers(app_state(Some(d.clone()), &[7411]));
+        let call = |n: &str, a: &str| tool(n, a, "127.0.0.1:7411");
+        for (name, args) in [("report", "{}"), ("status", r#"{"all":true}"#), ("doctor", "{}"), ("install_status", "{}")] {
+            let (st, body) = send(&app, call(name, args)).await;
+            assert!(st == StatusCode::OK && !body.contains(r#""isError":true"#), "{name}: {body}");
+        }
+        let (_, body) = send(&app, call("doctor", "{}")).await;
+        assert!(body.contains("no specs found") && !body.contains(r#"\"level\":\"fail\""#), "{body}");
+        let (_, body) = send(&app, call("install", r#"{"server":"codegraph"}"#)).await;
+        assert!(body.contains(r#""codegraph_mcp":"ok""#) && !body.contains(r#""isError":true"#), "{body}");
+        let mcp = std::fs::read_to_string(d.join(".mcp.json")).unwrap();
+        assert!(mcp.contains("\"codegraph\"") && !mcp.contains("spec11"), "{mcp}");
+        assert!(!d.join(".agents").exists(), "server=codegraph must not install the skill");
+        let (_, body) = send(&app, call("uninstall", r#"{"server":"codegraph"}"#)).await;
+        assert!(body.contains(r#""codegraph_mcp":"missing""#) && !body.contains(r#""isError":true"#), "{body}");
+        assert!(!d.join(".mcp.json").exists(), "the file held only codegraph, so it goes");
+        send(&app, call("install", r#"{"server":"codegraph"}"#)).await;
+        let (_, body) = send(&app, call("codegraph", r#"{"action":"refresh"}"#)).await;
+        assert!(body.contains("nothing to refresh"), "{body}");
     }
 
     #[doc = "[API-01, API-04, API-07]"]

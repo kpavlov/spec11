@@ -35,3 +35,15 @@ export const preview = $state<{ view: "actual" | "diff" }>({ view: read("spec11.
 export const diffWrap = $state({ on: read("spec11.diffwrap") === "1" });
 export const setDiffWrap = (on: boolean) => { diffWrap.on = on; write("spec11.diffwrap", on ? "1" : null); };
 export const setView = (v: string) => { preview.view = v === "diff" ? "diff" : "actual"; write("spec11.view", preview.view); };
+
+// A collapsible Section with an `id` remembers per browser whether it is open and the height (px) its bottom edge was dragged to; `h: null` = as tall as its content.
+export type SectionState = { open: boolean; h: number | null };
+export const loadSection = (id: string): SectionState => {
+  try {
+    const v = JSON.parse(read("spec11.section." + id) ?? "{}");
+    return { open: v.open !== false, h: typeof v.h === "number" && v.h > 0 ? v.h : null };
+  } catch { return { open: true, h: null }; }
+};
+// the defaults are not stored
+export const saveSection = (id: string, s: SectionState) => write("spec11.section." + id, s.open && s.h === null ? null : JSON.stringify(s));
+

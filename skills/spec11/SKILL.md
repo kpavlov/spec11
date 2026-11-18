@@ -1,7 +1,7 @@
 ---
 name: spec11
 description: >
-  Report spec-driven-development (SDD) status deterministically with the spec11 MCP server: which requirement IDs (ABC-12 in specs/*.md) have tests tagged [ABC-12] and source citations, what is not implemented, what the current changes touch, `later` requirements that are already built, check-marked ones with no proof, code no requirement covers, code covered by several requirements (conflicting or complementary specs), and one requirement traced to its tests and code. Use when asked to explore or report the SDD/spec status of a project, before changing behaviour, when asked what is implemented or untested, or to find the code a requirement affects.
+  Report spec-driven-development (SDD) status deterministically with the spec11 MCP server: which requirement IDs (ABC-12 in specs/*.md) have tests tagged [ABC-12] and source citations, what is not implemented, what the current changes touch, `later` requirements that are already built, check-marked ones with no proof, code no requirement covers, code covered by several requirements (conflicting or complementary specs), and one requirement traced to its tests and code. Use when asked to explore or report the SDD/spec status of a project, before changing behaviour (write the requirement first), after code changes (check the requirements still match and ask the user before editing them), when asked what is implemented or untested, or to find the code a requirement affects.
 ---
 
 # Spec-driven with spec11
@@ -34,10 +34,10 @@ Add it to the client's MCP config if the spec11 tools are not available. `spec11
 | `source` | `path` | read a scanned test or source file |
 | `dashboard` | `view` (optional page, e.g. `modules`, `changes`, `requirements/DOC-25`) | URL of the web dashboard (at that page) |
 | `doctor` | none | `spec11 doctor`: repo setup, CodeGraph binary and index |
-| `codegraph` | `action` (init\|sync) | builds/refreshes the CodeGraph index (`doctor --fix`); writes files, slow: only when the user asks |
+| `codegraph` | `action` (init\|sync\|refresh) | builds or refreshes the CodeGraph index (`doctor --fix`); `refresh` syncs when an index exists, also beside a running codegraph; writes files, slow: only when the user asks |
 | `module` | `path` (a module), `hidden` (true/false) | hides the module (adds its folder to `.spec11ignore` so scans leave it out) or shows it again (removes that line; the path is one of `hidden` in `spec11://modules`); writes a file: only when the user asks |
 | `install_status` | none | whether the skill and MCP entry are installed here or globally |
-| `install`, `uninstall` | `global`, `port` | `spec11 install/uninstall [--global]` (they write files: only when the user asks) |
+| `install`, `uninstall` | `global`, `port`, `server` (`spec11` default, or `codegraph`: only adds or removes the CodeGraph MCP entry of `.mcp.json`) | `spec11 install/uninstall [--global]` (they write files: only when the user asks) |
 
 **CLI (no server needed).** `spec11 [--root DIR] [--json] report|status|trace|changes|diff|history|overlap|uncovered`. Output is plain text, identical on every run for the same tree.
 
@@ -165,12 +165,20 @@ An `UNLINKED` pair is a candidate, not a finding: two IDs on one declaration onl
 
 Then relay the verdicts to the user. A conflict is reported with both bullets quoted and the case; fixing it is the user's decision (specs first, then tests and code). A `linked` pair needs no action unless the texts disagree; check that when reading the code anyway. Report one table: declaration, IDs, verdict, one line of evidence.
 
+## Specs first, specs in sync
+
+The spec is what the user agreed to; the code is only evidence of what exists. Keep them in step, and never let the code quietly rewrite the spec.
+
+- **Before changing behaviour**, `trace` the requirement (or `changes` to see what is already touched) and write or edit its bullet first, then the tests, then the code with `(ID)` citations. A new requirement: draft the bullet, show it to the user, add it. A change to an existing one: show the old and the new wording and wait for the user's OK.
+- **After code or tests changed** (yours or the user's), `changes` lists the requirements the changed lines touch. For each, `trace` it and read the code. If the requirement no longer says what the code does, **do not edit it on your own**. Show the user the requirement text, what the code does now (`file:line`) and the wording you propose, and let them pick: update the requirement, or fix the code. Edit the spec only after they confirm. Never weaken MUST/SHOULD/MAY, add `(later)`, or delete a bullet to make a report green.
+- **No specs yet** (`doctor` warns "no specs found", `report` says so in a note instead of reporting success, the dashboard opens on Setup): offer to draft `specs/01-….md` from what the user tells you, show it, and write it after they confirm. Do not invent requirements from the code and write them unasked.
+
 ## Workflow
 
 0. Specs marked `(later)` may already be built (`built`) and check-marked specs may not be (`unproven`): assess per effort (above).
 1. Starting work: `changes` (or `status changed=HEAD`) shows which requirements the current changes already touch; `missing=true prefix=X` shows what an area still lacks.
-2. Behaviour change: `trace`, read the spec and its tests, edit the spec first.
-3. New requirement: add the bullet, write the tests, and cite `(ID)` in a comment at the code that implements it.
+2. Behaviour change: `trace`, read the spec and its tests, edit the spec first (see "Specs first, specs in sync": the user confirms an edit to an existing requirement).
+3. New requirement: draft the bullet and show it, then add it, write the tests, and cite `(ID)` in a comment at the code that implements it.
 4. Writing or changing a test: it must name the requirement it proves, in the form spec11 reads, square brackets with the ID:
    - Title: e.g. `@Test("[ABC-12] what holds")` (Swift Testing; use the test framework's own title or name). One test per behaviour; list several IDs as `[ABC-12][ABC-14]` or `[ABC-12, ABC-14]` only when one assertion set really proves both.
    - Comment: in the body, a `// [ABC-13] why this line proves it` beside each assertion or setup that proves a *different* requirement than the title, and above a test helper or fixture that exists for one. A bare `(ABC-12)` in a test comment is not read.
@@ -178,5 +186,5 @@ Then relay the verdicts to the user. A conflict is reported with both bullets qu
    - After editing tests, `status changed=HEAD` should list the requirement as `tested` with `[changed: test]`.
 5. Several specs on one piece of code: `overlap`, classify per the table above.
 6. Cleaning up: `uncovered path=Domain/` finds behaviour nobody specified; triage as above.
-7. Before finishing: `status changed=HEAD missing=true` should be empty (nothing you touched is untested) and `status issues=true` clean.
+7. Before finishing: `status changed=HEAD missing=true` should be empty (nothing you touched is untested) and `status issues=true` clean. Then `changes`: a requirement whose code you changed must still say what the code does; if not, ask the user before editing it.
 8. For a visual overview open the dashboard (`dashboard` returns its URL).

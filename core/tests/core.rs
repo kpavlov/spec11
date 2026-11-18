@@ -146,6 +146,40 @@ fn status_listing_and_trace() {
     assert!(a.trace("ZZZ-1").is_none());
 }
 
+#[doc = "[SCAN-29]"]
+#[test]
+fn a_citation_above_a_doc_comment_belongs_to_the_declaration_below() {
+    let d = std::env::temp_dir().join(format!("spec11-{}-enclosing", std::process::id()));
+    let _ = fs::remove_dir_all(&d);
+    write(&d, "spec11.json", r#"{"tests":["tests"],"src":["src"],"ext":["rs"]}"#);
+    write(&d, "specs/01-demo.md", "- **DEM-01** MUST — a.\n- **DEM-02** MUST — b.\n- **DEM-03** MUST — c.\n- **DEM-04** MUST — d.\n");
+    write(&d, "src/lib.rs", "\
+fn before() {}
+
+// (DEM-01)
+/// Doc of the next one.
+#[inline]
+pub fn after() {}
+
+fn body() {
+    let x = 1;
+    // (DEM-02) mid-body: not above a declaration
+    let y = 2;
+}
+
+/// Doc comment.
+// (DEM-03) after the doc, above the declaration
+fn third() {}
+
+fn last() {
+    let z = 3; // (DEM-04) trailing
+}
+");
+    let a = Analysis::load(Some(&d)).unwrap();
+    let decl = |id: &str| a.trace(id).unwrap().source_cites[0].decl.clone();
+    assert_eq!([decl("DEM-01"), decl("DEM-02"), decl("DEM-03"), decl("DEM-04")], ["after", "body", "third", "last"]);
+}
+
 /// A minimal CodeGraph index: the tagged test calls `Demo.run`.
 fn index(d: &Path, with_edges_kind: bool) {
     fs::create_dir_all(d.join(".codegraph")).unwrap();
@@ -757,4 +791,33 @@ fn braces_in_strings_do_not_stretch_a_unit() {
     write(&d, "tests/AT.kt", &t("2"));
     let c = Analysis::load(Some(&d)).unwrap().changes(&ChangeOpts::default()).unwrap();
     assert_eq!(c.requirements.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), ["AAA-02"], "{c:?}");
+}
+
+#[doc = "[SCAN-28, GRAPH-06]"]
+#[test]
+fn a_repo_with_no_specs_still_opens_and_lists_its_sources_and_tests() {
+    let a = Analysis::load(Some(&data("nospecs"))).unwrap();
+    let r = a.report();
+    assert_eq!((r.requirements, r.spec_files, r.refs), (0, 0, 0));
+    assert!(a.p.spec_files().is_empty() && a.p.spec_paths().is_empty());
+    // no filter: nothing to list is not an error; a filter that matches nothing still is
+    assert!(a.status(&StatusOpts { all: true, ..Default::default() }).unwrap().rows.is_empty());
+    assert!(a.status(&StatusOpts { prefix: Some("NOPE".into()), ..Default::default() }).is_err());
+    assert!(a.changes(&Default::default()).is_ok());
+    assert!(r.text(&a, 12).contains("note: no specs found"));
+    let m = a.modules_view();
+    let src = m.modules.iter().find(|x| x.sources == ["src/greeter.py"]).expect("the source file is listed");
+    assert_eq!(src.src_files, 1);
+    assert_eq!((m.modules.iter().map(|x| x.test_files).sum::<usize>(), m.modules.iter().map(|x| x.tests).sum::<usize>()), (1, 1));
+    assert_eq!(a.tests_view().total, 1);
+}
+
+#[doc = "[SCAN-28]"]
+#[test]
+fn a_configured_specs_path_that_is_missing_counts_as_no_specs() {
+    let d = std::env::temp_dir().join(format!("spec11-{}-nospec-cfg", std::process::id()));
+    let _ = fs::remove_dir_all(&d);
+    write(&d, "spec11.json", r#"{"specs":"nothing-here"}"#);
+    write(&d, "src/a.py", "def a():\n    pass\n");
+    assert_eq!(Analysis::load(Some(&d)).unwrap().report().requirements, 0);
 }
