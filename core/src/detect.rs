@@ -203,14 +203,13 @@ pub fn walk(dir: &Path, allow: &[PathBuf], ignore: &Ignore) -> Vec<PathBuf> {
     v
 }
 
-static REQUIREMENT_LINE: LazyLock<Regex> = LazyLock::new(|| Regex::new(&format!("{}.*{}", crate::scan::head(), crate::scan::LEVEL)).unwrap());
-
 fn is_md(p: &Path) -> bool {
     p.extension().is_some_and(|x| x == "md")
 }
 
-fn has_requirement(f: &Path, rx: &Regex) -> bool {
-    std::fs::read(f).is_ok_and(|b| String::from_utf8_lossy(&b).lines().any(|l| rx.is_match(l)))
+/// Does markdown file `f` hold a requirement line, a block one (`### ID` with the level further down) too?
+fn has_requirement(f: &Path) -> bool {
+    crate::scan::read_text(f).is_some_and(|t| crate::scan::holds_requirement(&t))
 }
 
 /// Decision-record folders of `root` that exist.
@@ -234,37 +233,48 @@ pub fn has_spec_marker(d: &Path, allow: &[PathBuf]) -> bool {
     spec_dir(d, allow).is_some() || !spec_file_names(d).is_empty() || !decision_dirs(d).is_empty()
 }
 
-/// Where the requirement lines of `root` are, repo-relative folders or files: the spec folder, single-file specs, and when
+/// Where the requirement lines of `root` are, repo-relative folders or files: the spec folders, single-file specs, and when
 /// none of them holds a requirement line, every markdown file of the repo that does. Empty when the repo has no such place.
-// (SCAN-09, SCAN-12)
+// (SCAN-09, SCAN-12, SCAN-26)
 // ponytail: the fallback walks the whole repo's markdown once per load; add a cache if repos get huge.
 pub fn spec_paths(root: &Path, allow: &[PathBuf], ignore: &Ignore) -> Vec<String> {
-    let rx = &*REQUIREMENT_LINE;
-    let dir = scan_dirs(root, allow, ignore);
+    let dirs = scan_dirs(root, allow, ignore);
     let files = spec_file_names(root);
-    let holds = dir.as_ref().is_some_and(|d| d.1) || files.iter().any(|f| has_requirement(&root.join(f), rx));
-    let mut v: Vec<String> = dir.map(|d| d.0).into_iter().chain(files).collect();
+    let holds = dirs.iter().any(|d| d.1) || files.iter().any(|f| has_requirement(&root.join(f)));
+    let mut v: Vec<String> = dirs.into_iter().map(|d| d.0).chain(files).collect();
     if !holds {
-        v.extend(walk(root, allow, ignore).iter().filter(|f| is_md(f) && has_requirement(f, rx)).filter_map(|f| f.strip_prefix(root).ok()).map(|f| f.to_string_lossy().replace('\\', "/")));
+        v.extend(walk(root, allow, ignore).iter().filter(|f| is_md(f) && has_requirement(f)).filter_map(|f| f.strip_prefix(root).ok()).map(|f| f.to_string_lossy().replace('\\', "/")));
     }
     v
 }
 
-/// The first spec folder of `root`: one holding a requirement bullet, else a dedicated-name folder with any markdown,
-/// else a bare `specs/`. `None` when the repo has none of them.
+/// The main spec folder of `root` (see `scan_dirs`). `None` when the repo has none.
 pub fn spec_dir(root: &Path, allow: &[PathBuf]) -> Option<String> {
-    scan_dirs(root, allow, &Ignore::load(root)).map(|d| d.0)
+    scan_dirs(root, allow, &Ignore::load(root)).into_iter().next().map(|d| d.0)
 }
 
-/// `spec_dir` and whether that folder holds a requirement line (so `spec_paths` need not read it again).
-fn scan_dirs(root: &Path, allow: &[PathBuf], ignore: &Ignore) -> Option<(String, bool)> {
-    let bullet = &*REQUIREMENT_LINE;
-    let mds = |d: &str| -> Vec<PathBuf> { walk(&root.join(d), allow, ignore).into_iter().filter(|p| p.extension().is_some_and(|x| x == "md")).collect() };
-    let found: Vec<(&str, Vec<PathBuf>)> = SPEC_DIRS.iter().filter(|d| root.join(d).is_dir()).map(|d| (*d, mds(d))).collect();
-    let has_bullet = |fs: &[PathBuf]| fs.iter().any(|f| std::fs::read(f).is_ok_and(|b| String::from_utf8_lossy(&b).lines().any(|l| bullet.is_match(l))));
-    found.iter().find(|(_, fs)| has_bullet(fs)).map(|(d, _)| (d.to_string(), true))
-        .or_else(|| found.iter().find(|(d, fs)| !GENERIC.contains(d) && !fs.is_empty()).map(|(d, _)| (d.to_string(), false)))
-        .or_else(|| root.join("specs").is_dir().then(|| ("specs".to_string(), false)))
+/// The spec folders of `root` that hold markdown, each with whether it holds a requirement line, in a fixed order: the dedicated
+/// names of `SPEC_DIRS`, each in-flight OpenSpec change's `specs/` (sorted, `archive/` left out), Superpowers' design docs; a generic
+/// `docs/` only when none of them holds a requirement line, and a bare `specs/` when nothing else is there. Folders that hold a
+/// requirement line come first: the first one is the main one. A folder that resolves out of the repo (a symlink) is left out (SCAN-10).
+fn scan_dirs(root: &Path, allow: &[PathBuf], ignore: &Ignore) -> Vec<(String, bool)> {
+    let mds = |d: &str| -> Vec<PathBuf> { walk(&root.join(d), allow, ignore).into_iter().filter(|p| is_md(p)).collect() };
+    let mut changes: Vec<String> = std::fs::read_dir(root.join("openspec/changes")).into_iter().flatten().filter_map(Result::ok)
+        .filter_map(|e| e.file_name().into_string().ok()).filter(|n| n != "archive").map(|n| format!("openspec/changes/{n}/specs")).collect();
+    changes.sort();
+    let named = SPEC_DIRS.iter().filter(|d| !GENERIC.contains(d)).map(|d| d.to_string()).chain(changes).chain(["docs/superpowers/specs".to_string()]);
+    let mut v: Vec<(String, bool)> = named.filter(|d| root.join(d).is_dir() && confined(root, d, allow)).filter_map(|d| {
+        let fs = mds(&d);
+        (!fs.is_empty()).then(|| (d, fs.iter().any(|f| has_requirement(f))))
+    }).collect();
+    if !v.iter().any(|d| d.1) && let Some(g) = GENERIC.iter().find(|g| root.join(g).is_dir() && confined(root, g, allow) && mds(g).iter().any(|f| has_requirement(f))) {
+        v.push((g.to_string(), true));
+    }
+    if v.is_empty() && root.join("specs").is_dir() {
+        v.push(("specs".to_string(), false));
+    }
+    v.sort_by_key(|d| !d.1); // stable: the fixed order within each group
+    v
 }
 
 /// What the file list says about the code: the dominant ecosystem and the folders of its sources and tests.

@@ -6,7 +6,7 @@ description: >
 
 # Spec-driven with spec11
 
-`specs/` (or `SPEC.md`, or markdown with such lines) is the source of truth: each requirement is `- **ABC-12** MUST|SHOULD|MAY — text` (also `- ABC-12: text … MUST`, `*`/numbered lists, `| ABC-12 | MUST | text |` rows, and `SHALL`), a test proves it by tagging its title with `[ABC-12]`, and source comments cite it as `(ABC-12)`. Change the spec first, then tests and code.
+`specs/` (or `SPEC.md`, or markdown with such lines) is the source of truth: each requirement is `- **ABC-12** MUST|SHOULD|MAY — text` (also `- ABC-12: text … MUST`, `*`/numbered lists, `| ABC-12 | MUST | text |` rows, `SHALL`, and `### ABC-12: title` headings or `**ABC-12** title` paragraphs with the level, or EARS `shall`, anywhere in the block; OpenSpec `### Requirement: ABC-12 name`; IDs like `FR-001`, `AC-1.2`, `REQ_001`, never `UTF-8`/`ISO-8601`), a test proves it by tagging its title with `[ABC-12]`, and source comments cite it as `(ABC-12)`. Change the spec first, then tests and code.
 
 spec11 finds **evidence, not truth**: a tag or citation does not prove a requirement is implemented, nor that its test passes. Relay its output; never rebuild the numbers by reading specs and tests yourself, and never change a spec marker or tag because of the report alone.
 
@@ -41,7 +41,7 @@ Add it to the client's MCP config if the spec11 tools are not available. `spec11
 
 **CLI (no server needed).** `spec11 [--root DIR] [--json] report|status|trace|changes|diff|history|overlap|uncovered`. Output is plain text, identical on every run for the same tree.
 
-**Configuration.** None is needed in the usual layouts: the specs folder (`specs/`, `spec/`, `docs/specs/`, `openspec/specs/`, `.kiro/specs/`, a `docs/` holding requirement bullets) and the source and test folders, extensions and regexes of the dominant language (Swift, Rust, TypeScript/JavaScript, Python, Go, Java/Kotlin/Scala, C#, Ruby, PHP, C/C++) are detected, from the CodeGraph index when there is one. Symlinks count only inside the repo root or `ALLOWED_PATHS`. Anything else, or a second language, goes in an optional `spec11.json` at the repo root: `specs`, `tests`, `src`, `ext`, `comment`, `decl`, `assert`, `off`, `test_files`, `retired_prefixes`, `codegraph`, `infra_paths`; a field you set replaces its detected value.
+**Configuration.** None is needed in the usual layouts: every specs folder that holds markdown (`specs/`, `spec/`, `docs/specs/`, `openspec/specs/` and each `openspec/changes/*/specs/` but not `archive/`, `.kiro/specs/`, `docs/superpowers/specs/`, a `docs/` holding requirement lines; requirements under an OpenSpec `## REMOVED` heading are retired, a change's version of a requirement replaces the base one, and a `### Requirement` without an ID is a spec issue) and the source and test folders, extensions and regexes of the dominant language (Swift, Rust, TypeScript/JavaScript, Python, Go, Java/Kotlin/Scala, C#, Ruby, PHP, C/C++) are detected, from the CodeGraph index when there is one. Symlinks count only inside the repo root or `ALLOWED_PATHS`. Anything else, or a second language, goes in an optional `spec11.json` at the repo root: `specs`, `tests`, `src`, `ext`, `comment`, `decl`, `assert`, `off`, `test_files`, `retired_prefixes`, `codegraph`, `infra_paths`; a field you set replaces its detected value.
 
 ## Exploring the project status
 
@@ -54,7 +54,7 @@ When asked to explore, audit or report the SDD status, call `report` and relay i
 | check-marked done without proof | ✅-style marks with `NO-TEST` (strong) or `NO-LINK` |
 | marked later but already has tests or code | probably built, wholly or in part |
 | invalid tests | tags for an ID no spec defines (`unknown`) or a struck-out one (`retired`); an ID tagged only in comments (`comment-only`), only on disabled tests (`disabled`), or only on tests with no direct assertion (`no-assert`, may assert through a helper) |
-| spec issues | duplicate IDs, bullets without MUST/SHOULD/MAY, misplaced markers, citations of undefined IDs, a check mark with `(later)` |
+| spec issues | duplicate IDs, bullets without MUST/SHOULD/MAY (unless the ID is defined elsewhere), requirement headings without an ID, misplaced markers, citations of undefined IDs, a check mark with `(later)` |
 | dangling citations | IDs cited by tests or source that no spec defines |
 | specs to compare | declarations covered by two or more requirements whose specs do not cite each other: possible conflict (needs the CodeGraph index) |
 | code with no requirement | the top of `uncovered` (needs the CodeGraph index) |
@@ -86,7 +86,7 @@ Verdicts of a check-marked requirement: `NO-TEST` (no `[ID]` test anywhere: stro
 
 States: `tested` (a `[ID]` tag exists; run the suite to know it passes), `src-only`, `none`, `manual` (checked by a person), `later`, `ref` (a reference doc: markdown linked as `[ADR-0003](decisions/0003-x.md)`, or a file in `decisions/`/`adr/`; never due, may be outdated, so read it before relying on it). A requirement ending in `(later)` or `(deferred)` is `later`; a marker inside struck-through text is ignored.
 
-**Spec issues** are: an ID defined twice, a bullet without MUST/SHOULD/MAY (not counted), a `(later)`/`(deferred)`/`(manual)` marker before the end of a requirement (it then counts as due), a requirement citing an ID no spec defines, a `[ID](path.md)` link to a file that does not exist, an ID linked to two files, a check mark together with a `(later)`/`(deferred)`/`(manual)` marker.
+**Spec issues** are: an ID defined twice, a bullet without MUST/SHOULD/MAY (not counted; a line that names an ID defined elsewhere, like a cross-reference table, is a reference and no issue), a `(later)`/`(deferred)`/`(manual)` marker before the end of a requirement (it then counts as due), a requirement citing an ID no spec defines, a `[ID](path.md)` link to a file that does not exist, an ID linked to two files, a check mark together with a `(later)`/`(deferred)`/`(manual)` marker.
 
 Scanned: `specs/*.md` bullets (wrapped lines joined; struck-through bullets are retired); test tags `[ABC-12]`, `[ABC-12][ABC-14]` or `[ABC-12, ABC-14]` anywhere in the test folders; source IDs after the line-comment marker (block comments are not read). Folders and extensions come from `spec11.json`.
 

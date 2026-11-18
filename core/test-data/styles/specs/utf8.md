@@ -1,0 +1,6 @@
+﻿- **UNI-01** MUST — первая строка: Unicode text stays as written (日本語, café).
+- ✅ **UNI-02** MUST — a check mark, and an emoji variant ✔️ elsewhere.
+- **UNI‑03** SHOULD — a non-breaking hyphen (U+2011) in the ID reads as `-`.
+- **UTF-8** encoding is used everywhere.
+- ISO-8601 MUST — a date format, not a requirement.
+- **TLS-1.3** MUST be used.

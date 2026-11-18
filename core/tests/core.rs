@@ -210,6 +210,12 @@ fn every_profile_compiles() {
         }
         assert!(p.decl.contains('('), "{}: decl needs a name group", p.name);
     }
+    // spec_format.toml: group 1 of a requirement line is the ID, so the patterns may not capture
+    let f = &*spec11_core::scan::FORMAT;
+    for rx in [&f.level, &f.block_level, &f.done, &f.removed, &f.unnamed].into_iter().chain(&f.id).chain(&f.line).chain(&f.block) {
+        let r = regex::Regex::new(rx).unwrap_or_else(|e| panic!("spec_format.toml: {rx}: {e}"));
+        assert_eq!(r.captures_len(), 1, "spec_format.toml: {rx} needs (?:...) groups");
+    }
 }
 
 #[doc = "[SCAN-09]"]
@@ -285,6 +291,91 @@ fn lenient_spec_formats() {
     assert_eq!(got, [("LEN-01", "MUST", "plain."), ("LEN-02", "SHALL", "The system SHALL do it."), ("LEN-03", "SHOULD", "numbered."), ("LEN-04", "MAY", "wrap onto a line (manual)"), ("LEN-05", "MUST", "in a table")]);
     assert_eq!(a.s["LEN-04"].mark, "manual");
     assert!(a.issues.iter().any(|x| x.id == "LEN-06" && x.uncounted));
+}
+
+/// A small repo of `core/test-data` (see its README).
+fn data(name: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("test-data").join(name)
+}
+
+#[doc = "[SCAN-23, SCAN-24, SCAN-25]"]
+#[test]
+fn every_requirement_style_of_the_test_data_parses() {
+    let a = Analysis::load(Some(&data("styles"))).unwrap();
+    let got: Vec<(&str, &str)> = a.s.values().map(|s| (s.id.as_str(), s.level.as_str())).collect();
+    assert_eq!(got, [
+        ("STY-01", "MUST"), ("STY-02", "SHALL"), ("STY-03", "SHOULD"), ("STY-04", "MAY"), ("STY-05", "MUST"), ("HTTP-01", "MUST"),
+        ("HDG-1", "SHALL"), ("HDG-2", "SHALL"), ("RUL-1", "MUST"),
+        ("PAR-1.1", "SHALL"), ("PAR-1.2", "SHALL"), ("PAR-1.10", "SHALL"),
+        ("FR-001", "MUST"), ("FR-002", "MUST"), ("NFR-001", "SHOULD"),
+        ("REQ_001", "MUST"), ("REQ_002", "SHOULD"),
+        ("UNI-01", "MUST"), ("UNI-02", "MUST"), ("UNI-03", "SHOULD"),
+    ]);
+    // the negatives (A1 table rows, B-1, **Covers:**, UTF-8, ISO-8601, TLS-1.3, a level-less mention of STY-01) raise nothing
+    assert!(a.issues.is_empty(), "{:?}", a.issues);
+    assert_eq!(a.s["HDG-1"].text, "Input directory from a property **Covers:** B-1 When the application starts with `importer.input-dir` set, the importer shall use that path.");
+    assert_eq!(a.s["PAR-1.1"].text, "Happy path WHEN the input directory has CSV files THEN the batch job executes SHALL read all `*.csv` files");
+    assert!(a.s["UNI-01"].text.contains("первая строка") && a.s["UNI-01"].text.contains("日本語, café"));
+    assert!(a.s["UNI-02"].done);
+    // new ID forms trace end to end: test tags and source citations, a pasted non-breaking hyphen too
+    let state = |i: &str| a.state[i].as_str();
+    assert_eq!([state("REQ_001"), state("PAR-1.2"), state("FR-001"), state("HDG-1"), state("UNI-03"), state("REQ_002")], ["tested", "tested", "tested", "src-only", "src-only", "none"]);
+    assert!(!a.t.contains_key("UTF-8"));
+    let r = a.report();
+    assert!(r.invalid_tests.values().all(Vec::is_empty), "{:?}", r.invalid_tests);
+    assert_eq!(spec11_core::scan::sorted_ids(a.s.keys().filter(|i| i.starts_with("PAR"))), ["PAR-1.1", "PAR-1.2", "PAR-1.10"]);
+    assert_eq!(spec11_core::scan::ranges(["FR-001", "FR-002", "REQ_001", "REQ_002", "SEC-4"]), "FR-001..002,REQ_001..002,SEC-04");
+    assert_eq!(spec11_core::scan::ranges(["PAR-1.1", "PAR-1.2", "HDG-1"]), "PAR-1.1..2,HDG-01");
+    assert_eq!((a.s["HDG-1"].line, a.s["HDG-1"].end), (3, 6)); // a heading runs to the next heading, trailing blank lines left out
+    // a heading with an ID but no level is reported, not counted
+    let d = scratch("blocks");
+    write(&d, "specs/a.md", "### DEM\x2D1: no level here\n\nJust prose.\n");
+    let un: Vec<String> = Analysis::load(Some(&d)).unwrap().issues.iter().filter(|x| x.uncounted).map(|x| x.id.clone()).collect();
+    assert_eq!(un, ["DEM-1"]);
+}
+
+#[doc = "[SCAN-26, SCAN-27]"]
+#[test]
+fn openspec_superpowers_kiro_and_fallback_layouts() {
+    // spec/ and OpenSpec together; a change modifies, adds and removes; archive/ and tasks.md are not specs
+    let a = Analysis::load(Some(&data("openspec"))).unwrap();
+    assert_eq!(a.s.keys().collect::<Vec<_>>(), ["CRT-01", "UIX-01", "UIX-03"]);
+    assert_eq!(a.s["UIX-01"].file, "openspec/changes/add-chart/specs/ui/spec.md");
+    assert!(a.s["UIX-01"].text.ends_with("with a chart canvas."));
+    assert_eq!(a.p.retired(), ["UIX-02"]);
+    let issues: Vec<String> = a.issues.iter().map(|x| x.to_string()).collect();
+    assert_eq!(issues, ["Requirement: Filter form without an ID openspec/specs/ui/spec.md:18 is a requirement without an ID, so no test can cite it; it is not counted"]);
+
+    // Superpowers: design docs next to specs/, never plans/
+    let a = Analysis::load(Some(&data("superpowers"))).unwrap();
+    assert_eq!(a.s.keys().collect::<Vec<_>>(), ["MAN-01", "SUP-01"]);
+    assert_eq!(a.p.cfg.specs, "specs");
+
+    // Kiro numbers its requirements but gives them no ID
+    let a = Analysis::load(Some(&data("kiro"))).unwrap();
+    assert!(a.s.is_empty());
+    assert!(a.issues.iter().any(|x| x.id == "Requirement 1" && x.uncounted), "{:?}", a.issues);
+
+    // a struck bullet retires only that line: a live definition elsewhere still counts (tests on it are flagged)
+    let d = scratch("struck");
+    write(&d, "specs/a.md", "- **DEM-01** MUST — live.\n");
+    write(&d, "specs/b.md", "- ~~**DEM-01** MUST — old wording.~~\n");
+    assert!(Analysis::load(Some(&d)).unwrap().s.contains_key("DEM-01"));
+
+    // a spec folder that a symlink takes out of the repo is not read (SCAN-10)
+    #[cfg(unix)]
+    {
+        let (d, out) = (scratch("os-link"), scratch("os-out"));
+        write(&d, "specs/a.md", "- **DEM-01** MUST — in.\n");
+        write(&out, "specs/x.md", "- **DEM-02** MUST — outside.\n");
+        fs::create_dir_all(d.join("openspec/changes")).unwrap();
+        std::os::unix::fs::symlink(&out, d.join("openspec/changes/x")).unwrap();
+        assert_eq!(Analysis::load(Some(&d)).unwrap().s.keys().collect::<Vec<_>>(), ["DEM-01"]);
+    }
+
+    // no spec folder: any markdown with a requirement, a heading block with its level further down too
+    let a = Analysis::load(Some(&data("fallback"))).unwrap();
+    assert_eq!(a.s.values().map(|s| (s.id.as_str(), s.file.as_str())).collect::<Vec<_>>(), [("FBK-1", "notes/design.md")]);
 }
 
 fn scratch(name: &str) -> PathBuf {
