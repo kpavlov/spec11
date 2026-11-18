@@ -712,7 +712,8 @@ fn changes_by_ref_commit_rename_delete_whitespace_and_history() {
     let c = a.changes(&o).unwrap();
     assert_eq!(paths(&c), ["specs/a.md:modified:committed", "src/new.kt:renamed:unstaged", "tests/AT.kt:modified:committed"]);
     assert_eq!(c.files[1].old_path.as_deref(), Some("src/old.kt"));
-    assert_eq!(ids(&c), ["AAA-01:src", "AAA-02:test", "AAA-03:spec"], "{c:?}");
+    // (the whitespace-only edit of the renamed cited function is no change: SCAN-32)
+    assert_eq!(ids(&c), ["AAA-02:test", "AAA-03:spec"], "{c:?}");
     let gone = c.requirements.iter().find(|r| r.id == "AAA-03").unwrap();
     assert!(gone.deleted && gone.state == "deleted" && gone.text.contains("three"), "{gone:?}");
     assert!(c.text().contains("(from src/old.kt)"));
@@ -822,20 +823,47 @@ fn a_configured_specs_path_that_is_missing_counts_as_no_specs() {
     assert_eq!(Analysis::load(Some(&d)).unwrap().report().requirements, 0);
 }
 
-#[doc = "[SCAN-30]"]
+#[doc = "[SCAN-30, SCAN-31]"]
 #[test]
 fn a_requirement_names_the_newest_commit_that_touched_it() {
     let d = scratch("blame");
     write(&d, "specs/01-a.md", "- **BLM-01** MUST — one.\n- **BLM-02** MUST — two.\n");
-    let git = |a: &[&str]| assert!(std::process::Command::new("git").args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(a).current_dir(&d).output().unwrap().status.success(), "{a:?}");
+    let git = |a: &[&str]| assert!(std::process::Command::new("git").args(["-c", "user.name=Ann Author", "-c", "user.email=t@t"]).args(a).current_dir(&d).output().unwrap().status.success(), "{a:?}");
     git(&["init", "-q"]);
     git(&["add", "."]);
     git(&["commit", "-qm", "one"]);
     write(&d, "specs/01-a.md", "- **BLM-01** MUST — one.\n- **BLM-02** MUST — two, edited.\n");
     git(&["commit", "-qam", "two"]);
-    let c = Analysis::load(Some(&d)).unwrap().blame_commits().unwrap();
-    assert!(c["BLM-01"].len() == 40 && c["BLM-01"] != c["BLM-02"], "{c:?}");
+    let a = Analysis::load(Some(&d)).unwrap();
+    let c = a.blame_commits().unwrap();
+    assert!(c["BLM-01"].sha.len() == 40 && c["BLM-01"].sha != c["BLM-02"].sha, "{c:?}");
+    assert_eq!((c["BLM-02"].author.as_str(), c["BLM-02"].subject.as_str(), c["BLM-02"].date.len()), ("Ann Author", "two", 10), "{c:?}");
+    let b = a.blame_at("specs/01-a.md", &[1, 2, 9]).unwrap();
+    assert!(b[&1].subject == "one" && b[&2].subject == "two" && !b.contains_key(&9), "{b:?}");
+    assert!(a.blame_at("/etc/passwd", &[1]).is_err());
     write(&d, "specs/01-a.md", "- **BLM-01** MUST — one, uncommitted.\n- **BLM-02** MUST — two, edited.\n");
     let c = Analysis::load(Some(&d)).unwrap().blame_commits().unwrap();
     assert!(!c.contains_key("BLM-01") && c.contains_key("BLM-02"), "{c:?}");
+}
+
+#[doc = "[SCAN-32]"]
+#[test]
+fn a_requirement_changes_only_when_its_text_differs_from_the_base() {
+    use spec11_core::ChangeOpts;
+    let d = scratch("realchange");
+    write(&d, "spec11.json", r#"{"src":["src"],"tests":["tests"],"ext":["kt"],"comment":["//"]}"#);
+    write(&d, "specs/a.md", "- **REA-01** MUST — one long\n  wrapped bullet.\n- **REA-02** MUST — two.\n- **REA-03** MUST — three.\n");
+    write(&d, "src/a.kt", "// (REA-03)\nfun f() {\n    1\n}\n");
+    let git = |a: &[&str]| assert!(std::process::Command::new("git").args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(a).current_dir(&d).output().unwrap().status.success(), "{a:?}");
+    git(&["init", "-q"]);
+    git(&["add", "."]);
+    git(&["commit", "-qm", "base"]);
+    // REA-01: rewrapped only; REA-02: really edited; REA-03: its cited code re-indented only
+    write(&d, "specs/a.md", "- **REA-01** MUST — one long wrapped\n  bullet.\n- **REA-02** MUST — two, edited.\n- **REA-03** MUST — three.\n");
+    write(&d, "src/a.kt", "// (REA-03)\nfun f() {\n        1\n}\n");
+    let c = Analysis::load(Some(&d)).unwrap().changes(&ChangeOpts::default()).unwrap();
+    assert_eq!(c.requirements.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), ["REA-02"], "{c:?}");
+    write(&d, "src/a.kt", "// (REA-03)\nfun f() {\n    2\n}\n");
+    let c = Analysis::load(Some(&d)).unwrap().changes(&ChangeOpts::default()).unwrap();
+    assert_eq!(c.requirements.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), ["REA-02", "REA-03"], "{c:?}");
 }

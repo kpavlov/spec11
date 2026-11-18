@@ -118,8 +118,8 @@
   let report = $state<any>(null);
   // the working tree against HEAD: undefined until loaded, null when it cannot be read (not a git work tree)
   let changes = $state<any>(undefined);
-  // (WEB-35) {requirement ID: its newest commit}; empty without git
-  let commits = $state<Record<string, string>>({});
+  // (WEB-35, WEB-36) {requirement ID: its newest commit (sha, short, author, date, subject)}; empty without git
+  let commits = $state<Record<string, any>>({});
   let custom = $state<any>(undefined);
   // commits not on the base branch, for the Changes page
   let history = $state<any>(null);
@@ -310,15 +310,28 @@
   };
   // (WEB-22) what the working tree changed: files by path, the kinds a requirement is touched by, the modules holding changed files
   const fileOf = $derived(new Map<string, any>((changes?.files ?? []).map((f: any) => [f.path, f])));
-  const changeOf = $derived(new Map<string, any>((changes?.requirements ?? []).map((r: any) => [r.id, r])));
-  const reqKinds = $derived(new Map<string, string[]>((changes?.requirements ?? []).map((r: Row & { changed: string[] }) => [r.id, r.changed])));
+  // (WEB-37) directly changed: its bullet, a tagged test or a cited unit differs from the base; one only reached through a test is indirect
+  const isDirect = (r: any) => r.notes.some((n: any) => n.action !== "reached by a test");
+  const directReqs = $derived<any[]>((changes?.requirements ?? []).filter(isDirect));
+  const changeOf = $derived(new Map<string, any>(directReqs.map((r: any) => [r.id, r])));
+  const reqKinds = $derived(new Map<string, string[]>(directReqs.map((r: Row & { changed: string[] }) => [r.id, r.changed])));
   const moduleOfFile = (path: string) => (modules?.modules ?? []).map((m: any) => m.path).filter((m: string) => m !== "." && path.startsWith(`${m}/`)).sort((a: string, b: string) => b.length - a.length)[0] ?? ".";
   const changedMods = $derived(new Set<string>((changes?.files ?? []).map((f: any) => moduleOfFile(f.path))));
   const onlyChanged = $derived(route.changed === "1");
   // (WEB-35) reviewed = its commit is the one it was reviewed at; committed again since, it is unreviewed again
-  const isReviewed = (id: string) => !!commits[id] && reviewed[id] === commits[id];
+  const isReviewed = (id: string) => !!commits[id] && reviewed[id] === commits[id].sha;
   const onlyUnreviewed = $derived(route.reviewed === "0");
-  const reviewTip = (id: string) => (isReviewed(id) ? `reviewed at ${commits[id].slice(0, 7)}` : reviewed[id] ? `changed since reviewed (${reviewed[id].slice(0, 7)} → ${commits[id].slice(0, 7)})` : "mark reviewed");
+  const reviewTip = (id: string) => (isReviewed(id) ? `reviewed at ${commits[id].short}` : reviewed[id] ? `changed since reviewed (${reviewed[id].slice(0, 7)} → ${commits[id].short})` : "mark reviewed");
+  // (WEB-36) who last changed the line of a test: asked per file when a preview shows it; keyed by reload (gen), so a reload asks again
+  let blame = $state<Record<string, any>>({});
+  const blameKey = (file: string, line: number) => `${gen}:${file}:${line}`;
+  const wantBlame = (refs: { file: string; line: number }[]) => {
+    const by = new Map<string, number[]>();
+    for (const r of refs) if (!(blameKey(r.file, r.line) in blame)) by.set(r.file, [...(by.get(r.file) ?? []), r.line]);
+    for (const [path, lines] of by) call("blame", { path, lines }).then((b) => { for (const [n, c] of Object.entries<any>(b.data.lines)) blame[blameKey(path, +n)] = c; }).catch(() => {});
+  };
+  $effect(() => { void gen; const t = trace?.data?.tests; if (t?.length) untrack(() => wantBlame(t)); });
+  $effect(() => { void gen; if (route.tab === "tests" && route.path && route.line) untrack(() => wantBlame([{ file: route.path!, line: route.line! }])); });
   const changeMark = (path: string) => fileOf.get(path)?.change ?? "";
   // (WEB-25) the preview of a changed item shows the diff when the remembered view is "diff"
   const diffOn = (changed: boolean) => changed && preview.view === "diff";
@@ -382,7 +395,7 @@
   const CHANGES = ["added", "modified", "renamed", "deleted"];
   const nOf = (kind: string) => (view?.files ?? []).filter((f: any) => f.kind === kind).length;
   const viewMods = $derived(new Set<string>((view?.files ?? []).map((f: any) => moduleOfFile(f.path))));
-  const noTestN = $derived((changes?.requirements ?? []).filter((r: Row) => r.state === "none" || r.state === "src-only").length);
+  const noTestN = $derived(directReqs.filter((r: Row) => r.state === "none" || r.state === "src-only").length);
   // one pill per kind of note, the files it happened in as its title
   const noteGroups = (notes: { role: string; action: string; file: string }[]) => {
     const g = new Map<string, Set<string>>();
@@ -435,12 +448,17 @@
 </script>
 
 {#snippet reqCell(r: any, k: string)}
-  {#if k === "id"}{#if commits[r.id]}<input type="checkbox" class="rv" aria-label="reviewed" title={reviewTip(r.id)} checked={isReviewed(r.id)} onchange={(e) => setReviewed(r.id, e.currentTarget.checked ? commits[r.id] : undefined)} />{:else if Object.keys(commits).length}<span class="rv muted" title="not committed yet: commit it to review it">·</span>{/if}{#if r.deleted || !known.has(r.id)}{r.id}{:else}<a href={u(route.tab === "requirements" ? { ...route, id: r.id } : req(r.id))}>{r.id}</a>{/if}
+  {#if k === "id"}{#if commits[r.id]}<input type="checkbox" class="rv" aria-label="reviewed" title={reviewTip(r.id)} checked={isReviewed(r.id)} onchange={(e) => setReviewed(r.id, e.currentTarget.checked ? commits[r.id].sha : undefined)} />{:else if Object.keys(commits).length}<span class="rv muted" title="not committed yet: commit it to review it">·</span>{/if}{#if r.deleted || !known.has(r.id)}{r.id}{:else}<a href={u(route.tab === "requirements" ? { ...route, id: r.id } : req(r.id))}>{r.id}</a>{/if}
   {:else if k === "level"}{#if /^(MUST|SHOULD|MAY)$/.test(r.level)}<span class="rfc {r.level.toLowerCase()}">{r.level}</span>{/if}
   {:else if k === "state"}<Pill tone={r.deleted ? "bad" : stateTone[r.state]}>{r.state}</Pill>{#if r.done}<Pill tone="accent" title="check-marked: {r.verdict}">✓ {r.verdict}</Pill>{/if}
   {:else if k === "text"}<div class="txt" title={plain(r.text)}>{@html inline(r.text)}</div>
     <div class="notes">{#each noteGroups(r.notes ?? changeOf.get(r.id)?.notes ?? []) as [what, files]}<Pill tone={r.deleted ? "bad" : "accent"} title={files.join(", ")}>✎ {what}</Pill>{/each}</div>
   {:else if r.line}<a href={u({ tab: "specs", file: r.file, id: r.id })}>{r.file}:{r.line}</a>{:else}{r.file}{/if}
+{/snippet}
+
+{#snippet who(c: any, note = false)}
+  {#if c && note}<p class="muted note">Last changed by <b>{c.author}</b>, {c.date} · <span class="mono">{c.short}</span> {c.subject}</p>
+  {:else if c}<span class="muted who" title={c.subject}>{c.author}, {c.date} · <span class="mono">{c.short}</span></span>{/if}
 {/snippet}
 
 {#snippet idlink(id: string, to: Route)}
@@ -480,11 +498,12 @@
       {:else}
       {#if sp}
         <p class="muted mono nowrap"><a href={u({ tab: "specs", file: sp.file, id: trace.data.id })}>{sp.file}:{sp.line}</a></p>
+        {@render who(commits[trace.data.id], true)}
         <Markdown source={sp.text} />
       {:else}<p class="muted">Not in any spec: cited only in tests or code.</p>{/if}
       {#if trace.data.tests?.length}
         <h4>Tests ({trace.data.tests.length})</h4>
-        <ul class="refs">{#each trace.data.tests as t}<li><a class="mono nowrap" href={u({ tab: "code", path: t.file, line: t.line })}>{t.file}:{t.line}</a> {t.text}</li>{/each}</ul>
+        <ul class="refs">{#each trace.data.tests as t}<li><a class="mono nowrap" href={u({ tab: "code", path: t.file, line: t.line })}>{t.file}:{t.line}</a> {t.text} {@render who(blame[blameKey(t.file, t.line)])}</li>{/each}</ul>
       {/if}
       {#if trace.data.source_cites?.length}
         <h4>Code citations ({trace.data.source_cites.length})</h4>
@@ -510,6 +529,7 @@
     {@const lo = Math.max(1, (route.line ?? 1) - TEST_BEFORE)}
     <PaneHead title={c?.t.name ?? route.path} close={u({ ...route, path: undefined, line: undefined })} />
     <p class="muted mono nowrap"><a href={u({ tab: "code", path: route.path, line: route.line })}>{route.path}:{route.line}</a>{#if c}{" "}in <a href={u({ tab: "modules", module: c.module })}>{c.module}</a>{/if}</p>
+    {@render who(route.path && route.line ? blame[blameKey(route.path, route.line)] : undefined, true)}
     {#if fileOf.has(route.path)}<p><ViewSwitch /></p>{/if}
     {#if diffOn(fileOf.has(route.path))}
       <DiffView paths={[route.path]} {gen} />
@@ -545,7 +565,7 @@
   <nav aria-label="views">
     {#each TABS.filter((t) => t !== "setup") as t}
       <a class="tab" class:on={route.tab === t} aria-current={route.tab === t ? "page" : undefined} href={u({ tab: t })} title={t} aria-label={t}>
-        <span aria-hidden="true">{EMOJI[t]}</span><span class="lbl">{t}</span>{#if t === "dashboard" && report?.total_problems}<span class="badge" data-tone="bad" title="{report.total_problems} problems">{report.total_problems}</span>{/if}{#if t === "changes" && changes?.requirements.length}<span class="badge" data-tone="accent" title="{changes.requirements.length} requirements may be affected">{changes.requirements.length}</span>{/if}
+        <span aria-hidden="true">{EMOJI[t]}</span><span class="lbl">{t}</span>{#if t === "dashboard" && report?.total_problems}<span class="badge" data-tone="bad" title="{report.total_problems} problems">{report.total_problems}</span>{/if}{#if t === "changes" && directReqs.length}<span class="badge" data-tone="accent" title="{directReqs.length} requirements may be affected">{changes.requirements.length}</span>{/if}
       </a>
     {/each}
   </nav>
@@ -660,7 +680,7 @@ irm https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.ps1 | 
         {:else}
           <p>{#each tallyBy(changes.files) as [c, n]}<Pill tone={changeTone(c)}>{n} {c}</Pill>{/each}</p>
           <p>
-            <a href={u({ tab: "requirements", changed: "1" })}>{plural(changes.requirements.length, "requirement")}</a> may be affected{#if noTestN} · <b data-tone="bad">{noTestN} without a test</b>{/if}
+            <a href={u({ tab: "requirements", changed: "1" })}>{plural(directReqs.length, "requirement")}</a> may be affected{#if noTestN} · <b data-tone="bad">{noTestN} without a test</b>{/if}
             <span class="muted"> · evidence of edits, not of done</span>
           </p>
         {/if}
@@ -921,11 +941,15 @@ irm https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.ps1 | 
     {:else if view === null}<p class="muted empty">Not checked: this is not a git work tree, it has no commits yet, or git is not available.</p>
     {:else if !view.files.length}<p class="muted empty">{view.commit ? "This commit changed no scanned file." : `Nothing ${scope.staged ? "staged" : "changed"} against ${view.reference}.`}{#if !scope.show_all} Lockfiles, CI and build files are not scanned: <a href={u({ ...route, all: "1" })}>show unscanned files</a>.{/if}</p>
     {:else}
-      <Section id="changes-requirements" title={`Requirements that may be affected${at}`} count={view.requirements.length} tone={view.requirements.length ? "accent" : undefined}>
-        {#if !view.requirements.length}<p class="muted">No requirement's bullet, tagged test or cited code is among the changed lines.</p>
-        {:else}
-          <DataTable rows={view.requirements} columns={reqCols} cell={reqCell} rowKey={(r) => r.id} onselect={(id, how) => how === "click" && id && known.has(id) && navigate(req(id))} value={reqVal} tone={(r: any) => (r.deleted ? "bad" : edgeTone(r.state))} pale={(r) => isReviewed(r.id)} />
-        {/if}
+      {@const direct = view.requirements.filter(isDirect)}
+      {@const indirect = view.requirements.filter((r: any) => !isDirect(r))}
+      {#snippet reqTable(rows: any[])}
+        <DataTable {rows} columns={reqCols} cell={reqCell} rowKey={(r) => r.id} onselect={(id, how) => how === "click" && id && known.has(id) && navigate(req(id))} value={reqVal} tone={(r: any) => (r.deleted ? "bad" : edgeTone(r.state))} pale={(r) => isReviewed(r.id)} keys={false} />
+      {/snippet}
+      <Section id="changes-requirements" title={`Requirements that may be affected${at}`} count={direct.length} tone={direct.length ? "accent" : undefined}>
+        {#if !direct.length}<p class="muted">No requirement's bullet, tagged test or cited code differs from {view.commit ? "its parent" : view.reference}.</p>
+        {:else}{@render reqTable(direct)}{/if}
+        {#if indirect.length}<details class="indirect"><summary class="muted">{indirect.length} more reached only through tests that run the changed code (not edited themselves)</summary>{@render reqTable(indirect)}</details>{/if}
         <p class="muted note">A changed file may affect a requirement; it does not say the requirement is done or its test passes. Evidence, not truth.</p>
       </Section>
       <Section id="changes-files" title={`Files${at}`} count={view.files.length} tone="accent">
@@ -1075,6 +1099,8 @@ irm https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.ps1 | 
   aside h4 { margin: 14px 0 4px; font-size: var(--text-sm); }
   .refs { margin: 0; padding-left: 16px; font-size: var(--text-sm); }
   .note { font-size: var(--text-xs); margin: 10px 0 0; }
+  details.indirect { margin-top: 10px; }
+  details.indirect summary { cursor: pointer; font-size: var(--text-xs); }
   pre { margin: 0; white-space: pre-wrap; word-break: break-word; }
 
   /* specs, code, setup */

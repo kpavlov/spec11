@@ -282,6 +282,14 @@ pub fn apply(root: Option<&Path>, global: bool, port: Option<u16>) -> Result<Vec
 mod tests {
     use super::*;
 
+    #[doc = "[API-17]"]
+    #[test]
+    fn the_skill_lists_every_tool() {
+        for t in crate::ops::tools().iter() {
+            assert!(SKILL.contains(&format!("`{}`", t.name)), "skills/spec11/SKILL.md does not list the `{}` tool", t.name);
+        }
+    }
+
     fn tmp(tag: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!("spec11-skill-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);

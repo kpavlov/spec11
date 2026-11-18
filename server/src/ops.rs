@@ -78,7 +78,8 @@ fn tool_list() -> Vec<Tool> {
         Tool { name: "changes", description: "What changed against a git ref (HEAD by default) or in one commit: every changed file (added, modified, deleted, renamed; staged, unstaged, untracked or committed; spec, test, src, and other with show_all) and the requirements the changed lines touch: a removed bullet, an edited test or a cited function, with what happened to it. Evidence of edits, not that anything is done.", schema: obj(change_props.clone()), ui: false },
         Tool { name: "diff", description: "Unified diff of one changed file against a ref or in one commit (a rename shows both paths; an untracked file is all additions), and under each hunk the requirements it touches. Takes the same arguments as `changes`, and only files it lists. Shows what was edited, not whether it is right.", schema: required(obj(merge(change_props.clone(), json!({"path": {"type": "string", "description": "repo-relative path of a changed file, as in `changes`"}}))), "path"), ui: false },
         Tool { name: "history", description: "Commits on a branch (HEAD by default) that are not on the base branch (main or master by default), newest first, and how many files are uncommitted. Leaves out commits that change no file the filters show (ignore_whitespace, show_ignored, show_all as in `changes`). Explain one with `changes commit=<sha>`. Needs git.", schema: obj(json!({"base": {"type": "string", "description": "branch the commits are not on (default: main, master, origin/main or origin/master)"}, "head": {"type": "string", "description": "branch to list (default HEAD)"}, "limit": {"type": "integer", "description": "max commits (default 50)"}, "ignore_whitespace": change_props["ignore_whitespace"], "show_ignored": change_props["show_ignored"], "show_all": change_props["show_all"]})), ui: false },
-        Tool { name: "commits", description: "For each requirement, the newest commit (full sha) that touched its lines, by git blame of its spec file; a requirement with an uncommitted line has none. When the text was last changed, not whether anyone reviewed it. Needs git.", schema: obj(json!({})), ui: false },
+        Tool { name: "commits", description: "For each requirement, the newest commit that touched its lines (sha, short, author, date, subject), by git blame of its spec file: who last changed the specification and when; a requirement with an uncommitted line has none. When the text was last changed, not whether anyone reviewed it. Needs git.", schema: obj(json!({})), ui: false },
+        Tool { name: "blame", description: "Who last changed the given lines of a scanned spec, test or source file: for each line the commit (sha, short, author, date, subject), by git blame; a line not committed yet has none. For a test pass the line of its tag or name, as `trace` and `spec11://tests` list it. Needs git.", schema: merge(obj(json!({"path": {"type": "string", "description": "repo-relative path of a scanned file, e.g. core/tests/core.rs"}, "lines": {"type": "array", "items": {"type": "integer"}, "description": "1-based line numbers"}})), json!({"required": ["path", "lines"]})), ui: false },
         Tool { name: "trace", description: "One requirement in depth: spec text, tests tagged with it, source citations with their declaration, related code. Evidence, not truth.", schema: required(obj(json!({"id": {"type": "string", "description": "requirement ID, e.g. DOC-25"}})), "id"), ui: false },
         Tool { name: "overlap", description: "Code covered by 2+ requirements (CodeGraph index): where two specs may conflict or complement each other. A candidate list, not a verdict.", schema: obj(merge(path.clone(), json!({"all": {"type": "boolean", "description": "also pairs from the same spec file"}}))), ui: false },
         Tool { name: "uncovered", description: "Code no requirement covers (CodeGraph index): candidates for a missing requirement, not proof.", schema: obj(merge(path, json!({"fanin": {"type": "integer"}, "min": {"type": "integer"}}))), ui: false },
@@ -214,7 +215,12 @@ pub fn call(root: Option<&Path>, name: &str, args: &Value, dashboard: &str, mcp_
         }
         "commits" => {
             let c = a.blame_commits()?;
-            (c.iter().map(|(i, s)| format!("{i} {s}\n")).collect(), json!({"commits": c}))
+            (c.iter().map(|(i, c)| format!("{i} {} {} {} {}\n", c.short, c.date, c.author, c.subject)).collect(), json!({"commits": c}))
+        }
+        "blame" => {
+            let lines: Vec<usize> = args["lines"].as_array().map(|l| l.iter().filter_map(|n| n.as_u64().map(|n| n as usize)).collect()).unwrap_or_default();
+            let b = a.blame_at(txt(args, "path"), &lines)?;
+            (b.iter().map(|(n, c)| format!("{}:{n} {} {} {} {}\n", txt(args, "path"), c.short, c.date, c.author, c.subject)).collect(), json!({"path": txt(args, "path"), "lines": b}))
         }
         "trace" => match a.trace(txt(args, "id")) {
             Some(t) => (t.text(), json!(t)),
@@ -344,11 +350,22 @@ fn shape(props: Value, required: &[&str]) -> Value {
 /// JSON Schema of a result's structured content: `report`, `status`, `trace`, `overlap`, `uncovered`, `modules`, `tests`,
 /// `file`, `source`, `doctor`, `codegraph`, `install`, `dashboard`. Typed from the core structs where there are any.
 pub fn schema(name: &str) -> Option<Value> {
-    use spec11_core::{Changes, FileDiff, History, Report, Status, Trace, coverage::{OverlapRow, Uncovered}, modules::{ModulesView, TestsView}};
+    use spec11_core::{Changes, Commit, FileDiff, History, Report, Status, Trace, coverage::{OverlapRow, Uncovered}, modules::{ModulesView, TestsView}};
     #[derive(schemars::JsonSchema)]
     #[allow(dead_code)]
     struct Overlap {
         rows: Vec<OverlapRow>,
+    }
+    #[derive(schemars::JsonSchema)]
+    #[allow(dead_code)]
+    struct Commits {
+        commits: std::collections::BTreeMap<String, Commit>,
+    }
+    #[derive(schemars::JsonSchema)]
+    #[allow(dead_code)]
+    struct Blames {
+        path: String,
+        lines: std::collections::BTreeMap<usize, Commit>,
     }
     #[derive(schemars::JsonSchema)]
     #[allow(dead_code)]
@@ -375,7 +392,8 @@ pub fn schema(name: &str) -> Option<Value> {
         "file" => shape(json!({"files": strs(), "name": {"type": "string"}, "markdown": {"type": "string"}}), &[]),
         "diff" => of::<FileDiff>(),
         "history" => of::<History>(),
-        "commits" => shape(json!({"commits": {"type": "object", "additionalProperties": {"type": "string"}}}), &["commits"]),
+        "commits" => of::<Commits>(),
+        "blame" => of::<Blames>(),
         "source" => shape(json!({"path": {"type": "string"}, "text": {"type": "string"}}), &["path", "text"]),
         "codegraph" => shape(json!({"output": {"type": "string"}}), &["output"]),
         "install" => of::<Install>(),

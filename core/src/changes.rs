@@ -211,6 +211,17 @@ impl Project {
     }
 }
 
+/// `YYYY-MM-DD` (UTC) of a unix time.
+fn ymd(t: i64) -> String {
+    let z = t.div_euclid(86400) + 719468;
+    let (era, doe) = (z.div_euclid(146097), z.rem_euclid(146097));
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let (d, m) = (doy - (153 * mp + 2) / 5 + 1, if mp < 10 { mp + 3 } else { mp - 9 });
+    format!("{:04}-{m:02}-{d:02}", yoe + era * 400 + i64::from(m <= 2))
+}
+
 // ───────────────────────────── what a hunk touches ─────────────────────────────
 
 /// The last line of the `{ }` unit that starts at 1-based line `n`; `None` when there is no such unit (a language without braces).
@@ -350,7 +361,7 @@ pub struct FileDiff {
     pub hunks: Vec<HunkInfo>,
 }
 
-#[derive(Debug, Serialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct Commit {
     pub sha: String,
     pub short: String,
@@ -379,6 +390,12 @@ impl Analysis {
             return self.p.lines(f);
         }
         Rc::new(self.p.git(&["show", &format!("{}:{f}", o.commit)]).map(|t| crate::scan::clean(&t).lines().map(str::to_owned).collect()).unwrap_or_default())
+    }
+
+    /// The base-side text of a file, what the diff is against: the ref, or the first parent of an explained commit. Empty when the file is new.
+    fn old_lines(&self, o: &ChangeOpts, f: &str) -> Vec<String> {
+        let base = if o.commit.is_empty() { o.reference().to_string() } else { format!("{}^", o.commit) };
+        self.p.git(&["show", &format!("{base}:{f}")]).map(|t| crate::scan::clean(&t).lines().map(str::to_owned).collect()).unwrap_or_default()
     }
 
     /// The text of a removed bullet line: what follows the ID, minus the level that opens it.
@@ -414,11 +431,27 @@ impl Analysis {
         out
     }
 
-    /// What each hunk of `file` does to the requirements it touches, per role of the file.
-    fn hunk_notes(&self, file: &str, hs: &[Hunk], ls: &[String], roles: &[&'static str]) -> Vec<Vec<Note>> {
+    // (SCAN-32)
+    /// What each hunk of `file` does to the requirements it touches, per role of the file. `old` is the file on the base side: a
+    /// requirement whose bullet, tagged test or cited code reads the same there once whitespace and wrapping are collapsed is not changed.
+    fn hunk_notes(&self, file: &str, hs: &[Hunk], ls: &[String], old: &[String], roles: &[&'static str]) -> Vec<Vec<Note>> {
         let mut out: Vec<Vec<Note>> = vec![vec![]; hs.len()];
+        // per ID, the words of all its units in order
+        let sigs = |units: &[(String, usize, usize)], ls: &[String]| {
+            let mut m: HashMap<String, String> = HashMap::new();
+            for (id, a, b) in units {
+                let e = m.entry(id.clone()).or_default();
+                for w in ls[a - 1..*b].iter().flat_map(|l| l.split_whitespace()) {
+                    e.push_str(w);
+                    e.push(' ');
+                }
+                e.push('\n');
+            }
+            m
+        };
         for &role in roles {
             let units = self.units(role, ls);
+            let (now, before) = (sigs(&units, ls), sigs(&self.units(role, old), old));
             let present: HashSet<&str> = units.iter().map(|u| u.0.as_str()).collect();
             let (added, changed, removed) = match role { "spec" => ("added", "edited", "removed"), "test" => ("tag added", "changed", "tag removed"), _ => ("citation added", "changed", "citation removed") };
             for (k, h) in hs.iter().enumerate() {
@@ -429,6 +462,9 @@ impl Analysis {
                     // a pure deletion (no new lines) sits between two lines: it touches only a unit that spans both
                     if (h.new_len > 0 && a <= hi && b >= lo) || (h.new_len == 0 && a <= h.new_start && b > h.new_start) {
                         let fresh = h.new_len > 0 && a >= lo && a <= hi && !gone.contains_key(id);
+                        if !fresh && before.get(id) == now.get(id) {
+                            continue;
+                        }
                         out[k].push(Note { id: id.clone(), role, action: if fresh { added } else { changed }, file: file.into(), text: None });
                     }
                 }
@@ -445,7 +481,8 @@ impl Analysis {
         for (f, hs) in self.p.hunks(o, files, patch)? {
             let roles = kinds.roles(&f);
             if !roles.is_empty() {
-                out.extend(self.hunk_notes(&f, &hs, &self.new_lines(o, &f), &roles).into_iter().flatten());
+                let old = self.old_lines(o, files.iter().find(|x| x.path == f).and_then(|x| x.old_path.as_deref()).unwrap_or(&f));
+                out.extend(self.hunk_notes(&f, &hs, &self.new_lines(o, &f), &old, &roles).into_iter().flatten());
             }
         }
         Ok(out)
@@ -458,34 +495,62 @@ impl Analysis {
         self.notes_of(o, &files, &Kinds::of(&self.p), patch)
     }
 
-    // (SCAN-29)
-    /// {requirement ID: the newest commit (full sha) that touched its lines}, by `git blame` of each spec file. A requirement with a
-    /// line not committed yet, or in a file git does not know, is left out: it has no commit to review.
-    pub fn blame_commits(&self) -> Result<IndexMap<String, String>, String> {
+    // (SCAN-30)
+    /// Per line of `file` (index = line - 1): the commit that last changed it and its author time; `None` for a line not committed yet.
+    /// By `git blame --line-porcelain`: a header is `<sha> <orig> <final> [<count>]`, the content line starts with a tab.
+    fn blame_lines(&self, file: &str) -> Result<Vec<Option<(Rc<Commit>, i64)>>, String> {
+        let out = self.p.git(&["blame", "--line-porcelain", "--", file])?;
+        let (mut by, mut order, mut cur): (HashMap<&str, (Commit, i64)>, Vec<&str>, &str) = Default::default();
+        for l in out.lines() {
+            if !l.starts_with('\t') && l.len() > 40 && l.as_bytes()[40] == b' ' && l[..40].bytes().all(|b| b.is_ascii_hexdigit()) {
+                cur = &l[..40];
+                by.entry(cur).or_insert_with(|| (Commit { sha: cur.into(), short: cur[..7].into(), author: String::new(), date: String::new(), subject: String::new() }, 0));
+                order.push(cur);
+            } else if let Some((c, t)) = by.get_mut(cur) {
+                if let Some(a) = l.strip_prefix("author ") {
+                    c.author = a.into();
+                } else if let Some(m) = l.strip_prefix("summary ") {
+                    c.subject = m.into();
+                } else if let Some(x) = l.strip_prefix("author-time ") {
+                    *t = x.parse().unwrap_or(0);
+                    c.date = ymd(*t);
+                }
+            }
+        }
+        let by: HashMap<&str, (Rc<Commit>, i64)> = by.into_iter().map(|(h, (c, t))| (h, (Rc::new(c), t))).collect();
+        Ok(order.into_iter().map(|h| (!h.bytes().all(|b| b == b'0')).then(|| by[h].clone())).collect())
+    }
+
+    // (SCAN-30)
+    /// {requirement ID: the newest commit that touched its lines}, by `git blame` of each spec file. A requirement with a line not
+    /// committed yet, or in a file git does not know, is left out: it has no commit to review.
+    pub fn blame_commits(&self) -> Result<IndexMap<String, Commit>, String> {
         let mut by_file: IndexMap<&str, Vec<&crate::scan::Spec>> = IndexMap::new();
         for s in self.s.values().filter(|s| s.mark != "ref") {
             by_file.entry(s.file.as_str()).or_default().push(s);
         }
         let mut out = IndexMap::new();
         for (file, specs) in by_file {
-            let blame = self.p.git(&["blame", "--line-porcelain", "--", file])?;
-            // per final line: (sha, author-time); a header is `<sha> <orig> <final> [<count>]`, the content line starts with a tab
-            let (mut lines, mut sha): (Vec<(&str, i64)>, &str) = (vec![], "");
-            for l in blame.lines() {
-                if let Some(t) = l.strip_prefix("author-time ") {
-                    lines.push((sha, t.parse().unwrap_or(0)));
-                } else if !l.starts_with('\t') && l.len() > 40 && l.as_bytes()[40] == b' ' && l[..40].bytes().all(|b| b.is_ascii_hexdigit()) {
-                    sha = &l[..40];
-                }
-            }
+            let lines = self.blame_lines(file)?;
             for s in specs {
-                let span = lines.get(s.line - 1..s.end.min(lines.len())).unwrap_or_default();
-                if !span.is_empty() && span.iter().all(|(h, _)| !h.bytes().all(|b| b == b'0')) {
-                    out.insert(s.id.clone(), span.iter().max_by_key(|(_, t)| *t).unwrap().0.to_string());
+                let span: Option<Vec<_>> = lines.get(s.line - 1..s.end.min(lines.len())).unwrap_or_default().iter().map(|l| l.as_ref()).collect();
+                if let Some(c) = span.and_then(|v| v.into_iter().max_by_key(|(_, t)| *t)) {
+                    out.insert(s.id.clone(), (*c.0).clone());
                 }
             }
         }
         Ok(out)
+    }
+
+    // (SCAN-31)
+    /// {line: the commit that last changed it} for the given lines of a scanned spec, test or source file. A line not committed yet is left out.
+    /// ponytail: one line is what a test reference has (its tag or name line), so an edit to the test body elsewhere is not seen.
+    pub fn blame_at(&self, path: &str, lines: &[usize]) -> Result<IndexMap<usize, Commit>, String> {
+        if ![self.p.spec_files(), self.p.test_files(), self.p.src_files()].iter().any(|fs| fs.iter().any(|f| f == path)) {
+            return Err(format!("{path}: not a scanned file"));
+        }
+        let all = self.blame_lines(path)?;
+        Ok(lines.iter().filter_map(|&n| Some((n, (*all.get(n.checked_sub(1)?)?.as_ref()?.0).clone()))).collect())
     }
 
     // (SCAN-20)
@@ -566,7 +631,7 @@ impl Analysis {
         z.extend(paths);
         let zero = if f.stage == "untracked" { self.p.hunks(o, &files, IndexMap::new())?.shift_remove(path).unwrap_or_default() } else { parse_hunks(&self.p.run(z)?).shift_remove(path).unwrap_or_default() };
         let roles = kinds.roles(path);
-        let notes = if roles.is_empty() { vec![vec![]; zero.len()] } else { self.hunk_notes(path, &zero, &self.new_lines(o, path), &roles) };
+        let notes = if roles.is_empty() { vec![vec![]; zero.len()] } else { self.hunk_notes(path, &zero, &self.new_lines(o, path), &self.old_lines(o, f.old_path.as_deref().unwrap_or(path)), &roles) };
         let mut hunks: Vec<(i64, i64, HunkInfo)> = text.lines().filter(|l| l.starts_with("@@")).filter_map(|l| {
             let m = HEADER.captures(l)?;
             let (s, n): (i64, i64) = (m[1].parse().ok()?, m.get(2).map_or(1, |x| x.as_str().parse().unwrap_or(1)));

@@ -6,7 +6,7 @@
   type Col = { key: string; label: string; cls?: string; sort?: boolean };
   // a keyboard stop: a row (by key) or a group header
   type Stop = { key?: string; group?: string };
-  let { rows, columns, rowKey, selected, onselect, cell, value, groupOf, tone, pale, storageKey = "", cap = 500, headless = false, empty }: {
+  let { rows, columns, rowKey, selected, onselect, cell, value, groupOf, tone, pale, keys = true, storageKey = "", cap = 500, headless = false, empty }: {
     rows: T[];
     columns: Col[];
     rowKey: (r: T) => string;
@@ -22,6 +22,8 @@
     tone?: (r: T) => string | undefined;
     // rows shown faded (reviewed, say)
     pale?: (r: T) => boolean;
+    // ↑/↓/←/→ move the selection (off where selecting does not preview, so the arrows scroll the page)
+    keys?: boolean;
     // where collapsed groups are remembered
     storageKey?: string;
     cap?: number;
@@ -64,7 +66,7 @@
 
   // ↑/↓ move through the stops, ←/→ collapse and expand the selected group (not while a field or a radio group has the keys)
   function onkey(e: KeyboardEvent) {
-    if ((e.target as HTMLElement).closest("input, select, textarea, .gutter, .seg") || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (!keys || (e.target as HTMLElement).closest("input, select, textarea, .gutter, .seg") || e.metaKey || e.ctrlKey || e.altKey) return;
     const grp = curGroup();
     if ((e.key === "ArrowDown" || e.key === "ArrowUp") && seq.length) {
       e.preventDefault();

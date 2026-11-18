@@ -8,5 +8,5 @@ pub mod modules;
 pub mod report;
 pub mod scan;
 
-pub use changes::{ChangeOpts, Changes, FileDiff, History};
+pub use changes::{ChangeOpts, Changes, Commit, FileDiff, History};
 pub use report::{Analysis, Report, Status, StatusOpts, Trace};

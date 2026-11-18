@@ -532,7 +532,7 @@ mod tests {
             // portable: nullable fields are `anyOf` of single types, never `"type": [.., "null"]`
             assert!(!schema.to_string().contains(r#""type":["#), "{}: {schema}", t.name);
             // the writing tools are not run here, and overlap/uncovered need an index this fixture lacks
-            if matches!(t.name, "install" | "uninstall" | "codegraph" | "module" | "overlap" | "uncovered" | "changes" | "diff" | "history" | "commits") {
+            if matches!(t.name, "install" | "uninstall" | "codegraph" | "module" | "overlap" | "uncovered" | "changes" | "diff" | "history" | "commits" | "blame") {
                 continue;
             }
             let (_, data) = ops::call(Some(&d), t.name, &args(t.name), "http://x/", 7411).unwrap();
@@ -544,7 +544,7 @@ mod tests {
         assert!(checked >= 6, "{checked}");
     }
 
-    #[doc = "[API-13, API-15, SCAN-19]"]
+    #[doc = "[API-13, API-15, API-16, SCAN-19]"]
     #[tokio::test]
     async fn changes_lists_files_and_requirements_and_needs_git() {
         let d = std::env::temp_dir().join(format!("spec11-chg-{}", std::process::id()));
@@ -558,6 +558,10 @@ mod tests {
         git(&["init", "-q"]);
         git(&["add", "."]);
         git(&["commit", "-qm", "x"]);
+        let (_, body) = send(&app, tool("blame", r#"{"path":"specs/01-a.md","lines":[1,5]}"#, "127.0.0.1:7411")).await;
+        assert!(body.contains(r#""subject":"x""#) && !body.contains(r#""5":"#), "{body}");
+        let (_, body) = send(&app, tool("blame", r#"{"path":"/etc/passwd","lines":[1]}"#, "127.0.0.1:7411")).await;
+        assert!(body.contains("not a scanned file"), "{body}");
         std::fs::write(d.join("specs/01-a.md"), "- **AAA-01** MUST — one, edited.\n").unwrap();
         std::fs::write(d.join("new.txt"), "x\n").unwrap();
         let (_, body) = send(&app, tool("changes", "{}", "127.0.0.1:7411")).await;
