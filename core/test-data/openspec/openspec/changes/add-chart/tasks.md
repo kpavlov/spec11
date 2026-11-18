@@ -1,0 +1,2 @@
+- [ ] 1.1 Draw the chart
+- **UIX-09** MUST — tasks.md is not a spec.

@@ -378,21 +378,21 @@ impl Analysis {
         if o.commit.is_empty() {
             return self.p.lines(f);
         }
-        Rc::new(self.p.git(&["show", &format!("{}:{f}", o.commit)]).map(|t| t.lines().map(str::to_owned).collect()).unwrap_or_default())
+        Rc::new(self.p.git(&["show", &format!("{}:{f}", o.commit)]).map(|t| crate::scan::clean(&t).lines().map(str::to_owned).collect()).unwrap_or_default())
     }
 
     /// The text of a removed bullet line: what follows the ID, minus the level that opens it.
     fn bullet_text(&self, line: &str) -> String {
-        let rest = self.p.rx.head.captures(line).map_or(line, |m| m.get(2).map_or(line, |r| r.as_str()));
-        let lv = self.p.rx.level.find(rest).map_or("", |m| m.as_str());
+        let rest = crate::scan::LINE.head.captures(line).map_or(line, |m| m.get(2).map_or(line, |r| r.as_str()));
+        let lv = crate::scan::LINE.level.find(rest).map_or("", |m| m.as_str());
         chars(&crate::scan::lead(rest, lv), 160)
     }
 
     fn mentions(&self, role: &str, line: &str) -> Vec<String> {
         match role {
-            "spec" => self.p.rx.head.captures(line).map(|m| vec![m[1].to_string()]).unwrap_or_default(),
+            "spec" => crate::scan::LINE.head.captures(line).map(|m| m[1].to_string()).filter(|i| crate::scan::is_id(i)).into_iter().collect(),
             "test" => self.p.tagged(line),
-            _ => self.p.comment_of(line).map(|c| self.p.rx.mention.captures_iter(c).map(|m| m[1].to_string()).collect()).unwrap_or_default(),
+            _ => self.p.comment_of(line).map(|c| self.p.rx.mention.captures_iter(c).map(|m| m[1].to_string()).filter(|i| crate::scan::is_id(i)).collect()).unwrap_or_default(),
         }
     }
 
@@ -404,11 +404,7 @@ impl Analysis {
             let n = i + 1;
             for id in self.mentions(role, l) {
                 let end = if role == "spec" {
-                    let mut j = n;
-                    while !l.trim_start().starts_with('|') && j < ls.len() && !ls[j].trim().is_empty() && !self.p.rx.block_end.is_match(&ls[j]) {
-                        j += 1;
-                    }
-                    j
+                    crate::scan::block_end(ls, n)
                 } else {
                     unit_end(ls, n).unwrap_or(ls.len())
                 };

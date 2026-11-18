@@ -1,0 +1,1 @@
+- **CRT-01** MUST — spec/ is scanned next to openspec/.

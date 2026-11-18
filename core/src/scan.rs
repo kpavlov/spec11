@@ -10,14 +10,130 @@ use std::{cell::{OnceCell, RefCell}, collections::HashMap, path::{Path, PathBuf}
 /// An identifier of 4+ characters: what the tests of a requirement name.
 pub static WORD: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| Regex::new(r"\b[A-Za-z_]\w{3,}\b").unwrap());
 
-const ID: &str = r"[A-Z]{2,5}-\d{1,4}";
-pub const LEVEL: &str = r"\b(?:MUST|SHOULD|MAY|SHALL)\b";
-/// Start of a requirement line: a bullet (`-`, `*`, `+`, `1.`) or table row, an optional check mark, then the ID, plain, bold or in
-/// backticks, with an optional `:`. Group 1 is the ID.
-pub fn head() -> String {
-    format!(r"^\s*(?:(?:[-*+]|\d+[.)])\s+|\|\s*)(?:{DONE}\s*)?[*_`]*({ID})\b[*_`]*[:.]?[*_`]*")
+/// The patterns of a requirement line. Loaded from `resources/spec_format.toml`.
+#[derive(serde::Deserialize)]
+pub struct Format {
+    pub id: Vec<String>,
+    pub not_id: Vec<String>,
+    pub level: String,
+    pub block_level: String,
+    pub done: String,
+    pub line: Vec<String>,
+    pub block: Vec<String>,
+    pub removed: String,
+    pub unnamed: String,
 }
-const DONE: &str = r"[✅✔☑✳]\x{FE0F}?"; // check marks: a hint that the requirement is done
+
+impl Format {
+    /// The ID rules as one regex, without a capture group.
+    pub fn id(&self) -> String {
+        format!("(?:{})", self.id.iter().map(|r| format!("(?:{r})")).collect::<Vec<_>>().join("|"))
+    }
+}
+
+/// Is `id` a requirement ID, not a well-known token such as `UTF-8`?
+pub fn is_id(id: &str) -> bool {
+    !LINE.not_id.is_match(id)
+}
+
+/// To accept a new spec format, edit `resources/spec_format.toml`.
+pub static FORMAT: std::sync::LazyLock<Format> = std::sync::LazyLock::new(|| toml::from_str(include_str!("../resources/spec_format.toml")).expect("resources/spec_format.toml"));
+
+/// The requirement-line regexes, built once from `FORMAT`: shared by the spec scan, `detect` and `changes`.
+// (SCAN-23, SCAN-24)
+pub struct Line {
+    /// Start of a requirement line: a `line` or `block` opener, an optional check mark, then the ID, plain, bold or in backticks,
+    /// with an optional `:`. Group 1 is the ID, group 2 the rest of the line.
+    pub head: Regex,
+    pub level: Regex,
+    /// The level in a heading or paragraph block: EARS `shall` in lower case counts too.
+    block_level: Regex,
+    /// A `block` opener of `spec_format.toml`: a heading or paragraph whose level may sit on any of its lines.
+    opens_block: Regex,
+    /// A wrapped bullet continues until a blank line, bullet, heading or table row.
+    wrap_end: Regex,
+    removed: Regex,
+    pub(crate) unnamed: Regex,
+    /// The whole of a well-known token (`UTF-8`).
+    not_id: Regex,
+}
+
+pub static LINE: std::sync::LazyLock<Line> = std::sync::LazyLock::new(|| {
+    let f = &*FORMAT;
+    let r = |s: String| Regex::new(&s).unwrap_or_else(|e| panic!("resources/spec_format.toml: {s}: {e}"));
+    let open = f.line.iter().chain(&f.block).cloned().collect::<Vec<_>>().join("|");
+    Line {
+        head: r(format!(r"^\s*(?:{open})(?:{}\s*)?[*_`]*({})\b[*_`]*[:.]?[*_`]*(.*)", f.done, f.id())),
+        level: r(f.level.clone()),
+        block_level: r(f.block_level.clone()),
+        opens_block: r(format!(r"^\s*(?:{})", f.block.join("|"))),
+        wrap_end: r(r"^\s*([-*+] |\d+[.)] |#|\|)".into()),
+        removed: r(f.removed.clone()),
+        unnamed: r(f.unnamed.clone()),
+        not_id: r(format!("^(?:{})$", f.not_id.join("|"))),
+    }
+});
+
+// (SCAN-25)
+/// A file's text, lossy UTF-8, cleaned as `clean` does.
+pub fn read_text(p: &Path) -> Option<String> {
+    std::fs::read(p).ok().map(|b| clean(&String::from_utf8_lossy(&b)))
+}
+
+/// Text as the scan reads it: no byte-order mark, and the Unicode hyphens that editors paste into IDs (U+2010, U+2011) as `-`.
+pub fn clean(t: &str) -> String {
+    t.strip_prefix('\u{FEFF}').unwrap_or(t).replace(['\u{2010}', '\u{2011}'], "-")
+}
+
+/// For each line, whether it sits in a section whose requirements are retired (`## REMOVED Requirements`); a `#`/`##` heading opens a section.
+pub fn removed_lines(ls: &[String]) -> Vec<bool> {
+    let mut gone = false;
+    ls.iter().map(|l| {
+        if l.starts_with("# ") || l.starts_with("## ") {
+            gone = LINE.removed.is_match(l);
+        }
+        gone
+    }).collect()
+}
+
+/// End of the block the requirement line `n` (1-based) opens, as a 0-based exclusive index: a table row is one line, a
+/// heading runs to the next heading or requirement line, a bullet or `**ID**` paragraph wraps until a blank line, bullet, heading or table row.
+pub fn block_end(ls: &[String], n: usize) -> usize {
+    let l = ls[n - 1].trim_start();
+    let mut j = n;
+    if l.starts_with('|') {
+        return j;
+    }
+    if l.starts_with('#') {
+        while j < ls.len() && !ls[j].trim_start().starts_with('#') && !LINE.head.is_match(&ls[j]) {
+            j += 1;
+        }
+        while j > n && ls[j - 1].trim().is_empty() {
+            j -= 1;
+        }
+        return j;
+    }
+    while j < ls.len() && !ls[j].trim().is_empty() && !LINE.wrap_end.is_match(&ls[j]) {
+        j += 1;
+    }
+    j
+}
+
+/// The level of the requirement on `line`, whose ID is followed by `rest`: on the line itself for a bullet or table row, anywhere
+/// in `more` (the block's other lines) for a heading or paragraph. `None`: no level, no requirement.
+pub fn level_of(line: &str, rest: &str, more: &[String]) -> Option<String> {
+    if LINE.opens_block.is_match(line) {
+        LINE.block_level.find(&format!("{rest} {}", more.join(" "))).map(|x| x.as_str().to_uppercase())
+    } else {
+        LINE.level.find(rest).map(|x| x.as_str().to_string())
+    }
+}
+
+/// Does `text` hold a requirement line (an ID with a level)?
+pub fn holds_requirement(text: &str) -> bool {
+    let ls: Vec<String> = text.lines().map(str::to_owned).collect();
+    ls.iter().enumerate().any(|(i, l)| LINE.head.captures(l).is_some_and(|m| is_id(&m[1]) && level_of(l, &m[2], &ls[i + 1..block_end(&ls, i + 1)]).is_some()))
+}
 
 #[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct Spec {
@@ -67,12 +183,9 @@ impl std::fmt::Display for Issue {
 pub type Refs = HashMap<String, Vec<Ref>>;
 
 pub struct Rx {
-    pub(crate) head: Regex,
-    pub(crate) level: Regex,
     link: Regex,
     adr: Regex,
     code_span: Regex,
-    pub(crate) block_end: Regex,
     tag: Regex,
     pub mention: Regex,
     mark: Regex,
@@ -91,20 +204,18 @@ pub struct Rx {
 impl Rx {
     fn new(cfg: &Config) -> Result<Rx, String> {
         let r = |s: String| Regex::new(&s).map_err(|e| format!("bad regex {s}: {e}"));
+        let (f, id) = (&*FORMAT, &FORMAT.id());
         Ok(Rx {
-            head: r(format!("{}(.*)", head()))?,
-            level: r(LEVEL.into())?,
-            link: r(format!(r"\[({ID})\]\(([^)#\s]+)(?:#[^)]*)?\)"))?, // `[ADR-0003](../decisions/0003-x.md#why)`
+            link: r(format!(r"\[({id})\]\(([^)#\s]+)(?:#[^)]*)?\)"))?, // `[ADR-0003](../decisions/0003-x.md#why)`
             adr: r(r"^(\d{1,4})-".into())?,
             code_span: r(r"`[^`]*`".into())?,
-            block_end: r(r"^\s*([-*+] |\d+[.)] |#|\|)".into())?, // a wrapped bullet continues until a blank line, bullet, heading or table row
-            tag: r(format!(r"\[({ID}(?:\s*[,;]\s*{ID})*)\]"))?, // `[ABC-12]`, `[ABC-12][ABC-14]` and `[ABC-12, ABC-14]`
-            mention: r(format!(r"\b({ID})\b"))?,
+            tag: r(format!(r"\[({id}(?:\s*[,;]\s*{id})*)\]"))?, // `[ABC-12]`, `[ABC-12][ABC-14]` and `[ABC-12, ABC-14]`
+            mention: r(format!(r"\b({id})\b"))?,
             mark: r(r"\((later|deferred|manual)\)$".into())?, // `(deferred)` means the same as `(later)`
-            done: r(DONE.into())?,
+            done: r(f.done.clone())?,
             struck: r(r"~~.*?~~".into())?,
             later_inside: r(r"\((?:later|deferred|manual)\)".into())?,
-            retired: r(format!(r"^\s*(?:[-*+]|\d+[.)])\s+~~[*_`]*({ID})"))?,
+            retired: r(format!(r"^\s*(?:[-*+]|\d+[.)])\s+~~[*_`]*({id})"))?,
             decl: r(cfg.decl.clone())?,
             assert: r(cfg.assert.clone())?,
             off: r(cfg.off.clone())?,
@@ -224,7 +335,7 @@ impl Project {
         if let Some(l) = self.cache.borrow().get(rel) {
             return l.clone();
         }
-        let text = std::fs::read(self.root.join(rel)).map(|b| String::from_utf8_lossy(&b).into_owned()).unwrap_or_default();
+        let text = read_text(&self.root.join(rel)).unwrap_or_default();
         let l = Rc::new(text.lines().map(str::to_owned).collect::<Vec<_>>());
         self.cache.borrow_mut().insert(rel.to_owned(), l.clone());
         l
@@ -353,22 +464,30 @@ impl Project {
         let mut found: IndexMap<String, Spec> = IndexMap::new();
         for f in self.spec_files() {
             let ls = self.lines(&f);
+            let gone = removed_lines(&ls);
             for (idx, line) in ls.iter().enumerate() {
                 let n = idx + 1;
-                let Some(m) = self.rx.head.captures(line) else { continue };
+                if gone[idx] {
+                    continue; // retired: `retired` lists them
+                }
+                let Some(m) = LINE.head.captures(line).filter(|m| is_id(&m[1])) else {
+                    // (SCAN-27)
+                    if LINE.unnamed.is_match(line) {
+                        let name = line.trim_start_matches(['#', ' ']).trim();
+                        problems.push(Issue::uncounted(name, format!("{f}:{n} is a requirement without an ID, so no test can cite it; it is not counted")));
+                    }
+                    continue;
+                };
                 let id = m[1].to_string();
-                let Some(lv) = self.rx.level.find(&m[2]) else {
+                let j = block_end(&ls, n);
+                let rest: Vec<String> = ls[n..j].iter().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect();
+                let Some(lv) = level_of(line, &m[2], &rest) else {
                     problems.push(Issue::uncounted(&id, format!("{f}:{n} has no MUST/SHOULD/MAY, so it is not counted")));
                     continue;
                 };
                 let m1 = m.get(1).unwrap();
-                let mut parts = vec![lead(&m[2], lv.as_str())];
-                let mut j = n;
-                // a table row is one line; a bullet wraps
-                while !line.trim_start().starts_with('|') && j < ls.len() && !ls[j].trim().is_empty() && !self.rx.block_end.is_match(&ls[j]) {
-                    parts.push(ls[j].trim().to_string());
-                    j += 1;
-                }
+                let mut parts = vec![lead(&m[2], &lv)];
+                parts.extend(rest);
                 let text = parts.join(" ").trim().to_string();
                 let mut seg = vec![line[m1.end()..].to_string()];
                 seg.extend(parts[1..].iter().cloned());
@@ -380,29 +499,40 @@ impl Project {
                     Some(e) if &e[1] == "manual" => "manual",
                     Some(_) => "later",
                 };
-                if let Some(was) = found.get(&id) {
-                    problems.push(Issue::new(&id, format!("is defined twice: {}:{} and {f}:{n}", was.file, was.line)));
-                } else {
-                    let before = match &end {
-                        Some(e) => &text[..e.get(0).unwrap().start()],
-                        None => &text[..],
-                    };
-                    if self.rx.later_inside.is_match(&self.rx.struck.replace_all(before, "")) {
-                        problems.push(Issue::new(&id, format!("{f}:{n} has (later)/(deferred)/(manual) before the end, so it counts as due")));
+                // an OpenSpec change restates a requirement of `openspec/specs/` it modifies: the change's text wins
+                let delta = |p: &str| p.starts_with("openspec/changes/");
+                match found.get(&id) {
+                    Some(was) if delta(&was.file) && !delta(&f) => continue,
+                    Some(was) if delta(&was.file) == delta(&f) => problems.push(Issue::new(&id, format!("is defined twice: {}:{} and {f}:{n}", was.file, was.line))),
+                    Some(_) => {}
+                    None => {
+                        let before = match &end {
+                            Some(e) => &text[..e.get(0).unwrap().start()],
+                            None => &text[..],
+                        };
+                        if self.rx.later_inside.is_match(&self.rx.struck.replace_all(before, "")) {
+                            problems.push(Issue::new(&id, format!("{f}:{n} has (later)/(deferred)/(manual) before the end, so it counts as due")));
+                        }
                     }
                 }
                 if done && !mark.is_empty() {
                     problems.push(Issue::new(&id, format!("{f}:{n} has a check mark but is also marked ({}/deferred)", if mark == "manual" { "manual" } else { "later" })));
                 }
-                found.insert(id.clone(), Spec { id, file: f.clone(), line: n, end: j, level: lv.as_str().to_string(), text, mark: mark.into(), done });
+                found.insert(id.clone(), Spec { id, file: f.clone(), line: n, end: j, level: lv, text, mark: mark.into(), done });
             }
+        }
+        // a line without a level that names a defined ID is a reference to it (a cross-reference table, a review note)
+        problems.retain(|p| !(p.uncounted && found.contains_key(&p.id)));
+        // a requirement an OpenSpec change removes is retired
+        for i in self.removed() {
+            found.shift_remove(&i);
         }
         found
     }
 
     /// The requirement IDs of every `[ID]` or `[ID, ID]` tag on `line`, in order.
     pub fn tagged(&self, line: &str) -> Vec<String> {
-        self.rx.tag.captures_iter(line).flat_map(|g| self.rx.mention.captures_iter(&g[1]).map(|m| m[1].to_string()).collect::<Vec<_>>()).collect()
+        self.rx.tag.captures_iter(line).flat_map(|g| self.rx.mention.captures_iter(&g[1]).map(|m| m[1].to_string()).filter(|i| is_id(i)).collect::<Vec<_>>()).collect()
     }
 
     // (SCAN-02)
@@ -435,7 +565,7 @@ impl Project {
         for rel in self.src_files() {
             for (i, line) in self.lines(&rel).iter().enumerate() {
                 if let Some(c) = self.comment_of(line) {
-                    for m in self.rx.mention.captures_iter(c) {
+                    for m in self.rx.mention.captures_iter(c).filter(|m| is_id(&m[1])) {
                         found.entry(m[1].to_string()).or_default().push(Ref { file: rel.clone(), line: i + 1, text: line.trim().to_string() });
                     }
                 }
@@ -472,11 +602,28 @@ impl Project {
     }
 
     /// IDs whose bullet is struck through (`- ~~**ABC-12** …~~`): retired, never reassigned.
+    /// Also those an OpenSpec change lists under `## REMOVED Requirements`.
     pub fn retired(&self) -> Vec<String> {
         let mut out = vec![];
         for f in self.spec_files() {
             for line in self.lines(&f).iter() {
-                if let Some(m) = self.rx.retired.captures(line) {
+                if let Some(m) = self.rx.retired.captures(line).filter(|m| is_id(&m[1])) {
+                    out.push(m[1].to_string());
+                }
+            }
+        }
+        out.extend(self.removed());
+        out
+    }
+
+    // (SCAN-27)
+    /// IDs under an OpenSpec `## REMOVED Requirements` heading.
+    fn removed(&self) -> Vec<String> {
+        let mut out = vec![];
+        for f in self.spec_files() {
+            let ls = self.lines(&f);
+            for (line, gone) in ls.iter().zip(removed_lines(&ls)) {
+                if let Some(m) = LINE.head.captures(line).filter(|m| gone && is_id(&m[1])) {
                     out.push(m[1].to_string());
                 }
             }
@@ -556,13 +703,13 @@ pub fn stem(file: &str) -> &str {
 }
 
 pub fn prefix(id: &str) -> String {
-    id.split('-').next().unwrap_or("").to_string()
+    id.split(['-', '_']).next().unwrap_or("").to_string()
 }
 
-/// Sort key `(prefix, number)`.
-pub fn id_key(id: &str) -> (String, u32) {
-    let (p, n) = id.rsplit_once('-').unwrap_or((id, "0"));
-    (p.to_string(), n.parse().unwrap_or(0))
+/// Sort key `(prefix, numbers)`: `AC-1.10` after `AC-1.2`, `REQ_002` after `REQ_001`.
+pub fn id_key(id: &str) -> (String, Vec<u32>) {
+    let (p, n) = id.rsplit_once(['-', '_']).unwrap_or((id, "0"));
+    (p.to_string(), n.split('.').map(|x| x.parse().unwrap_or(0)).collect())
 }
 
 pub fn sorted_ids<'a>(ids: impl IntoIterator<Item = &'a String>) -> Vec<String> {
@@ -587,10 +734,13 @@ pub fn body(ls: &[String], n: usize, cap: usize) -> Vec<String> {
 
 /// DOC-01,DOC-02,DOC-03,DOC-07 -> DOC-01..03,DOC-07
 pub fn ranges<S: AsRef<str>>(ids: impl IntoIterator<Item = S>) -> String {
-    let mut by: Vec<(String, Vec<u32>)> = vec![];
+    // (prefix, [(number, as written)]): `AC-1.2` runs within `AC-1.`; after a `-` or `_` they print as written, at least two digits (`SEC-04`, `FR-001`), after a `.` as written
+    let mut by: Vec<(String, Vec<(u32, String)>)> = vec![];
     for i in ids {
-        let (p, n) = i.as_ref().rsplit_once('-').unwrap_or((i.as_ref(), "0"));
-        let n: u32 = n.parse().unwrap_or(0);
+        let i = i.as_ref();
+        let cut = i.rfind(['-', '_', '.']).map_or(0, |k| k + 1);
+        let (p, n) = (&i[..cut], &i[cut..]);
+        let n = (n.parse().unwrap_or(0), n.to_string());
         match by.iter_mut().find(|(q, _)| q == p) {
             Some((_, v)) => v.push(n),
             None => by.push((p.to_string(), vec![n])),
@@ -599,13 +749,14 @@ pub fn ranges<S: AsRef<str>>(ids: impl IntoIterator<Item = S>) -> String {
     let mut out = vec![];
     for (p, mut ns) in by {
         ns.sort();
-        let mut run = vec![ns[0]];
-        for n in ns[1..].iter().map(|n| Some(*n)).chain([None]) {
-            if let Some(n) = n && n == *run.last().unwrap() + 1 {
-                run.push(n);
+        let mut run = vec![ns[0].clone()];
+        for n in ns[1..].iter().cloned().map(Some).chain([None]) {
+            if let Some(n) = &n && n.0 == run.last().unwrap().0 + 1 {
+                run.push(n.clone());
                 continue;
             }
-            out.push(if run.len() == 1 { format!("{p}-{:02}", run[0]) } else { format!("{p}-{:02}..{:02}", run[0], run.last().unwrap()) });
+            let num = |x: &(u32, String)| if p.ends_with(['-', '_']) { format!("{:0w$}", x.0, w = x.1.len().max(2)) } else { x.1.clone() };
+            out.push(if run.len() == 1 { format!("{p}{}", num(&run[0])) } else { format!("{p}{}..{}", num(&run[0]), num(run.last().unwrap())) });
             run = n.into_iter().collect();
         }
     }

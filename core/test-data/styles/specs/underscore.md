@@ -1,0 +1,2 @@
+- REQ_001 MUST — underscore IDs work.
+- REQ_002 SHOULD — and sort.
