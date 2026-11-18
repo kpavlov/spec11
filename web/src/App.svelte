@@ -33,7 +33,7 @@
   function navigate(r: Route, replace = false) {
     route = r;
     if (embedded) return; // a host iframe has no URL of its own
-    try { (replace ? history.replaceState : history.pushState).call(history, null, "", format(r)); } catch { /* sandboxed */ }
+    try { (replace ? window.history.replaceState : window.history.pushState).call(window.history, null, "", format(r)); } catch { /* sandboxed */ }
   }
 
   // MCP Apps host: the `dashboard` tool's `view` ("requirements/DOC-25?state=none") picks the page
