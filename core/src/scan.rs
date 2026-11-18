@@ -8,7 +8,7 @@ use serde::Serialize;
 use std::{cell::{OnceCell, RefCell}, collections::HashMap, path::{Path, PathBuf}, process::Command, rc::Rc};
 
 /// An identifier of 4+ characters: what the tests of a requirement name.
-pub static WORD: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| Regex::new(r"\b[A-Za-z_]\w{3,}\b").unwrap());
+pub static WORD: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| Regex::new(r"(?-u:\b)[A-Za-z_]\w{3,}(?-u:\b)").unwrap());
 
 /// The patterns of a requirement line. Loaded from `resources/spec_format.toml`.
 #[derive(serde::Deserialize)]
@@ -63,7 +63,7 @@ pub static LINE: std::sync::LazyLock<Line> = std::sync::LazyLock::new(|| {
     let r = |s: String| Regex::new(&s).unwrap_or_else(|e| panic!("resources/spec_format.toml: {s}: {e}"));
     let open = f.line.iter().chain(&f.block).cloned().collect::<Vec<_>>().join("|");
     Line {
-        head: r(format!(r"^\s*(?:{open})(?:{}\s*)?[*_`]*({})\b[*_`]*[:.]?[*_`]*(.*)", f.done, f.id())),
+        head: r(format!(r"^\s*(?:{open})(?:{}\s*)?[*_`]*({})(?-u:\b)[*_`]*[:.]?[*_`]*(.*)", f.done, f.id())),
         level: r(f.level.clone()),
         block_level: r(f.block_level.clone()),
         opens_block: r(format!(r"^\s*(?:{})", f.block.join("|"))),
@@ -131,6 +131,9 @@ pub fn level_of(line: &str, rest: &str, more: &[String]) -> Option<String> {
 
 /// Does `text` hold a requirement line (an ID with a level)?
 pub fn holds_requirement(text: &str) -> bool {
+    if !text.lines().any(|l| LINE.head.is_match(l)) {
+        return false;
+    }
     let ls: Vec<String> = text.lines().map(str::to_owned).collect();
     ls.iter().enumerate().any(|(i, l)| LINE.head.captures(l).is_some_and(|m| is_id(&m[1]) && level_of(l, &m[2], &ls[i + 1..block_end(&ls, i + 1)]).is_some()))
 }
@@ -210,7 +213,7 @@ impl Rx {
             adr: r(r"^(\d{1,4})-".into())?,
             code_span: r(r"`[^`]*`".into())?,
             tag: r(format!(r"\[({id}(?:\s*[,;]\s*{id})*)\]"))?, // `[ABC-12]`, `[ABC-12][ABC-14]` and `[ABC-12, ABC-14]`
-            mention: r(format!(r"\b({id})\b"))?,
+            mention: r(format!(r"(?-u:\b)({id})(?-u:\b)"))?, // ASCII `\b`: a Unicode one is slow on non-ASCII lines
             mark: r(r"\((later|deferred|manual)\)$".into())?, // `(deferred)` means the same as `(later)`
             done: r(f.done.clone())?,
             struck: r(r"~~.*?~~".into())?,
@@ -245,12 +248,16 @@ pub struct Project {
     pub files: Vec<String>,
     ignore: detect::Ignore,
     cache: RefCell<HashMap<String, Rc<Vec<String>>>>,
+    /// Repo-relative files under a folder, walked once per folder.
+    walked: RefCell<HashMap<String, Rc<Vec<String>>>>,
     /// The index as `open` found it, for `Analysis::load` to take instead of opening it again.
     graph: Option<Result<Option<Graph>, GraphError>>,
     /// The file lists, walked once.
     tests: OnceCell<Vec<String>>,
     srcs: OnceCell<Vec<String>>,
     specs: OnceCell<Vec<String>>,
+    /// Struck-out IDs and IDs under `## REMOVED Requirements`, read once.
+    gone: OnceCell<(Vec<String>, Vec<String>)>,
 }
 
 /// The repo is the nearest ancestor of `from` that has the `specs` path, or, when none is configured, any known spec place;
@@ -281,6 +288,16 @@ fn resolve(from: &str, target: &str) -> Option<String> {
 impl Project {
     /// `root`: explicit repo root, else walk up from the current directory.
     pub fn open(root: Option<&Path>) -> Result<Project, String> {
+        Self::open_with(root, true)
+    }
+
+    /// `open` for change polling: no file is read to find the specs, so the spec files are every markdown file of every place
+    /// that may hold them (see `detect::spec_places`).
+    pub fn open_unread(root: Option<&Path>) -> Result<Project, String> {
+        Self::open_with(root, false)
+    }
+
+    fn open_with(root: Option<&Path>, read: bool) -> Result<Project, String> {
         let start = match root {
             Some(r) => r.canonicalize().map_err(|e| format!("{}: {e}", r.display()))?,
             None => std::env::current_dir().map_err(|e| e.to_string())?,
@@ -301,7 +318,7 @@ impl Project {
         }
         // (SCAN-12) `specs` may name a folder or a file; left empty, the places come from the repo
         let spec_paths = if cfg.specs.is_empty() {
-            let v = detect::spec_paths(&root, &allow, &ignore);
+            let v = if read { detect::spec_paths(&root, &allow, &ignore) } else { detect::spec_places(&root, &allow, &ignore) };
             if v.is_empty() && doc_dirs.is_empty() {
                 return Err(hint(&root.display().to_string()));
             }
@@ -318,7 +335,7 @@ impl Project {
         let files: Vec<String> = indexed.map(|v| v.into_iter().filter(|f| !ignore.hides(f)).collect()).unwrap_or_else(|| detect::walk(&root, &allow, &ignore).iter().filter_map(|f| f.strip_prefix(&root).ok()).map(|f| f.to_string_lossy().replace('\\', "/")).collect());
         cfg.detect(&files);
         let rx = Rx::new(&cfg)?;
-        Ok(Project { root, cfg, rx, allow, spec_paths, doc_dirs, files, ignore, cache: RefCell::default(), graph: Some(graph), tests: OnceCell::new(), srcs: OnceCell::new(), specs: OnceCell::new() })
+        Ok(Project { root, cfg, rx, allow, spec_paths, doc_dirs, files, ignore, cache: RefCell::default(), walked: RefCell::default(), graph: Some(graph), tests: OnceCell::new(), srcs: OnceCell::new(), specs: OnceCell::new(), gone: OnceCell::new() })
     }
 
     /// The CodeGraph index `open` already looked at (opened again if it was taken before).
@@ -345,10 +362,21 @@ impl Project {
         p.strip_prefix(&self.root).unwrap_or(p).to_string_lossy().replace('\\', "/")
     }
 
+    /// Every file under `dir`, repo-relative and sorted, walked once (`src`, `tests` and the markdown scans share it).
+    fn walked(&self, dir: &str) -> Rc<Vec<String>> {
+        if let Some(v) = self.walked.borrow().get(dir) {
+            return v.clone();
+        }
+        let at = if dir == "." { self.root.clone() } else { self.root.join(dir) };
+        let v = Rc::new(detect::walk(&at, &self.allow, &self.ignore).iter().map(|p| self.rel(p)).collect::<Vec<_>>());
+        self.walked.borrow_mut().insert(dir.to_owned(), v.clone());
+        v
+    }
+
     /// Files with a configured extension under each dir, sorted per dir. Symlinks count only inside the root or `ALLOWED_PATHS`.
     pub fn files(&self, dirs: &[String]) -> Vec<String> {
-        let ext = |p: &PathBuf| p.extension().and_then(|x| x.to_str()).is_some_and(|x| self.cfg.ext.iter().any(|y| y == x));
-        dirs.iter().flat_map(|d| detect::walk(&if d == "." { self.root.clone() } else { self.root.join(d) }, &self.allow, &self.ignore).into_iter().filter(ext).map(|p| self.rel(&p)).collect::<Vec<_>>()).collect()
+        let ext = |p: &&String| Path::new(p.as_str()).extension().and_then(|x| x.to_str()).is_some_and(|x| self.cfg.ext.iter().any(|y| y == x));
+        dirs.iter().flat_map(|d| self.walked(d).iter().filter(ext).cloned().collect::<Vec<_>>()).collect()
     }
 
     fn is_test(&self, rel: &str) -> bool {
@@ -373,19 +401,19 @@ impl Project {
     }
 
     /// The test files: those under `tests`, plus test-named files that sit in `src` folders.
-    pub fn test_files(&self) -> Vec<String> {
+    pub fn test_files(&self) -> &[String] {
         self.tests.get_or_init(|| {
             let mut v = self.files(&self.cfg.tests);
             v.extend(self.files(&self.cfg.src).into_iter().filter(|f| self.is_test(f)));
             let mut seen = std::collections::HashSet::new();
             v.retain(|f| seen.insert(f.clone()));
             v
-        }).clone()
+        })
     }
 
     /// The source files: those under `src` that are not tests.
-    pub fn src_files(&self) -> Vec<String> {
-        self.srcs.get_or_init(|| self.files(&self.cfg.src).into_iter().filter(|f| !self.is_test(f)).collect()).clone()
+    pub fn src_files(&self) -> &[String] {
+        self.srcs.get_or_init(|| self.files(&self.cfg.src).into_iter().filter(|f| !self.is_test(f)).collect())
     }
 
     /// Folders and files the requirement lines are read from, plus decision folders, repo-relative.
@@ -395,15 +423,15 @@ impl Project {
 
     /// Every `*.md` file of `dir` and its subfolders, repo-relative.
     fn md_in(&self, dir: &str) -> Vec<String> {
-        detect::walk(&if dir == "." { self.root.clone() } else { self.root.join(dir) }, &self.allow, &self.ignore).iter().filter(|p| p.extension().is_some_and(|x| x == "md")).map(|p| self.rel(p)).collect()
+        self.walked(dir).iter().filter(|p| p.ends_with(".md")).cloned().collect()
     }
 
     /// The markdown files that may hold requirements: the spec paths (folders, files) and decision folders, repo-relative.
-    pub fn spec_files(&self) -> Vec<String> {
+    pub fn spec_files(&self) -> &[String] {
         self.specs.get_or_init(|| {
             let mut seen = std::collections::HashSet::new();
             self.spec_paths.iter().chain(&self.doc_dirs).flat_map(|p| if self.root.join(p).is_file() { vec![p.clone()] } else { self.md_in(p) }).filter(|f| seen.insert(f.clone())).collect()
-        }).clone()
+        })
     }
 
     // (SCAN-13)
@@ -414,7 +442,7 @@ impl Project {
         let known: std::collections::HashSet<&str> = mds.iter().map(String::as_str).collect();
         let (mut found, mut linked): (IndexMap<String, String>, Refs) = Default::default();
         for f in &mds {
-            for (idx, line) in self.lines(f).iter().enumerate() {
+            for (idx, line) in self.lines(f).iter().enumerate().filter(|(_, l)| l.contains("](")) {
                 // a link shown in `code` is an example, not a link
                 for c in self.rx.link.captures_iter(&self.rx.code_span.replace_all(line, "")) {
                     let (id, target) = (c[1].to_string(), &c[2]);
@@ -463,7 +491,7 @@ impl Project {
     pub fn specs(&self, problems: &mut Vec<Issue>) -> IndexMap<String, Spec> {
         let mut found: IndexMap<String, Spec> = IndexMap::new();
         for f in self.spec_files() {
-            let ls = self.lines(&f);
+            let ls = self.lines(f);
             let gone = removed_lines(&ls);
             for (idx, line) in ls.iter().enumerate() {
                 let n = idx + 1;
@@ -502,8 +530,8 @@ impl Project {
                 // an OpenSpec change restates a requirement of `openspec/specs/` it modifies: the change's text wins
                 let delta = |p: &str| p.starts_with("openspec/changes/");
                 match found.get(&id) {
-                    Some(was) if delta(&was.file) && !delta(&f) => continue,
-                    Some(was) if delta(&was.file) == delta(&f) => problems.push(Issue::new(&id, format!("is defined twice: {}:{} and {f}:{n}", was.file, was.line))),
+                    Some(was) if delta(&was.file) && !delta(f) => continue,
+                    Some(was) if delta(&was.file) == delta(f) => problems.push(Issue::new(&id, format!("is defined twice: {}:{} and {f}:{n}", was.file, was.line))),
                     Some(_) => {}
                     None => {
                         let before = match &end {
@@ -524,8 +552,8 @@ impl Project {
         // a line without a level that names a defined ID is a reference to it (a cross-reference table, a review note)
         problems.retain(|p| !(p.uncounted && found.contains_key(&p.id)));
         // a requirement an OpenSpec change removes is retired
-        for i in self.removed() {
-            found.shift_remove(&i);
+        for i in &self.gone().1 {
+            found.shift_remove(i);
         }
         found
     }
@@ -540,7 +568,7 @@ impl Project {
     pub fn tests(&self) -> Refs {
         let mut found = Refs::new();
         for rel in self.test_files() {
-            for (i, line) in self.lines(&rel).iter().enumerate() {
+            for (i, line) in self.lines(rel).iter().enumerate() {
                 for id in self.tagged(line) {
                     found.entry(id).or_default().push(Ref { file: rel.clone(), line: i + 1, text: line.trim().to_string() });
                 }
@@ -563,7 +591,7 @@ impl Project {
     pub fn sources(&self) -> Refs {
         let mut found = Refs::new();
         for rel in self.src_files() {
-            for (i, line) in self.lines(&rel).iter().enumerate() {
+            for (i, line) in self.lines(rel).iter().enumerate() {
                 if let Some(c) = self.comment_of(line) {
                     for m in self.rx.mention.captures_iter(c).filter(|m| is_id(&m[1])) {
                         found.entry(m[1].to_string()).or_default().push(Ref { file: rel.clone(), line: i + 1, text: line.trim().to_string() });
@@ -583,13 +611,13 @@ impl Project {
             refs.dedup();
             for r in refs {
                 if known.contains(&prefix(&r)) {
-                    issues.push(Issue::new(&i, format!("{}:{} cites {r}, which no spec defines", spec.file, spec.line)));
+                    issues.push(Issue::new(i, format!("{}:{} cites {r}, which no spec defines", spec.file, spec.line)));
                 }
             }
         }
     }
 
-    fn known_prefixes(&self, s: &IndexMap<String, Spec>) -> Vec<String> {
+    fn known_prefixes(&self, s: &IndexMap<String, Spec>) -> std::collections::HashSet<String> {
         s.keys().map(|i| prefix(i)).chain(self.cfg.retired_prefixes.iter().cloned()).collect()
     }
 
@@ -604,38 +632,35 @@ impl Project {
     /// IDs whose bullet is struck through (`- ~~**ABC-12** …~~`): retired, never reassigned.
     /// Also those an OpenSpec change lists under `## REMOVED Requirements`.
     pub fn retired(&self) -> Vec<String> {
-        let mut out = vec![];
-        for f in self.spec_files() {
-            for line in self.lines(&f).iter() {
-                if let Some(m) = self.rx.retired.captures(line).filter(|m| is_id(&m[1])) {
-                    out.push(m[1].to_string());
-                }
-            }
-        }
-        out.extend(self.removed());
-        out
+        let (struck, removed) = self.gone();
+        struck.iter().chain(removed).cloned().collect()
     }
 
     // (SCAN-27)
-    /// IDs under an OpenSpec `## REMOVED Requirements` heading.
-    fn removed(&self) -> Vec<String> {
-        let mut out = vec![];
-        for f in self.spec_files() {
-            let ls = self.lines(&f);
-            for (line, gone) in ls.iter().zip(removed_lines(&ls)) {
-                if let Some(m) = LINE.head.captures(line).filter(|m| gone && is_id(&m[1])) {
-                    out.push(m[1].to_string());
+    /// (struck-out IDs, IDs under an OpenSpec `## REMOVED Requirements` heading), from one pass over the spec files.
+    fn gone(&self) -> &(Vec<String>, Vec<String>) {
+        self.gone.get_or_init(|| {
+            let (mut struck, mut removed) = (vec![], vec![]);
+            for f in self.spec_files() {
+                let ls = self.lines(f);
+                for (line, gone) in ls.iter().zip(removed_lines(&ls)) {
+                    if let Some(m) = self.rx.retired.captures(line).filter(|m| is_id(&m[1])) {
+                        struck.push(m[1].to_string());
+                    }
+                    if let Some(m) = LINE.head.captures(line).filter(|m| gone && is_id(&m[1])) {
+                        removed.push(m[1].to_string());
+                    }
                 }
             }
-        }
-        out
+            (struck, removed)
+        })
     }
 
     /// Tagged tests that prove nothing: kind -> [(id, file, line)], in a fixed kind order.
     /// unknown = ID in no spec; retired = struck-through spec; comment-only = every tag of the ID sits in a comment;
     /// disabled = every test is switched off; no-assert = no tagged test body has a direct assertion (it may assert through a helper: verify).
     pub fn test_problems(&self, s: &IndexMap<String, Spec>, t: &Refs) -> Vec<(&'static str, Vec<(String, String, usize)>)> {
-        let gone = self.retired();
+        let gone: std::collections::HashSet<String> = self.retired().into_iter().collect();
         let mut out: Vec<(&'static str, Vec<(String, String, usize)>)> = ["unknown", "retired", "comment-only", "disabled", "no-assert"].into_iter().map(|k| (k, vec![])).collect();
         let slot = |out: &mut Vec<(&'static str, Vec<_>)>, k: &str, v| out.iter_mut().find(|(n, _)| *n == k).unwrap().1.push(v);
         let mut ids: Vec<&String> = t.keys().collect();
@@ -719,17 +744,17 @@ pub fn sorted_ids<'a>(ids: impl IntoIterator<Item = &'a String>) -> Vec<String> 
 }
 
 /// Lines of the function a 1-based tagged line `n` belongs to: from the tag to the brace that closes it.
-pub fn body(ls: &[String], n: usize, cap: usize) -> Vec<String> {
-    let (mut out, mut depth, mut opened) = (vec![], 0i32, false);
-    for line in ls.iter().skip(n - 1).take(cap) {
-        out.push(line.clone());
+pub fn body(ls: &[String], n: usize, cap: usize) -> &[String] {
+    let (start, mut depth, mut opened) = (n - 1, 0i32, false);
+    let stop = (start + cap).min(ls.len());
+    for (k, line) in ls[start.min(stop)..stop].iter().enumerate() {
         depth += line.matches('{').count() as i32 - line.matches('}').count() as i32;
         opened = opened || line.contains('{');
         if depth < 0 || (opened && depth == 0) {
-            break;
+            return &ls[start..start + k + 1];
         }
     }
-    out
+    &ls[start.min(stop)..stop]
 }
 
 /// DOC-01,DOC-02,DOC-03,DOC-07 -> DOC-01..03,DOC-07

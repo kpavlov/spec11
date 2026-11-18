@@ -1,5 +1,5 @@
 use rusqlite::Connection;
-use spec11_core::{Analysis, StatusOpts, codegraph::{Graph, GraphError}};
+use spec11_core::{Analysis, StatusOpts, codegraph::{Graph, GraphError}, scan::Project};
 use std::{fs, path::{Path, PathBuf}};
 
 fn write(dir: &Path, rel: &str, text: &str) {
@@ -265,7 +265,7 @@ fn layout_is_detected_when_spec11_json_is_missing() {
     write(&g, "internal/a.go", "package a\n// (GOO-01)\nfunc A() {}\n");
     write(&g, "internal/a_test.go", "package a\n// [GOO\x2D01]\nfunc TestA(t *testing.T) {\n\tt.Fatal(1)\n}\n");
     let a = Analysis::load(Some(&g)).unwrap();
-    assert_eq!((a.p.src_files(), a.p.test_files()), (vec!["internal/a.go".to_string()], vec!["internal/a_test.go".to_string()]));
+    assert_eq!((a.p.src_files().to_vec(), a.p.test_files().to_vec()), (vec!["internal/a.go".to_string()], vec!["internal/a_test.go".to_string()]));
     assert_eq!(a.state["GOO-01"], "tested");
 }
 
@@ -376,6 +376,12 @@ fn openspec_superpowers_kiro_and_fallback_layouts() {
     // no spec folder: any markdown with a requirement, a heading block with its level further down too
     let a = Analysis::load(Some(&data("fallback"))).unwrap();
     assert_eq!(a.s.values().map(|s| (s.id.as_str(), s.file.as_str())).collect::<Vec<_>>(), [("FBK-1", "notes/design.md")]);
+
+    // change polling reads no spec file, yet lists every file `open` reads the requirements from
+    for name in ["styles", "openspec", "superpowers", "kiro", "fallback"] {
+        let (full, unread) = (Project::open(Some(&data(name))).unwrap(), Project::open_unread(Some(&data(name))).unwrap());
+        assert!(full.spec_files().iter().all(|f| unread.spec_files().contains(f)), "{name}: {:?} vs {:?}", full.spec_files(), unread.spec_files());
+    }
 }
 
 fn scratch(name: &str) -> PathBuf {
@@ -499,7 +505,7 @@ fn symlinks_are_followed_only_inside_root_or_allowed_paths() {
     std::os::unix::fs::symlink(&out, &outside).unwrap();
     std::os::unix::fs::symlink(&ok, &allowed).unwrap();
     std::os::unix::fs::symlink(out.join("c.py"), d.join("src/file.py")).unwrap(); // a file link, too
-    let files = || Analysis::load(Some(&d)).unwrap().p.src_files();
+    let files = || Analysis::load(Some(&d)).unwrap().p.src_files().to_vec();
     unsafe { std::env::remove_var("ALLOWED_PATHS") };
     assert_eq!(files(), ["src/a.py", "src/inside/b.py"]);
     unsafe { std::env::set_var("ALLOWED_PATHS", std::env::join_paths([&ok]).unwrap()) };

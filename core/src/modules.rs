@@ -102,11 +102,11 @@ impl Analysis {
         let custom = &self.p.rx.case;
         let mut by: BTreeMap<String, Vec<TestFile>> = BTreeMap::new();
         for file in self.p.test_files() {
-            let Some(case) = detect::case_of(&file) else { continue };
+            let Some(case) = detect::case_of(file) else { continue };
             let marker = custom.clone().unwrap_or_else(|| rx.entry(case.marker).or_insert_with(|| Regex::new(case.marker).unwrap()).clone());
-            let tests = self.cases_in(&file, &marker, case.call);
+            let tests = self.cases_in(file, &marker, case.call);
             if !tests.is_empty() {
-                by.entry(detect::module_of(&self.p.root, &file, &mut seen).0).or_default().push(TestFile { file, tests });
+                by.entry(detect::module_of(&self.p.root, file, &mut seen).0).or_default().push(TestFile { file: file.clone(), tests });
             }
         }
         let modules: Vec<ModuleTests> = by.into_iter().map(|(module, files)| ModuleTests { module, tests: files.iter().map(|f| f.tests.len()).sum(), files }).collect();

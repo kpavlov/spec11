@@ -228,9 +228,13 @@ fn spec_file_names(root: &Path) -> Vec<String> {
     v
 }
 
-/// Cheap check for `find_root`: does `d` look like a repo with specs? No tree walk.
+/// Cheap check for `find_root`: does `d` look like a repo with specs? Reads no file, except in a generic `docs/` when nothing else is there.
 pub fn has_spec_marker(d: &Path, allow: &[PathBuf]) -> bool {
-    spec_dir(d, allow).is_some() || !spec_file_names(d).is_empty() || !decision_dirs(d).is_empty()
+    if !spec_file_names(d).is_empty() || !decision_dirs(d).is_empty() || d.join("specs").is_dir() {
+        return true;
+    }
+    let ignore = Ignore::load(d);
+    !named_dirs(d, allow, &ignore).is_empty() || generic_dir(d, allow, &ignore).is_some()
 }
 
 /// Where the requirement lines of `root` are, repo-relative folders or files: the spec folders, single-file specs, and when
@@ -248,6 +252,24 @@ pub fn spec_paths(root: &Path, allow: &[PathBuf], ignore: &Ignore) -> Vec<String
     v
 }
 
+/// Every place `spec_paths` may pick, found without reading a file: the dedicated spec folders, existing generic doc folders and
+/// single-file specs, else every markdown file of the repo. For change polling, which must see an edit wherever it lands.
+// ponytail: a repo whose spec folders hold no requirement line but whose other markdown does gets only the folders here, so an
+// edit to that markdown is seen only when the file list has it (a walk, not CodeGraph); read once per stamp change if that matters.
+pub fn spec_places(root: &Path, allow: &[PathBuf], ignore: &Ignore) -> Vec<String> {
+    let mut v: Vec<String> = named_dirs(root, allow, ignore).into_iter().map(|d| d.0).collect();
+    let files = spec_file_names(root);
+    let fallback = v.is_empty() && files.is_empty();
+    v.extend(GENERIC.iter().filter(|g| root.join(g).is_dir() && confined(root, g, allow)).map(|g| g.to_string()));
+    v.extend(files);
+    if fallback {
+        v.extend(walk(root, allow, ignore).iter().filter(|f| is_md(f)).filter_map(|f| f.strip_prefix(root).ok()).map(|f| f.to_string_lossy().replace('\\', "/")));
+    } else if v.is_empty() && root.join("specs").is_dir() {
+        v.push("specs".to_string());
+    }
+    v
+}
+
 /// The main spec folder of `root` (see `scan_dirs`). `None` when the repo has none.
 pub fn spec_dir(root: &Path, allow: &[PathBuf]) -> Option<String> {
     scan_dirs(root, allow, &Ignore::load(root)).into_iter().next().map(|d| d.0)
@@ -258,23 +280,39 @@ pub fn spec_dir(root: &Path, allow: &[PathBuf]) -> Option<String> {
 /// `docs/` only when none of them holds a requirement line, and a bare `specs/` when nothing else is there. Folders that hold a
 /// requirement line come first: the first one is the main one. A folder that resolves out of the repo (a symlink) is left out (SCAN-10).
 fn scan_dirs(root: &Path, allow: &[PathBuf], ignore: &Ignore) -> Vec<(String, bool)> {
-    let mds = |d: &str| -> Vec<PathBuf> { walk(&root.join(d), allow, ignore).into_iter().filter(|p| is_md(p)).collect() };
-    let mut changes: Vec<String> = std::fs::read_dir(root.join("openspec/changes")).into_iter().flatten().filter_map(Result::ok)
-        .filter_map(|e| e.file_name().into_string().ok()).filter(|n| n != "archive").map(|n| format!("openspec/changes/{n}/specs")).collect();
-    changes.sort();
-    let named = SPEC_DIRS.iter().filter(|d| !GENERIC.contains(d)).map(|d| d.to_string()).chain(changes).chain(["docs/superpowers/specs".to_string()]);
-    let mut v: Vec<(String, bool)> = named.filter(|d| root.join(d).is_dir() && confined(root, d, allow)).filter_map(|d| {
-        let fs = mds(&d);
-        (!fs.is_empty()).then(|| (d, fs.iter().any(|f| has_requirement(f))))
+    let mut v: Vec<(String, bool)> = named_dirs(root, allow, ignore).into_iter().map(|(d, fs)| {
+        let holds = fs.iter().any(|f| has_requirement(f));
+        (d, holds)
     }).collect();
-    if !v.iter().any(|d| d.1) && let Some(g) = GENERIC.iter().find(|g| root.join(g).is_dir() && confined(root, g, allow) && mds(g).iter().any(|f| has_requirement(f))) {
-        v.push((g.to_string(), true));
+    if !v.iter().any(|d| d.1) && let Some(g) = generic_dir(root, allow, ignore) {
+        v.push((g, true));
     }
     if v.is_empty() && root.join("specs").is_dir() {
         v.push(("specs".to_string(), false));
     }
     v.sort_by_key(|d| !d.1); // stable: the fixed order within each group
     v
+}
+
+fn mds(root: &Path, d: &str, allow: &[PathBuf], ignore: &Ignore) -> Vec<PathBuf> {
+    walk(&root.join(d), allow, ignore).into_iter().filter(|p| is_md(p)).collect()
+}
+
+/// The dedicated spec folders of `root` (see `scan_dirs`) that hold markdown, with their markdown files. Reads no file.
+fn named_dirs(root: &Path, allow: &[PathBuf], ignore: &Ignore) -> Vec<(String, Vec<PathBuf>)> {
+    let mut changes: Vec<String> = std::fs::read_dir(root.join("openspec/changes")).into_iter().flatten().filter_map(Result::ok)
+        .filter_map(|e| e.file_name().into_string().ok()).filter(|n| n != "archive").map(|n| format!("openspec/changes/{n}/specs")).collect();
+    changes.sort();
+    let named = SPEC_DIRS.iter().filter(|d| !GENERIC.contains(d)).map(|d| d.to_string()).chain(changes).chain(["docs/superpowers/specs".to_string()]);
+    named.filter(|d| root.join(d).is_dir() && confined(root, d, allow)).filter_map(|d| {
+        let fs = mds(root, &d, allow, ignore);
+        (!fs.is_empty()).then_some((d, fs))
+    }).collect()
+}
+
+/// The first generic doc folder (`docs/`, `doc/`) that holds a requirement line.
+fn generic_dir(root: &Path, allow: &[PathBuf], ignore: &Ignore) -> Option<String> {
+    GENERIC.iter().find(|g| root.join(g).is_dir() && confined(root, g, allow) && mds(root, g, allow, ignore).iter().any(|f| has_requirement(f))).map(|g| g.to_string())
 }
 
 /// What the file list says about the code: the dominant ecosystem and the folders of its sources and tests.

@@ -409,14 +409,14 @@ pub fn read_resource(root: Option<&Path>, uri: &str) -> Result<Option<(&'static 
 // (API-08)
 /// A fingerprint (path, mtime, size) of what the analysis reads: the repo's files, the spec files, `spec11.json` and the
 /// CodeGraph index with its WAL. Equal stamps mean the resources read the same. 0 when the repo cannot be opened. Blocking.
-// ponytail: a full `Project::open` (config, ignore files, file list, spec scan) per poll and per subscriber; share one poller or use a file watcher if that ever costs.
+// ponytail: `Project::open_unread` (config, ignore files, file list and walks, no spec file read) per poll and per subscriber; share one poller or use a file watcher if that ever costs.
 pub fn stamp(root: Option<&Path>) -> u64 {
     use std::hash::{Hash, Hasher};
-    let Ok(p) = spec11_core::scan::Project::open(root) else { return 0 };
+    let Ok(p) = spec11_core::scan::Project::open_unread(root) else { return 0 };
     let db = p.cfg.codegraph.clone();
     let mut h = std::collections::hash_map::DefaultHasher::new();
     let extra = ["spec11.json".to_string(), ".git/index".to_string(), ".git/HEAD".to_string(), ".git/logs/HEAD".to_string(), format!("{db}-wal"), format!("{db}-shm"), db];
-    for rel in p.files.iter().chain(&p.spec_files()).chain(&extra) {
+    for rel in p.files.iter().chain(p.spec_files()).chain(&extra) {
         if let Ok(m) = std::fs::metadata(p.root.join(rel)) {
             (rel, m.len(), m.modified().ok()).hash(&mut h);
         }

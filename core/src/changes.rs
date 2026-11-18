@@ -258,7 +258,7 @@ struct Kinds<'a> {
 
 impl<'a> Kinds<'a> {
     fn of(p: &'a Project) -> Self {
-        Kinds { p, specs: p.spec_files().into_iter().collect(), tests: p.test_files().into_iter().collect(), src: p.src_files().into_iter().collect() }
+        Kinds { p, specs: p.spec_files().iter().cloned().collect(), tests: p.test_files().iter().cloned().collect(), src: p.src_files().iter().cloned().collect() }
     }
 
     fn roles(&self, f: &str) -> Vec<&'static str> {
