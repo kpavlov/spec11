@@ -561,7 +561,7 @@ impl Analysis {
         let mut idents: HashSet<String> = HashSet::new();
         for r in &tests {
             for line in crate::scan::body(&self.p.lines(&r.file), r.line, 200) {
-                idents.extend(crate::scan::WORD.find_iter(&line).map(|m| m.as_str().to_string()));
+                idents.extend(crate::scan::WORD.find_iter(line).map(|m| m.as_str().to_string()));
             }
         }
         let (mut cited, mut names) = (HashSet::new(), BTreeSet::new());
@@ -575,14 +575,14 @@ impl Analysis {
         let mut defs: IndexMap<String, Vec<String>> = IndexMap::new();
         for f in self.p.src_files() {
             let mut types = BTreeSet::new();
-            for line in self.p.lines(&f).iter() {
+            for line in self.p.lines(f).iter() {
                 if let Some(m) = self.p.rx.decl.captures(line) && idents.contains(&m[1]) && TYPE_KEYWORD.is_match(line) {
                     types.insert(m[1].to_string());
                 }
             }
             if !types.is_empty() {
                 names.extend(types.iter().cloned());
-                defs.insert(f, types.into_iter().collect());
+                defs.insert(f.clone(), types.into_iter().collect());
             }
         }
         let mut order: Vec<&String> = defs.keys().collect();

@@ -149,7 +149,7 @@ impl Analysis {
         for refs in self.t.values() {
             for r in refs {
                 for line in body(&self.p.lines(&r.file), r.line, 200) {
-                    tested.extend(WORD.find_iter(&line).map(|m| m.as_str().to_string()));
+                    tested.extend(WORD.find_iter(line).map(|m| m.as_str().to_string()));
                 }
             }
         }
