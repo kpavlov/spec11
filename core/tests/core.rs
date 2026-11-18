@@ -821,3 +821,21 @@ fn a_configured_specs_path_that_is_missing_counts_as_no_specs() {
     write(&d, "src/a.py", "def a():\n    pass\n");
     assert_eq!(Analysis::load(Some(&d)).unwrap().report().requirements, 0);
 }
+
+#[doc = "[SCAN-30]"]
+#[test]
+fn a_requirement_names_the_newest_commit_that_touched_it() {
+    let d = scratch("blame");
+    write(&d, "specs/01-a.md", "- **BLM-01** MUST — one.\n- **BLM-02** MUST — two.\n");
+    let git = |a: &[&str]| assert!(std::process::Command::new("git").args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(a).current_dir(&d).output().unwrap().status.success(), "{a:?}");
+    git(&["init", "-q"]);
+    git(&["add", "."]);
+    git(&["commit", "-qm", "one"]);
+    write(&d, "specs/01-a.md", "- **BLM-01** MUST — one.\n- **BLM-02** MUST — two, edited.\n");
+    git(&["commit", "-qam", "two"]);
+    let c = Analysis::load(Some(&d)).unwrap().blame_commits().unwrap();
+    assert!(c["BLM-01"].len() == 40 && c["BLM-01"] != c["BLM-02"], "{c:?}");
+    write(&d, "specs/01-a.md", "- **BLM-01** MUST — one, uncommitted.\n- **BLM-02** MUST — two, edited.\n");
+    let c = Analysis::load(Some(&d)).unwrap().blame_commits().unwrap();
+    assert!(!c.contains_key("BLM-01") && c.contains_key("BLM-02"), "{c:?}");
+}

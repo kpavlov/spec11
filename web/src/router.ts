@@ -2,12 +2,12 @@
 //   /  (the dashboard; /report still works)   /requirements[/DOC-25][?state=none&level=MUST&q=text]   /modules[?module=core&q=text]   /tests[?module=core&state=untagged&q=text]
 //   /specs[?file=04-documents.md&id=DOC-25]            /code?path=RunSolo/RunSolo/A.swift&line=12
 //   /overlap[?id=DOC-25]   /uncovered[?id=…]   /setup
-//   /changes[?staged=1&untracked=0&ref=main&commit=SHA&ws=1&ignored=1&all=1]      ?changed=1 on requirements, tests, specs and modules: only what the working tree changed
+//   /changes[?staged=1&untracked=0&ref=main&commit=SHA&ws=1&ignored=1&all=1]      ?changed=1 on requirements, tests, specs and modules: only what the working tree changed   ?reviewed=0 on requirements: only the unreviewed ones
 // File names go in the query, not the path, so a dev server never mistakes `x.md` or `A.swift` for a static file.
 export const TABS = ["dashboard", "changes", "requirements", "modules", "tests", "specs", "overlap", "uncovered", "setup"] as const;
 export type Tab = (typeof TABS)[number] | "code";
 
-export type Route = { tab: Tab; id?: string; file?: string; path?: string; line?: number; state?: string; level?: string; q?: string; module?: string; changed?: string; staged?: string; untracked?: string; ref?: string; commit?: string; ws?: string; ignored?: string; all?: string };
+export type Route = { tab: Tab; id?: string; file?: string; path?: string; line?: number; state?: string; level?: string; q?: string; module?: string; changed?: string; reviewed?: string; staged?: string; untracked?: string; ref?: string; commit?: string; ws?: string; ignored?: string; all?: string };
 
 export function parse(url: URL): Route {
   const [first, second] = url.pathname.split("/").filter(Boolean).map(decodeURIComponent);
@@ -25,6 +25,7 @@ export function parse(url: URL): Route {
     q: p.get("q") ?? undefined,
     module: p.get("module") ?? undefined,
     changed: p.get("changed") ?? undefined,
+    reviewed: p.get("reviewed") ?? undefined,
     staged: p.get("staged") ?? undefined,
     untracked: p.get("untracked") ?? undefined,
     ref: p.get("ref") ?? undefined,
@@ -47,6 +48,7 @@ export function format(r: Route): string {
   put("q", r.q);
   put("module", r.module);
   put("changed", r.changed);
+  put("reviewed", r.reviewed);
   put("staged", r.staged);
   put("untracked", r.untracked);
   put("ref", r.ref);

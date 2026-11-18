@@ -532,7 +532,7 @@ mod tests {
             // portable: nullable fields are `anyOf` of single types, never `"type": [.., "null"]`
             assert!(!schema.to_string().contains(r#""type":["#), "{}: {schema}", t.name);
             // the writing tools are not run here, and overlap/uncovered need an index this fixture lacks
-            if matches!(t.name, "install" | "uninstall" | "codegraph" | "module" | "overlap" | "uncovered" | "changes" | "diff" | "history") {
+            if matches!(t.name, "install" | "uninstall" | "codegraph" | "module" | "overlap" | "uncovered" | "changes" | "diff" | "history" | "commits") {
                 continue;
             }
             let (_, data) = ops::call(Some(&d), t.name, &args(t.name), "http://x/", 7411).unwrap();
@@ -544,7 +544,7 @@ mod tests {
         assert!(checked >= 6, "{checked}");
     }
 
-    #[doc = "[API-13, SCAN-19]"]
+    #[doc = "[API-13, API-15, SCAN-19]"]
     #[tokio::test]
     async fn changes_lists_files_and_requirements_and_needs_git() {
         let d = std::env::temp_dir().join(format!("spec11-chg-{}", std::process::id()));
@@ -576,6 +576,8 @@ mod tests {
         assert!(body.contains("not a changed file"), "{body}");
         let (_, body) = send(&app, tool("changes", r#"{"staged":true}"#, "127.0.0.1:7411")).await;
         assert!(body.contains(r#""files":[]"#), "{body}");
+        let (_, body) = send(&app, tool("commits", "{}", "127.0.0.1:7411")).await;
+        assert!(body.contains(r#"commits"#) && !body.contains("AAA-01 "), "AAA-01 is edited, not committed: {body}");
         let rpc = |id: u32, method: &str, params: &str| post("/mcp", "127.0.0.1:7411", &format!(r#"{{"jsonrpc":"2.0","id":{id},"method":"{method}","params":{params}}}"#));
         let (_, body) = send(&app, rpc(5, "resources/read", r#"{"uri":"spec11://changes.json"}"#)).await;
         assert!(body.contains("AAA-01"), "{body}");

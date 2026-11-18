@@ -458,6 +458,36 @@ impl Analysis {
         self.notes_of(o, &files, &Kinds::of(&self.p), patch)
     }
 
+    // (SCAN-29)
+    /// {requirement ID: the newest commit (full sha) that touched its lines}, by `git blame` of each spec file. A requirement with a
+    /// line not committed yet, or in a file git does not know, is left out: it has no commit to review.
+    pub fn blame_commits(&self) -> Result<IndexMap<String, String>, String> {
+        let mut by_file: IndexMap<&str, Vec<&crate::scan::Spec>> = IndexMap::new();
+        for s in self.s.values().filter(|s| s.mark != "ref") {
+            by_file.entry(s.file.as_str()).or_default().push(s);
+        }
+        let mut out = IndexMap::new();
+        for (file, specs) in by_file {
+            let blame = self.p.git(&["blame", "--line-porcelain", "--", file])?;
+            // per final line: (sha, author-time); a header is `<sha> <orig> <final> [<count>]`, the content line starts with a tab
+            let (mut lines, mut sha): (Vec<(&str, i64)>, &str) = (vec![], "");
+            for l in blame.lines() {
+                if let Some(t) = l.strip_prefix("author-time ") {
+                    lines.push((sha, t.parse().unwrap_or(0)));
+                } else if !l.starts_with('\t') && l.len() > 40 && l.as_bytes()[40] == b' ' && l[..40].bytes().all(|b| b.is_ascii_hexdigit()) {
+                    sha = &l[..40];
+                }
+            }
+            for s in specs {
+                let span = lines.get(s.line - 1..s.end.min(lines.len())).unwrap_or_default();
+                if !span.is_empty() && span.iter().all(|(h, _)| !h.bytes().all(|b| b == b'0')) {
+                    out.insert(s.id.clone(), span.iter().max_by_key(|(_, t)| *t).unwrap().0.to_string());
+                }
+            }
+        }
+        Ok(out)
+    }
+
     // (SCAN-20)
     /// `Project::history` without the commits that change no file the filters in `o` show (whitespace, ignored, unscanned), as `changes` lists them.
     pub fn history(&self, base: &str, head: &str, limit: usize, o: &ChangeOpts) -> Result<History, String> {

@@ -14,6 +14,7 @@
   import PaneHead from "./PaneHead.svelte";
   import { stateTone, edgeTone, levelTone, changeTone, type Tone } from "./tone";
   import { preview } from "./layout.svelte";
+  import { reviewed, loadReviewed, setReviewed } from "./reviewed.svelte";
   import DiffView from "./DiffView.svelte";
   import ViewSwitch from "./ViewSwitch.svelte";
   import { sorted, toggleSort, type Sort } from "./sort";
@@ -92,7 +93,7 @@
         // filter shortcuts: 1-7 pick a state, S/L step through states/levels (⇧ goes back), 0 clears every filter
         const k = e.key.toLowerCase(), d = e.shiftKey ? -1 : 1;
         const step = (keys: string[], cur: string) => keys[(keys.indexOf(cur) + d + keys.length) % keys.length];
-        if (k === "0") filter({ state: undefined, level: undefined, q: undefined, changed: undefined });
+        if (k === "0") filter({ state: undefined, level: undefined, q: undefined, changed: undefined, reviewed: undefined });
         else if (k === "s") filter({ state: step(states, stateFilter) });
         else if (k === "l") { const n = step(levelKeys, levelFilter || "all"); filter({ level: n === "all" ? undefined : n }); }
         else if (+k <= states.length) filter({ state: states[+k - 1] });
@@ -117,6 +118,8 @@
   let report = $state<any>(null);
   // the working tree against HEAD: undefined until loaded, null when it cannot be read (not a git work tree)
   let changes = $state<any>(undefined);
+  // (WEB-35) {requirement ID: its newest commit}; empty without git
+  let commits = $state<Record<string, string>>({});
   let custom = $state<any>(undefined);
   // commits not on the base branch, for the Changes page
   let history = $state<any>(null);
@@ -149,8 +152,9 @@
     // the modules views are optional: a failed resource read leaves them empty instead of failing the load
     read("spec11://modules").then((m) => (modules = m)).catch(() => (modules = null));
     call("changes").then((c) => (changes = c.data)).catch(() => (changes = null));
+    call("commits").then((c) => (commits = c.data.commits)).catch(() => (commits = {}));
     gen++;
-    if (!root) fetch("/api/info").then((x) => x.json()).then((i) => (root = i.root ?? "")).catch(() => {});
+    if (!root) fetch("/api/info").then((x) => x.json()).then((i) => (root = i.root ?? "")).catch(() => {}).finally(() => loadReviewed(root));
   }
 
   // (WEB-10, WEB-11) hide a module (after a confirm) or show it again via .spec11ignore, then rescan
@@ -306,10 +310,15 @@
   };
   // (WEB-22) what the working tree changed: files by path, the kinds a requirement is touched by, the modules holding changed files
   const fileOf = $derived(new Map<string, any>((changes?.files ?? []).map((f: any) => [f.path, f])));
+  const changeOf = $derived(new Map<string, any>((changes?.requirements ?? []).map((r: any) => [r.id, r])));
   const reqKinds = $derived(new Map<string, string[]>((changes?.requirements ?? []).map((r: Row & { changed: string[] }) => [r.id, r.changed])));
   const moduleOfFile = (path: string) => (modules?.modules ?? []).map((m: any) => m.path).filter((m: string) => m !== "." && path.startsWith(`${m}/`)).sort((a: string, b: string) => b.length - a.length)[0] ?? ".";
   const changedMods = $derived(new Set<string>((changes?.files ?? []).map((f: any) => moduleOfFile(f.path))));
   const onlyChanged = $derived(route.changed === "1");
+  // (WEB-35) reviewed = its commit is the one it was reviewed at; committed again since, it is unreviewed again
+  const isReviewed = (id: string) => !!commits[id] && reviewed[id] === commits[id];
+  const onlyUnreviewed = $derived(route.reviewed === "0");
+  const reviewTip = (id: string) => (isReviewed(id) ? `reviewed at ${commits[id].slice(0, 7)}` : reviewed[id] ? `changed since reviewed (${reviewed[id].slice(0, 7)} → ${commits[id].slice(0, 7)})` : "mark reviewed");
   const changeMark = (path: string) => fileOf.get(path)?.change ?? "";
   // (WEB-25) the preview of a changed item shows the diff when the remembered view is "diff"
   const diffOn = (changed: boolean) => changed && preview.view === "diff";
@@ -322,16 +331,17 @@
   // SHALL and reference docs have no chip of their own: they group under "other"
   const levelOf = (r: Row) => (levels.includes(r.level) ? r.level : "other");
   // the rows that pass every filter except the one named: what a chip of that filter would show
-  const facet = (skip?: "state" | "level") => rows.filter((r) => (skip === "state" || stateFilter === "all" || r.state === stateFilter) && (skip === "level" || !levelFilter || levelOf(r) === levelFilter) && (!onlyChanged || reqKinds.has(r.id)) && (!query || `${r.id} ${r.text} ${r.file}`.toLowerCase().includes(query.toLowerCase())));
+  const facet = (skip?: "state" | "level") => rows.filter((r) => (skip === "state" || stateFilter === "all" || r.state === stateFilter) && (skip === "level" || !levelFilter || levelOf(r) === levelFilter) && (!onlyChanged || reqKinds.has(r.id)) && (!onlyUnreviewed || !isReviewed(r.id)) && (!query || `${r.id} ${r.text} ${r.file}`.toLowerCase().includes(query.toLowerCase())));
   const tally = (list: Row[], key: (r: Row) => string) => list.reduce<Record<string, number>>((m, r) => ((m[key(r)] = (m[key(r)] ?? 0) + 1), m), {});
   const shown = $derived(facet());
   const stateN = $derived.by(() => { const l = facet("state"); return { ...tally(l, (r) => r.state), all: l.length } as Record<string, number>; });
   const levelN = $derived.by(() => { const l = facet("level"); return { ...tally(l, levelOf), all: l.length } as Record<string, number>; });
   const levelKeys = $derived(["all", ...levels, ...(levelN.other || levelFilter === "other" ? ["other"] : [])]);
-  const filtering = $derived(stateFilter !== "all" || !!levelFilter || !!query || onlyChanged);
+  const filtering = $derived(stateFilter !== "all" || !!levelFilter || !!query || onlyChanged || onlyUnreviewed);
   // a "changed only" switch with its count; shown once something changed (or while it is on, so it can be turned off)
   const changedSeg = (n: number) => [{ key: "all", label: "all" }, { key: "changed", label: "changed", count: n }];
   const showChanged = $derived(!!changes?.files.length || onlyChanged);
+  const pickReviewed = (k: string) => filter({ reviewed: k === "unreviewed" ? "0" : undefined });
   const pickChanged = (k: string) => filter({ changed: k === "changed" ? "1" : undefined });
   const stateOpts = $derived(states.map((st, i) => ({ key: st, label: st, count: stateN[st] ?? 0, tone: st === "all" ? undefined : stateTone[st], title: `${STATE_HINT[st]} (${i + 1})` })));
   const levelOpts = $derived(levelKeys.map((l) => ({ key: l, label: l, count: levelN[l] ?? 0 })));
@@ -423,6 +433,15 @@
   const save = (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* storage blocked */ } };
   const copyPath = (path: string) => navigator.clipboard.writeText(path).then(() => { copied = true; setTimeout(() => (copied = false), 1200); }).catch(() => {});
 </script>
+
+{#snippet reqCell(r: any, k: string)}
+  {#if k === "id"}{#if commits[r.id]}<input type="checkbox" class="rv" aria-label="reviewed" title={reviewTip(r.id)} checked={isReviewed(r.id)} onchange={(e) => setReviewed(r.id, e.currentTarget.checked ? commits[r.id] : undefined)} />{:else if Object.keys(commits).length}<span class="rv muted" title="not committed yet: commit it to review it">·</span>{/if}{#if r.deleted || !known.has(r.id)}{r.id}{:else}<a href={u(route.tab === "requirements" ? { ...route, id: r.id } : req(r.id))}>{r.id}</a>{/if}
+  {:else if k === "level"}{#if /^(MUST|SHOULD|MAY)$/.test(r.level)}<span class="rfc {r.level.toLowerCase()}">{r.level}</span>{/if}
+  {:else if k === "state"}<Pill tone={r.deleted ? "bad" : stateTone[r.state]}>{r.state}</Pill>{#if r.done}<Pill tone="accent" title="check-marked: {r.verdict}">✓ {r.verdict}</Pill>{/if}
+  {:else if k === "text"}<div class="txt" title={plain(r.text)}>{@html inline(r.text)}</div>
+    <div class="notes">{#each noteGroups(r.notes ?? changeOf.get(r.id)?.notes ?? []) as [what, files]}<Pill tone={r.deleted ? "bad" : "accent"} title={files.join(", ")}>✎ {what}</Pill>{/each}</div>
+  {:else if r.line}<a href={u({ tab: "specs", file: r.file, id: r.id })}>{r.file}:{r.line}</a>{:else}{r.file}{/if}
+{/snippet}
 
 {#snippet idlink(id: string, to: Route)}
   <IdLink href={u(to)}>{id}</IdLink>
@@ -708,20 +727,14 @@ irm https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.ps1 | 
       <Seg label="State" keycap="S" hint="Press 1–7 to pick a state, S for the next one, ⇧S for the previous one" options={stateOpts} value={stateFilter} onpick={(k) => filter({ state: k })} />
       <Seg label="Level" keycap="L" hint="Press L for the next level, ⇧L for the previous one" options={levelOpts} value={levelFilter || "all"} onpick={(k) => filter({ level: k === "all" ? undefined : k })} />
       {#if showChanged}<Seg label="Changes" hint="Only what the working tree changed against HEAD" options={changedSeg(rows.filter((r) => reqKinds.has(r.id)).length)} value={onlyChanged ? "changed" : "all"} onpick={pickChanged} />{/if}
+      {#if Object.keys(commits).length}<Seg label="Reviewed" hint="Hide the requirements you marked reviewed (and have not changed since)" options={[{ key: "all", label: "all" }, { key: "unreviewed", label: "unreviewed", count: rows.filter((r) => !isReviewed(r.id)).length }]} value={onlyUnreviewed ? "unreviewed" : "all"} onpick={pickReviewed} />{/if}
       <input name="filter" aria-label="filter" placeholder="Filter ID, text, file   ( / )" value={query} oninput={(e) => filter({ q: e.currentTarget.value })} />
       <span class="found muted nowrap" aria-live="polite">{#if filtering}{shown.length} of {rows.length} <a href={u({ tab: "requirements" })} title="Clear every filter (0)">Clear filters <kbd>0</kbd></a>{/if}</span>
       <SplitToggle />
     </div>
     <Split>
       {#snippet list()}
-        <DataTable rows={shown} columns={reqCols} rowKey={(r) => r.id} selected={route.id} onselect={(k, how) => navigate({ ...route, id: k }, how === "key")} value={reqVal} groupOf={(r) => prefixOf(r.id)} tone={(r) => edgeTone(r.state)} storageKey="spec11.collapsed">
-          {#snippet cell(r, k)}
-            {#if k === "id"}<a href={u({ ...route, id: r.id })}>{r.id}</a>
-            {:else if k === "level"}{#if /^(MUST|SHOULD|MAY)$/.test(r.level)}<span class="rfc {r.level.toLowerCase()}">{r.level}</span>{/if}
-            {:else if k === "state"}<Pill tone={stateTone[r.state]}>{r.state}</Pill>{#if r.done}<Pill tone="accent" title="check-marked: {r.verdict}">✓ {r.verdict}</Pill>{/if}{#if reqKinds.has(r.id)}<Pill tone="accent" title="the working tree changed its {reqKinds.get(r.id)!.join(", ")}: it may be affected, not proof">✎ {reqKinds.get(r.id)!.join("+")}</Pill>{/if}
-            {:else if k === "text"}<div class="txt" title={plain(r.text)}>{@html inline(r.text)}</div>
-            {:else}<a href={u({ tab: "specs", file: r.file, id: r.id })}>{r.file}:{r.line}</a>{/if}
-          {/snippet}
+        <DataTable rows={shown} columns={reqCols} cell={reqCell} rowKey={(r) => r.id} selected={route.id} onselect={(k, how) => navigate({ ...route, id: k }, how === "key")} value={reqVal} groupOf={(r) => prefixOf(r.id)} tone={(r) => edgeTone(r.state)} pale={(r) => isReviewed(r.id)} storageKey="spec11.collapsed">
           {#snippet empty()}<p class="muted empty">No requirement matches. <a href={u({ tab: "requirements" })}>Clear filters</a></p>{/snippet}
         </DataTable>
       {/snippet}
@@ -911,21 +924,7 @@ irm https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.ps1 | 
       <Section id="changes-requirements" title={`Requirements that may be affected${at}`} count={view.requirements.length} tone={view.requirements.length ? "accent" : undefined}>
         {#if !view.requirements.length}<p class="muted">No requirement's bullet, tagged test or cited code is among the changed lines.</p>
         {:else}
-          <table>
-            <tbody>
-              {#each view.requirements as r (r.id)}
-                <tr>
-                  <td class="mono nowrap">{#if r.deleted || !known.has(r.id)}{r.id}{:else}{@render idlink(r.id, req(r.id))}{/if}</td>
-                  <td class="nowrap"><Pill tone={r.deleted ? "bad" : stateTone[r.state]}>{r.state}</Pill></td>
-                  <td>
-                    <div class="txt" title={plain(r.text)}>{@html inline(r.text)}</div>
-                    <div class="notes">{#each noteGroups(r.notes) as [what, files]}<Pill tone={r.deleted ? "bad" : "accent"} title={files.join(", ")}>✎ {what}</Pill>{/each}</div>
-                  </td>
-                  <td class="mono muted nowrap">{#if r.line}<a href={u({ tab: "specs", file: r.file, id: r.id })}>{r.file}:{r.line}</a>{:else}{r.file}{/if}</td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
+          <DataTable rows={view.requirements} columns={reqCols} cell={reqCell} rowKey={(r) => r.id} onselect={(id, how) => how === "click" && id && known.has(id) && navigate(req(id))} value={reqVal} tone={(r: any) => (r.deleted ? "bad" : edgeTone(r.state))} pale={(r) => isReviewed(r.id)} />
         {/if}
         <p class="muted note">A changed file may affect a requirement; it does not say the requirement is done or its test passes. Evidence, not truth.</p>
       </Section>
@@ -1085,6 +1084,8 @@ irm https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.ps1 | 
   td.ln { text-align: right; width: 1%; user-select: none; }
   td.ln a { color: var(--muted); }
   tr.hl { background: color-mix(in srgb, var(--warn) 22%, transparent); }
+  .rv { margin: 0 6px 0 0; vertical-align: middle; }
+  span.rv { display: inline-block; width: 13px; text-align: center; }
   td.src { overflow-x: auto; }
   table.code.wrap td.src { white-space: pre-wrap; overflow-wrap: anywhere; }
   .crumb { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
