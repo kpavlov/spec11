@@ -1,0 +1,44 @@
+Copyright (c) 2026 Konstantin Pavlov, IT Staff OÜ. All rights reserved.
+
+DEVELOPER EVALUATION AND CONTRIBUTION LICENSE AGREEMENT
+-------------------------------------------------------
+
+1. PURPOSE & GRANT OF LICENSE
+This License allows you to view the source code and run the software locally
+solely for the purposes of personal use, academic research, non-commercial
+public project testing, evaluation, bug reporting, and developing
+contributions (Pull Requests) back to the original project. Subject to these
+terms, the Author grants you a limited, non-exclusive, non-transferable,
+royalty-free license to download and inspect the source code.
+
+2. ALLOWED CONTRIBUTIONS
+You are permitted to modify the source code locally for the sole purpose of
+submitting bug fixes, optimizations, or feature enhancements back to the Author
+via Pull Requests or patches. By submitting a Pull Request or sending a patch,
+you grant the Author a perpetual, worldwide, non-exclusive, no-charge,
+royalty-free, irrevocable copyright license to reproduce, prepare derivative
+works of, publicly display, and distribute your contributions.
+
+3. STRICT PROHIBITIONS & RESTRICTIONS
+Any use outside of the scope defined in Section 1 is strictly prohibited
+without an explicit, separate Commercial License. You strictly CANNOT:
+a) Production Use: Deploy or run this software, its binaries, or its source code
+   in any live, production, or customer-facing environment for commercial or
+   monetized purposes.
+b) CI/CD & Automation: Execute or integrate this software within any automated
+   Continuous Integration (CI) or Continuous Deployment (CD) pipelines for
+   commercial, corporate, or organizational systems exceeding the limits in 3(d).
+c) Derivative Works: Modify, transform, or split the code to create standalone
+   forks, competing products, alternative branches, or spin-off projects for
+   public or private distribution.
+d) Enterprise Use: Permit any use, evaluation, testing, or modification of the
+   software within or on behalf of a business entity with a total annual gross
+   turnover/revenue exceeding $1,000,000 USD equivalent or more than 15
+   employees.
+
+4. COMMERCIAL AND ENTERPRISE LICENSING
+Any production deployment, CI/CD pipeline execution, enterprise use, or use by
+an entity exceeding the limits in Section 3 requires a paid, explicit
+Commercial License from the Author.
+
+To obtain a production or enterprise license, please contact: info@itstaff.ee
