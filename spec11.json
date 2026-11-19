@@ -1,6 +1,6 @@
 {
   "specs": "specs",
-  "tests": ["core/tests", "server/src"],
+  "tests": ["core/tests", "server/src", "server/tests"],
   "src": ["core/src", "server/src"],
   "ext": ["rs"],
   "comment": ["//"],

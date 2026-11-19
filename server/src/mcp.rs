@@ -1,7 +1,7 @@
-//! MCP over streamable HTTP, mounted at `/mcp`. The tools are `ops::tools()`; the dashboard is an MCP Apps `ui://` resource.
+//! MCP over stdio or streamable HTTP. Both share the tools and the MCP Apps dashboard resource.
 use crate::{AppState, frontend, ops};
 use rmcp::{
-    ErrorData, RoleServer, ServerHandler,
+    ErrorData, RoleServer, ServerHandler, ServiceExt,
     model::*,
     service::{RequestContext, SubscriptionContext},
     transport::streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager},
@@ -97,8 +97,13 @@ impl ServerHandler for Mcp {
                 None => Err(ErrorData::resource_not_found(format!("unknown resource {}", request.uri), None)),
             };
         }
-        // debug builds without a web build: point at the dev URL instead of failing
-        let html = frontend::index_html().unwrap_or_else(|| format!("<!doctype html><meta charset=utf-8><p>Dashboard not built. Open <a href=\"{0}\">{0}</a></p>", self.0.dashboard));
+        let html = frontend::index_html().unwrap_or_else(|| {
+            if self.0.dashboard.is_empty() {
+                "<!doctype html><meta charset=utf-8><p>Dashboard not built.</p>".into()
+            } else {
+                format!("<!doctype html><meta charset=utf-8><p>Dashboard not built. Open <a href=\"{0}\">{0}</a></p>", self.0.dashboard)
+            }
+        });
         Ok(ReadResourceResult::new(vec![ResourceContents::text(html, UI_URI).with_mime_type(UI_MIME)]).into())
     }
 
@@ -142,6 +147,22 @@ impl ServerHandler for Mcp {
                 }
             }
         }
+    }
+}
+
+// (API-22)
+pub async fn serve_stdio(state: AppState) -> Result<(), String> {
+    use rmcp::service::{QuitReason, ServerInitializeError};
+
+    let stop = state.shutdown.child_token();
+    let service = match Mcp(state).serve_with_ct(rmcp::transport::stdio_pipes(), stop).await {
+        Ok(service) => service,
+        Err(ServerInitializeError::Cancelled | ServerInitializeError::ConnectionClosed(_)) => return Ok(()),
+        Err(e) => return Err(format!("stdio MCP: {e}")),
+    };
+    match service.waiting().await {
+        Ok(QuitReason::JoinError(e)) | Err(e) => Err(format!("stdio MCP: {e}")),
+        Ok(_) => Ok(()),
     }
 }
 

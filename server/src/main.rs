@@ -25,6 +25,7 @@ pub struct AppState {
     pub mcp_port: u16,
     /// The UI has its own port (`--ui-port`); the main port then carries `/mcp` only.
     pub split: bool,
+    pub http_mcp: bool,
     /// `host:port` values a request may carry (DNS-rebinding guard).
     pub hosts: Arc<Vec<String>>,
     /// Cancelled on Ctrl-C so open `subscriptions/listen` streams end and the graceful shutdown can finish.
@@ -58,9 +59,24 @@ struct Cli {
     /// Print JSON instead of text.
     #[arg(long, global = true)]
     json: bool,
+    #[command(flatten)]
+    transports: TransportArgs,
     /// Without a command: `serve` for the repo in the current directory, and open the dashboard.
     #[command(subcommand)]
     cmd: Option<Cmd>,
+}
+
+#[derive(Args)]
+struct TransportArgs {
+    /// Enable MCP over stdin and stdout.
+    #[arg(long, global = true)]
+    stdio_mcp: bool,
+    /// Disable the web dashboard and skip opening the browser.
+    #[arg(long, global = true)]
+    no_ui: bool,
+    /// Disable streamable HTTP MCP on every port.
+    #[arg(long, global = true, alias = "no-http-mc")]
+    no_http_mcp: bool,
 }
 
 #[derive(Subcommand)]
@@ -104,7 +120,7 @@ enum Cmd {
     },
     /// Install the spec11 skill into <repo>/.agents/skills and add the spec11 MCP server to <repo>/.mcp.json.
     Install {
-        /// Install the skill into ~/.agents/skills instead (the MCP config is per repo and is left alone).
+        /// Install into ~/.agents/skills and ~/.mcp.json instead of the repo.
         #[arg(long)]
         global: bool,
         /// Port of `spec11 serve` that the MCP entry points at.
@@ -121,7 +137,7 @@ enum Cmd {
         global: bool,
         /// Remove only the spec11 skill or only its entry in .mcp.json.
         #[arg(long, value_enum, conflicts_with = "codegraph")]
-        only: Option<skill::UninstallPart>,
+        only: Option<skill::InstallPart>,
         /// Only remove the CodeGraph MCP server from <repo>/.mcp.json, whatever it holds; the skill and the spec11 entry are left alone.
         #[arg(long, conflicts_with = "global")]
         codegraph: bool,
@@ -269,18 +285,30 @@ async fn info(State(s): State<AppState>) -> Result<axum::Json<serde_json::Value>
 /// (main router, optional UI router). Without `ui_port` the main router serves everything; with it, `/mcp` only, and the UI router
 /// serves the UI and `/mcp` too, since the dashboard talks to the server over MCP.
 fn routers(state: AppState) -> (Router, Option<Router>) {
-    let split = state.split;
     let ui = || Router::new().route("/api/info", axum::routing::get(info)).route("/", axum::routing::get(frontend::handler)).route("/{*path}", axum::routing::get(frontend::handler));
-    let mcp = || Router::new().nest_service("/mcp", mcp::service(state.clone(), &state.hosts));
+    let mcp = || {
+        if state.http_mcp {
+            Router::new().nest_service("/mcp", mcp::service(state.clone(), &state.hosts))
+        } else {
+            Router::new().route("/mcp", axum::routing::any(|| async { StatusCode::NOT_FOUND }))
+        }
+    };
     let guarded = |r: Router<AppState>| -> Router {
         r.layer(middleware::from_fn_with_state(state.clone(), guard)).layer(tower_http::compression::CompressionLayer::new()).with_state(state.clone())
     };
-    if split { (guarded(mcp()), Some(guarded(ui().merge(mcp())))) } else { (guarded(ui().merge(mcp())), None) }
+    if state.dashboard.is_empty() {
+        (guarded(mcp()), None)
+    } else if state.split {
+        (guarded(mcp()), Some(guarded(ui().merge(mcp()))))
+    } else {
+        (guarded(ui().merge(mcp())), None)
+    }
 }
 
 fn app_state(root: Option<PathBuf>, ports: &[u16]) -> AppState {
     let hosts = ports.iter().flat_map(|p| [format!("127.0.0.1:{p}"), format!("localhost:{p}")]).collect();
-    AppState { root, dashboard: format!("http://127.0.0.1:{}/", ports.last().unwrap()), mcp_port: ports[0], split: ports.len() > 1, hosts: Arc::new(hosts), shutdown: Default::default(), #[cfg(debug_assertions)] http: reqwest::Client::new() }
+    let dashboard = ports.last().map(|port| format!("http://127.0.0.1:{port}/")).unwrap_or_default();
+    AppState { root, dashboard, mcp_port: ports.first().copied().unwrap_or(DEFAULT_PORT), split: ports.len() > 1, http_mcp: true, hosts: Arc::new(hosts), shutdown: Default::default(), #[cfg(debug_assertions)] http: reqwest::Client::new() }
 }
 
 /// Best effort: a failure to launch a browser is not an error.
@@ -289,48 +317,94 @@ fn open_browser(url: &str) {
     let _ = std::process::Command::new(cmd).args(args).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn();
 }
 
-fn serve(root: Option<PathBuf>, port: u16, ui_port: Option<u16>, no_open: bool) -> Result<u8, String> {
+// (API-22)
+fn serve(root: Option<PathBuf>, port: u16, ui_port: Option<u16>, no_open: bool, transports: TransportArgs) -> Result<u8, String> {
+    let TransportArgs { stdio_mcp, no_ui, no_http_mcp } = transports;
+    if no_ui && no_http_mcp && !stdio_mcp {
+        return Err("Enable --stdio-mcp when both --no-ui and --no-http-mcp are set.".into());
+    }
     // the workspace is fixed once, here: the repo that holds the current directory (or --root)
     let root = spec11_core::scan::Project::open(root.as_deref())?.root;
     let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().map_err(|e| e.to_string())?;
-    rt.block_on(async move {
+    let result = rt.block_on(async move {
         let bind = |p: u16| async move { tokio::net::TcpListener::bind(("127.0.0.1", p)).await.map_err(|e| format!("127.0.0.1:{p}: {e}")) };
-        let ports: Vec<u16> = std::iter::once(port).chain(ui_port).collect();
-        let state = app_state(Some(root.clone()), &ports);
-        // (API-21)
-        eprintln!("spec11 {LONG_VERSION}\n\n  workspace {}\n  dashboard {}\n  mcp       http://127.0.0.1:{port}/mcp", root.display(), state.dashboard);
-        match skill::status(Some(&root), port) {
-            Ok(st) => skill::suggestions(&st).iter().for_each(|t| eprintln!("  setup     {t}  (or use Setup in the dashboard)")),
-            Err(e) => eprintln!("  setup     could not check the install: {e}"),
-        }
-        let dashboard = state.dashboard.clone();
-        let stop = state.shutdown.clone();
-        let (main, ui) = routers(state);
-        let run = |l, app: Router| {
-            let stop = stop.clone();
-            async move { axum::serve(l, app).with_graceful_shutdown(async move { let _ = tokio::signal::ctrl_c().await; stop.cancel(); }).await.map_err(|e| e.to_string()) }
+        let ui_port = ui_port.filter(|_| !no_ui);
+        let ports: Vec<u16> = if no_http_mcp {
+            (!no_ui).then_some(ui_port.unwrap_or(port)).into_iter().collect()
+        } else {
+            std::iter::once(port).chain(ui_port).collect()
         };
-        let main_l = bind(port).await?;
-        let ui_l = match ui_port { Some(up) => Some(bind(up).await?), None => None };
-        if !no_open {
-            open_browser(&dashboard); // after the bind, so the page is there when the browser asks
+        let mut state = app_state(Some(root.clone()), &ports);
+        state.mcp_port = port;
+        state.http_mcp = !no_http_mcp;
+        if no_ui {
+            state.dashboard.clear();
         }
-        match (ui, ui_l) {
-            (Some(ui), Some(ul)) => {
-                let (a, b) = tokio::join!(run(main_l, main), run(ul, ui));
-                a?;
-                b?;
+        // (API-21)
+        eprintln!("spec11 {LONG_VERSION}\n\n  workspace {}", root.display());
+        if !no_ui {
+            eprintln!("  dashboard {}", state.dashboard);
+        }
+        if !no_http_mcp {
+            eprintln!("  mcp       http://127.0.0.1:{port}/mcp");
+            let setup_ui = if no_ui { "" } else { "  (or use Setup in the dashboard)" };
+            match skill::status(Some(&root), port) {
+                Ok(st) => skill::suggestions(&st).iter().for_each(|t| eprintln!("  setup     {t}{setup_ui}")),
+                Err(e) => eprintln!("  setup     could not check the install: {e}"),
             }
-            _ => run(main_l, main).await?,
         }
+        if stdio_mcp {
+            eprintln!("  mcp       stdio");
+        }
+        let stop = state.shutdown.clone();
+        let signal_stop = stop.clone();
+        tokio::spawn(async move {
+            let _ = tokio::signal::ctrl_c().await;
+            signal_stop.cancel();
+        });
+        let http = async {
+            let [main_port, ..] = ports.as_slice() else { return Ok(()) };
+            let (main, ui) = routers(state.clone());
+            let run = |listener, app: Router| async {
+                axum::serve(listener, app).with_graceful_shutdown(stop.clone().cancelled_owned()).await.map_err(|e| e.to_string())
+            };
+            let main_listener = bind(*main_port).await?;
+            let second = match (ui, ports.get(1)) {
+                (Some(ui), Some(port)) => Some((bind(*port).await?, ui)),
+                _ => None,
+            };
+            if !no_open && !no_ui {
+                open_browser(&state.dashboard); // after the bind, so the page is there when the browser asks
+            }
+            if let Some((listener, ui)) = second {
+                tokio::try_join!(run(main_listener, main), run(listener, ui))?;
+            } else {
+                run(main_listener, main).await?;
+            }
+            Ok::<(), String>(())
+        };
+        let stdio = async {
+            if stdio_mcp {
+                let result = mcp::serve_stdio(state.clone()).await;
+                stop.cancel();
+                result?;
+            }
+            Ok::<(), String>(())
+        };
+        tokio::try_join!(http, stdio)?;
         Ok(0)
-    })
+    });
+    if stdio_mcp {
+        // Tokio's stdin read may still be blocked after Ctrl-C on platforms without async pipes.
+        rt.shutdown_background();
+    }
+    result
 }
 
 /// `port` = install, `None` = uninstall.
-fn install(root: Option<&std::path::Path>, global: bool, port: Option<u16>, only: Option<skill::UninstallPart>) -> Result<u8, String> {
-    skill::apply(root, global, port, only)?.iter().for_each(|l| println!("{l}"));
-    if port.is_some() && !global {
+fn install(root: Option<&std::path::Path>, global: bool, port: Option<u16>, only: Option<skill::InstallPart>) -> Result<u8, String> {
+    skill::apply(root, global, port, only, skill::McpTransport::Http)?.iter().for_each(|l| println!("{l}"));
+    if port.is_some() {
         println!("next   spec11   # starts the MCP server and dashboard the skill talks to");
     }
     Ok(0)
@@ -338,8 +412,11 @@ fn install(root: Option<&std::path::Path>, global: bool, port: Option<u16>, only
 
 fn run(cli: Cli) -> Result<u8, String> {
     let cmd = cli.cmd.unwrap_or(Cmd::Serve { port: DEFAULT_PORT, ui_port: None, no_open: false });
+    if !matches!(cmd, Cmd::Serve { .. }) && (cli.transports.stdio_mcp || cli.transports.no_ui || cli.transports.no_http_mcp) {
+        return Err("Transport flags apply only when starting the server.".into());
+    }
     match cmd {
-        Cmd::Serve { port, ui_port, no_open } => return serve(cli.root, port, ui_port, no_open),
+        Cmd::Serve { port, ui_port, no_open } => return serve(cli.root, port, ui_port, no_open, cli.transports),
         Cmd::Doctor { fix, port } => {
             let mut checks = doctor::run(cli.root.as_deref(), port);
             if fix && let Some(action) = doctor::suggested(&checks) {
@@ -429,6 +506,57 @@ mod tests {
     /// A tool call over `/mcp`: what the CLI runs, and what the dashboard sends.
     fn tool(name: &str, args: &str, host: &str) -> Request<Body> {
         post("/mcp", host, &format!(r#"{{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{"name":"{name}","arguments":{args}}}}}"#))
+    }
+
+    #[doc = "[API-22]"]
+    #[tokio::test]
+    async fn http_routes_can_be_disabled_independently() {
+        let host = "127.0.0.1:7411";
+        let get = |path: &str| Request::get(path).header("host", host).body(Body::empty()).unwrap();
+        let mut state = app_state(Some(repo()), &[7411]);
+        state.http_mcp = false;
+        let (app, _) = routers(state);
+        assert_eq!(send(&app, tool("report", "{}", host)).await.0, StatusCode::NOT_FOUND);
+        assert_eq!(send(&app, get("/mcp")).await.0, StatusCode::NOT_FOUND);
+        assert_eq!(send(&app, get("/api/info")).await.0, StatusCode::OK);
+
+        let mut state = app_state(Some(repo()), &[7411]);
+        state.dashboard.clear();
+        let (app, ui) = routers(state);
+        assert!(ui.is_none());
+        assert_eq!(send(&app, get("/")).await.0, StatusCode::NOT_FOUND);
+        assert_eq!(send(&app, get("/api/info")).await.0, StatusCode::NOT_FOUND);
+        assert_eq!(send(&app, tool("report", "{}", host)).await.0, StatusCode::OK);
+    }
+
+    #[doc = "[SETUP-13]"]
+    #[tokio::test]
+    async fn setup_tools_manage_transports_independently() {
+        let root = std::env::temp_dir().join(format!("spec11-setup-transports-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("specs")).unwrap();
+        let config = root.join(".mcp.json");
+        std::fs::write(&config, r#"{"mcpServers":{"another":{"command":"another"}},"custom":true}"#).unwrap();
+        let (app, _) = routers(app_state(Some(root.clone()), &[7411]));
+        let action = |name, args| tool(name, args, "127.0.0.1:7411");
+        let stdio = r#"{"only":"mcp","transport":"stdio"}"#;
+        let http = r#"{"only":"mcp","transport":"http"}"#;
+        for args in [http, stdio] {
+            let (status, body) = send(&app, action("install", args)).await;
+            assert!(status == StatusCode::OK && !body.contains(r#""isError":true"#), "{body}");
+        }
+        let read = || serde_json::from_slice::<serde_json::Value>(&std::fs::read(&config).unwrap()).unwrap();
+        let settings = read();
+        let args = settings["mcpServers"]["spec11-stdio"]["args"].as_array().unwrap();
+        assert_eq!(args, &vec![json!("--stdio-mcp"), json!("--no-http-mcp"), json!("--no-ui"), json!("--root"), json!(root.canonicalize().unwrap())]);
+        assert_eq!(settings["mcpServers"]["spec11"]["url"], "http://127.0.0.1:7411/mcp");
+        assert!(!root.join(".agents").exists());
+
+        let (_, body) = send(&app, action("uninstall", http)).await;
+        assert!(body.contains(r#""mcp_stdio":"ok""#), "{body}");
+        assert!(read()["mcpServers"].get("spec11").is_none());
+        send(&app, action("uninstall", stdio)).await;
+        assert_eq!(read(), json!({"mcpServers":{"another":{"command":"another"}},"custom":true}));
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[doc = "[API-14]"]

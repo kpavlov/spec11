@@ -4,6 +4,8 @@ use serde_json::{Map, Value, json};
 use std::path::{Path, PathBuf};
 
 const NAME: &str = "spec11";
+const STDIO_NAME: &str = "spec11-stdio";
+const STDIO_FLAGS: [&str; 3] = ["--stdio-mcp", "--no-http-mcp", "--no-ui"];
 const CODEGRAPH: &str = "codegraph";
 const SKILL: &str = include_str!("../../skills/spec11/SKILL.md");
 
@@ -67,6 +69,17 @@ fn write_config(f: &Path, m: Map<String, Value>) -> Result<(), String> {
 /// Adds `mcpServers.spec11` to `<base>/.mcp.json`, creating the file if needed. Other servers and keys are kept as they are.
 pub fn add_mcp(base: &Path, port: u16) -> Result<(PathBuf, McpChange), String> {
     add_server(base, NAME, json!({"type": "http", "url": format!("http://127.0.0.1:{port}/mcp")}), true)
+}
+
+// (SETUP-13)
+fn add_stdio_mcp(base: &Path, global: bool) -> Result<(PathBuf, McpChange), String> {
+    let command = std::env::current_exe().map_err(|e| format!("Locate the spec11 executable: {e}"))?;
+    let mut args = STDIO_FLAGS.map(Value::from).to_vec();
+    if !global {
+        args.extend([json!("--root"), serde_json::to_value(base).map_err(|e| e.to_string())?]);
+    }
+    let command = serde_json::to_value(&command).map_err(|e| e.to_string())?;
+    add_server(base, STDIO_NAME, json!({"type": "stdio", "command": command, "args": args}), true)
 }
 
 /// Adds the `codegraph` entry (SETUP-10), as `codegraph install --print-config claude` prints it. One that is already there is the user's: never replaced.
@@ -148,6 +161,8 @@ pub struct ProjectInstall {
     pub skill: SkillState,
     pub skill_path: PathBuf,
     pub mcp: McpState,
+    pub mcp_stdio: McpState,
+    pub mcp_details: McpDetails,
     pub mcp_path: PathBuf,
     /// Whether `.mcp.json` has a `codegraph` server (SETUP-10).
     pub codegraph_mcp: McpState,
@@ -159,6 +174,8 @@ pub struct GlobalInstall {
     pub skill_path: PathBuf,
     pub mcp: McpState,
     pub mcp_file: McpState,
+    pub mcp_stdio: McpState,
+    pub mcp_details: McpDetails,
     pub mcp_path: PathBuf,
     pub codegraph_mcp: McpState,
 }
@@ -169,6 +186,18 @@ pub struct InstallStatus {
     pub global: GlobalInstall,
 }
 
+#[derive(Serialize, schemars::JsonSchema)]
+pub struct McpDetails {
+    http_url: Option<String>,
+    stdio: Option<StdioLaunch>,
+}
+
+#[derive(Serialize, serde::Deserialize, schemars::JsonSchema)]
+struct StdioLaunch {
+    command: String,
+    args: Vec<String>,
+}
+
 fn skill_state(dir: &Path) -> SkillState {
     match std::fs::read_to_string(dir.join(NAME).join("SKILL.md")) {
         Ok(t) if t == SKILL => SkillState::Current,
@@ -177,20 +206,46 @@ fn skill_state(dir: &Path) -> SkillState {
     }
 }
 
-fn mcp_state(config: &Path, port: u16) -> McpState {
-    let Ok(Some(m)) = read_config(config) else { return McpState::Missing };
-    match m.get("mcpServers").and_then(|s| s.get(NAME)) {
+fn mcp_state(entry: Option<&Value>, port: u16) -> McpState {
+    server_state(entry, |e| e["url"] == format!("http://127.0.0.1:{port}/mcp"))
+}
+
+fn stdio_state(entry: Option<&Value>) -> McpState {
+    server_state(entry, |e| e["type"] == "stdio" && e["command"].as_str().is_some_and(|s| !s.is_empty()))
+}
+
+fn server_state(entry: Option<&Value>, matches: impl FnOnce(&Value) -> bool) -> McpState {
+    match entry {
         None => McpState::Missing,
-        Some(e) if e["url"] == format!("http://127.0.0.1:{port}/mcp") => McpState::Ok,
+        Some(e) if matches(e) => McpState::Ok,
         Some(_) => McpState::Other,
     }
 }
 
-fn codegraph_state(config: &Path) -> McpState {
-    match read_config(config) {
-        Ok(Some(m)) if m.get("mcpServers").is_some_and(|s| s.get(CODEGRAPH).is_some()) => McpState::Ok,
-        _ => McpState::Missing,
+fn configured_servers(config: &Path) -> Map<String, Value> {
+    match read_config(config).ok().flatten().and_then(|mut m| m.remove("mcpServers")) {
+        Some(Value::Object(servers)) => servers,
+        _ => Map::new(),
     }
+}
+
+// (SETUP-14)
+fn mcp_details(servers: &Map<String, Value>, root: Option<&Path>) -> McpDetails {
+    let http_url = servers.get(NAME).and_then(|entry| entry["url"].as_str()).filter(|url| {
+        url.strip_prefix("http://127.0.0.1:").and_then(|s| s.strip_suffix("/mcp")).is_some_and(|port| port.parse::<u16>().is_ok())
+    }).map(str::to_owned);
+    let stdio = servers.get(STDIO_NAME).filter(|entry| entry["type"] == "stdio")
+        .and_then(|entry| serde::Deserialize::deserialize(entry).ok()).filter(|launch: &StdioLaunch| {
+            let mut args = launch.args.iter().map(String::as_str);
+            if launch.command.is_empty() || !args.by_ref().take(STDIO_FLAGS.len()).eq(STDIO_FLAGS) {
+                return false;
+            }
+            match root {
+                Some(root) => args.next() == Some("--root") && args.next().map(Path::new) == Some(root) && args.next().is_none(),
+                None => args.next().is_none(),
+            }
+        });
+    McpDetails { http_url, stdio }
 }
 
 // (SETUP-04, SETUP-12) Read the user-scope entry in ~/.claude.json separately from ~/.mcp.json.
@@ -200,9 +255,20 @@ pub fn status(root: Option<&Path>, port: u16) -> Result<InstallStatus, String> {
     let pdir = base.join(".agents/skills");
     let gdir = home.join(".agents/skills");
     let (pmcp, gmcp, claude) = (base.join(".mcp.json"), home.join(".mcp.json"), home.join(".claude.json"));
+    let (project, global, user) = (configured_servers(&pmcp), configured_servers(&gmcp), configured_servers(&claude));
     Ok(InstallStatus {
-        project: ProjectInstall { skill: skill_state(&pdir), skill_path: pdir.join(NAME).join("SKILL.md"), mcp: mcp_state(&pmcp, port), codegraph_mcp: codegraph_state(&pmcp), mcp_path: pmcp, root: base },
-        global: GlobalInstall { skill: skill_state(&gdir), skill_path: gdir.join(NAME).join("SKILL.md"), mcp: mcp_state(&claude, port), mcp_file: mcp_state(&gmcp, port), mcp_path: gmcp, codegraph_mcp: codegraph_state(&claude) },
+        project: ProjectInstall {
+            skill: skill_state(&pdir), skill_path: pdir.join(NAME).join("SKILL.md"),
+            mcp: mcp_state(project.get(NAME), port), mcp_stdio: stdio_state(project.get(STDIO_NAME)),
+            mcp_details: mcp_details(&project, Some(&base)),
+            codegraph_mcp: server_state(project.get(CODEGRAPH), |_| true), mcp_path: pmcp, root: base,
+        },
+        global: GlobalInstall {
+            skill: skill_state(&gdir), skill_path: gdir.join(NAME).join("SKILL.md"),
+            mcp: mcp_state(user.get(NAME), port), mcp_file: mcp_state(global.get(NAME), port),
+            mcp_stdio: stdio_state(global.get(STDIO_NAME)), mcp_details: mcp_details(&global, None),
+            mcp_path: gmcp, codegraph_mcp: server_state(user.get(CODEGRAPH), |_| true),
+        },
     })
 }
 
@@ -216,8 +282,8 @@ pub fn suggestions(st: &InstallStatus) -> Vec<String> {
     } else if p.skill == S::Outdated || (p.skill == S::Missing && g.skill == S::Outdated) {
         out.push("installed skill is out of date: run `spec11 install`".to_string());
     }
-    if p.mcp != M::Ok && g.mcp != M::Ok {
-        out.push(if p.mcp == M::Other { "the spec11 entry in .mcp.json points at another port: `spec11 install --port N` fixes it" } else { "MCP entry missing from .mcp.json: `spec11 install`" }.to_string());
+    if ![p.mcp, p.mcp_stdio, g.mcp, g.mcp_file, g.mcp_stdio].contains(&M::Ok) {
+        out.push(if p.mcp == M::Other { "the spec11 entry in .mcp.json differs from this server: `spec11 install --port N` updates it" } else { "MCP entry missing: `spec11 install`" }.to_string());
     }
     out
 }
@@ -238,17 +304,25 @@ pub fn apply_codegraph(root: Option<&Path>, add: bool) -> Result<Vec<String>, St
 
 #[derive(Clone, Copy, PartialEq, clap::ValueEnum, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum UninstallPart {
+pub enum InstallPart {
     Skill,
     Mcp,
 }
 
+#[derive(Clone, Copy, Default, PartialEq, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum McpTransport {
+    #[default]
+    Http,
+    Stdio,
+}
+
 /// Install (`port` = Some) or uninstall; returns one line per change, as the CLI prints them.
-// (SETUP-12)
-pub fn apply(root: Option<&Path>, global: bool, port: Option<u16>, only: Option<UninstallPart>) -> Result<Vec<String>, String> {
+// (SETUP-12, SETUP-13)
+pub fn apply(root: Option<&Path>, global: bool, port: Option<u16>, only: Option<InstallPart>, transport: McpTransport) -> Result<Vec<String>, String> {
     use McpChange::*;
     let mut out = vec![];
-    if only != Some(UninstallPart::Mcp) {
+    if only != Some(InstallPart::Mcp) {
         let dir = skills_dir(root, global)?;
         match port {
             Some(_) => out.push(format!("skill  {}", install(&dir)?.display())),
@@ -258,27 +332,29 @@ pub fn apply(root: Option<&Path>, global: bool, port: Option<u16>, only: Option<
             }),
         }
     }
-    if only == Some(UninstallPart::Skill) {
+    if only == Some(InstallPart::Skill) {
         return Ok(out);
     }
-    if global && only.is_none() {
-        out.push(if port.is_some() { "mcp    per repo: `spec11 install` inside a repo handles its .mcp.json" } else { "mcp    use `spec11 uninstall --global --only mcp` to remove the entry from ~/.mcp.json" }.to_string());
+    if global && only.is_none() && port.is_none() {
+        out.push("mcp    use `spec11 uninstall --global --only mcp` to remove the HTTP entry from ~/.mcp.json".into());
         return Ok(out);
     }
     let base = if global { home()? } else { repo_root(root)? };
-    let (f, change) = match port {
-        Some(p) => add_mcp(&base, p)?,
-        None => remove_mcp(&base)?,
+    let (entry, (f, change)) = match (transport, port) {
+        (McpTransport::Http, Some(p)) => (NAME, add_mcp(&base, p)?),
+        (McpTransport::Http, None) => (NAME, remove_mcp(&base)?),
+        (McpTransport::Stdio, Some(_)) => (STDIO_NAME, add_stdio_mcp(&base, global)?),
+        (McpTransport::Stdio, None) => (STDIO_NAME, remove_server(&base, STDIO_NAME)?),
     };
     let what = match change {
-        Created => "created with spec11",
-        Added => "added spec11",
-        Updated => "updated spec11",
-        Unchanged => "spec11 already set",
-        Removed => "removed spec11",
-        Absent => "no spec11 entry",
+        Created => "created with",
+        Added => "added",
+        Updated => "updated",
+        Unchanged => "already set",
+        Removed => "removed",
+        Absent => "no entry for",
     };
-    out.push(format!("mcp    {} ({what})", f.display()));
+    out.push(format!("mcp    {} ({what} {entry})", f.display()));
     Ok(out)
 }
 
@@ -374,15 +450,40 @@ mod tests {
         let st = status(Some(&repo), 7411).unwrap();
         assert!(st.project.skill == SkillState::Missing && st.project.mcp == McpState::Missing);
         assert!(suggestions(&st).len() >= 1 || st.global.skill != SkillState::Missing); // a real ~/.agents may already hold it
-        apply(Some(&repo), false, Some(7411), None).unwrap();
+        apply(Some(&repo), false, Some(7411), None, McpTransport::Http).unwrap();
         let st = status(Some(&repo), 7411).unwrap();
         assert!(st.project.skill == SkillState::Current && st.project.mcp == McpState::Ok);
         assert!(suggestions(&st).is_empty(), "{:?}", suggestions(&st));
         assert!(status(Some(&repo), 7500).unwrap().project.mcp == McpState::Other);
         std::fs::write(repo.join(".agents/skills/spec11/SKILL.md"), "old").unwrap();
         assert!(status(Some(&repo), 7411).unwrap().project.skill == SkillState::Outdated);
-        apply(Some(&repo), false, None, None).unwrap();
+        apply(Some(&repo), false, None, None, McpTransport::Http).unwrap();
         assert!(status(Some(&repo), 7411).unwrap().project.skill == SkillState::Missing);
+    }
+
+    #[doc = "[SETUP-14]"]
+    #[test]
+    fn reports_connection_details_from_installed_entries() {
+        let dir = tmp("connection details");
+        for global in [false, true] {
+            let root = (!global).then_some(dir.as_path());
+            let (path, _) = add_mcp(&dir, 7423).unwrap();
+            add_stdio_mcp(&dir, global).unwrap();
+            let servers = configured_servers(&path);
+            let details = mcp_details(&servers, root);
+            assert_eq!(details.http_url.as_deref(), Some("http://127.0.0.1:7423/mcp"));
+            let stdio = details.stdio.unwrap();
+            assert_eq!(Path::new(&stdio.command), std::env::current_exe().unwrap());
+            assert_eq!(stdio.args, servers[STDIO_NAME]["args"].as_array().unwrap().iter().map(|v| v.as_str().unwrap()).collect::<Vec<_>>());
+        }
+        let custom = json!({
+            "spec11": {"url": "http://127.0.0.1:7423/mcp?token=secret"},
+            "spec11-stdio": {"type":"stdio", "command":"spec11", "args":["--token", "secret"], "env":{"TOKEN":"secret"}},
+        });
+        let details = mcp_details(custom.as_object().unwrap(), None);
+        assert!(details.http_url.is_none() && details.stdio.is_none());
+        let missing = mcp_details(&Map::new(), None);
+        assert!(missing.http_url.is_none() && missing.stdio.is_none());
     }
 
     #[doc = "[SETUP-01]"]

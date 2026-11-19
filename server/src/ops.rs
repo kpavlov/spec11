@@ -101,9 +101,9 @@ fn tool_list() -> Vec<Tool> {
         Tool { name: "source", description: "A test or source file's text (read-only; path is one of the scanned test/source files, as in trace output).", schema: obj(json!({"path": {"type": "string", "description": "repo-relative path, e.g. src/main.rs"}})), ui: false },
         Tool { name: "doctor", description: "Repo setup checks: specs, tests and source folders, git, the codegraph binary and whether the CodeGraph index is initialized, readable and fresh, skill and MCP entry. Only looks; never indexes or installs.", schema: obj(json!({})), ui: false },
         Tool { name: "codegraph", description: "WRITES FILES, SLOW: build (action=init, when there is no .codegraph) or refresh (action=sync) the CodeGraph index by running the codegraph binary; action=refresh is the dashboard's rescan: sync when an index exists and the binary is on PATH, also beside a running codegraph (its watcher can be off); otherwise it says why it did nothing. Indexing is the user's decision: call only when the user asked for it. Same as `spec11 doctor --fix`.", schema: required(obj(json!({"action": {"type": "string", "enum": ["init", "sync", "refresh"]}})), "action"), ui: false },
-        Tool { name: "install_status", description: "Whether the spec11 skill and MCP entry are installed for this repo or in the home directory (.agents/skills and .mcp.json). Also checks ~/.claude.json.", schema: obj(json!({})), ui: false },
-        Tool { name: "install", description: "WRITES FILES: install the spec11 skill into <repo>/.agents/skills (global=true: ~/.agents/skills) and add the spec11 entry to <repo>/.mcp.json, keeping other servers. With server=codegraph it only adds the CodeGraph MCP entry to <repo>/.mcp.json (never replacing one that is there), so the agent can use CodeGraph. Same as `spec11 install [--codegraph]`.", schema: obj(json!({"server": {"type": "string", "enum": ["spec11", "codegraph"], "description": "what to add to .mcp.json (default spec11, with the skill)"}, "global": {"type": "boolean", "description": "install the skill into ~/.agents/skills instead of this repo"}, "port": {"type": "integer", "description": "MCP port for the .mcp.json entry (default: the port this server runs on)"}})), ui: false },
-        Tool { name: "uninstall", description: "WRITES FILES: remove the spec11 skill and MCP entry in this repo. Set only=skill or only=mcp to remove one. With global=true, remove the skill in ~/.agents/skills by default, or the entry in ~/.mcp.json with only=mcp. Set server=codegraph to remove the CodeGraph entry in the repo.", schema: obj(json!({"server": {"type": "string", "enum": ["spec11", "codegraph"], "description": "server to remove (default: spec11)"}, "global": {"type": "boolean"}, "only": {"type": "string", "enum": ["skill", "mcp"], "description": "remove one spec11 component; omit with server=codegraph"}})), ui: false },
+        Tool { name: "install_status", description: "Whether the spec11 skill and HTTP and stdio MCP entries are installed in this repo or home directory. Also reads the HTTP entry in ~/.claude.json.", schema: obj(json!({})), ui: false },
+        Tool { name: "install", description: "WRITES FILES: install the spec11 skill and HTTP MCP in this repo (global=true: home directory). Use only=skill or only=mcp to install one component. With only=mcp, transport=stdio installs spec11-stdio independently. With server=codegraph, add only the CodeGraph entry to the repo and keep any existing entry.", schema: obj(json!({"server": {"type": "string", "enum": ["spec11", "codegraph"]}, "global": {"type": "boolean"}, "only": {"type": "string", "enum": ["skill", "mcp"]}, "transport": {"type": "string", "enum": ["http", "stdio"], "description": "requires only=mcp (default: http)"}, "port": {"type": "integer", "minimum": 1, "maximum": 65535, "description": "HTTP MCP port (default: the port this server runs on)"}})), ui: false },
+        Tool { name: "uninstall", description: "WRITES FILES: remove the spec11 skill and HTTP MCP in this repo. Use only=skill or only=mcp to remove one component. With only=mcp, transport=stdio removes spec11-stdio independently. With global=true, remove the global skill by default or the selected entry in ~/.mcp.json with only=mcp. Set server=codegraph to remove the CodeGraph entry in the repo.", schema: obj(json!({"server": {"type": "string", "enum": ["spec11", "codegraph"]}, "global": {"type": "boolean"}, "only": {"type": "string", "enum": ["skill", "mcp"]}, "transport": {"type": "string", "enum": ["http", "stdio"], "description": "requires only=mcp (default: http)"}})), ui: false },
         Tool { name: "module", description: "WRITES FILES: set a module hidden (true) or shown (false) by adding or removing its folder line in <repo>/.spec11ignore (gitignore syntax), keeping every other line. To hide, path is a module listed by spec11://modules; to show, one of its `hidden`. Only when the user asked for it.", schema: merge(obj(json!({"path": {"type": "string", "description": "module path, e.g. server"}, "hidden": {"type": "boolean", "description": "true: leave the module out of every scan; false: list it again"}})), json!({"required": ["path", "hidden"]})), ui: false },
         Tool { name: "dashboard", description: "URL of the spec11 web dashboard served by this process; in an MCP Apps host this tool opens the dashboard. view (optional) picks the page: a tab, or a tab with its selection and filters, e.g. modules, changes, requirements/DOC-25, requirements?changed=1, tests?module=core&state=untagged, specs?file=04-documents.md, setup.", schema: obj(json!({"view": {"type": "string", "description": "tab or route to open, e.g. requirements/DOC-25?state=none (default: the dashboard)"}})), ui: true },
     ]
@@ -136,16 +136,25 @@ fn setup(root: Option<&Path>, name: &str, args: &Value, mcp_port: u16) -> Option
                 Some(_) => return Err("server must be spec11 or codegraph".into()),
             };
             if codegraph {
-                if global || args.get("only").is_some() {
-                    return Err("global and only apply to spec11".into());
+                if global || args.get("only").is_some() || args.get("transport").is_some() {
+                    return Err("global, only and transport apply to spec11".into());
                 }
                 skill::apply_codegraph(root, name == "install")?
-            } else if name == "install" {
-                skill::apply(root, global, Some(num(args, "port").map_or(mcp_port, |p| p as u16)), None)?
             } else {
                 let only = args.get("only").map(|v| serde_json::from_value(v.clone())).transpose()
                     .map_err(|_| "only must be skill or mcp")?;
-                skill::apply(root, global, None, only)?
+                if args.get("transport").is_some() && only != Some(skill::InstallPart::Mcp) {
+                    return Err("transport requires only=mcp".into());
+                }
+                let transport = args.get("transport").map(|v| serde_json::from_value(v.clone())).transpose()
+                    .map_err(|_| "transport must be http or stdio")?.unwrap_or_default();
+                let port = if name == "install" {
+                    Some(match args.get("port") {
+                        None => mcp_port,
+                        Some(v) => v.as_u64().and_then(|n| u16::try_from(n).ok()).filter(|&n| n != 0).ok_or("port must be between 1 and 65535")?,
+                    })
+                } else { None };
+                skill::apply(root, global, port, only, transport)?
             }
         };
         let st = skill::status(root, mcp_port)?;
@@ -182,6 +191,9 @@ fn txt<'a>(args: &'a Value, k: &str) -> &'a str {
 /// Run one tool against the repo at `root` (or the nearest ancestor of the cwd with a specs folder). Blocking.
 pub fn call(root: Option<&Path>, name: &str, args: &Value, dashboard: &str, mcp_port: u16) -> Result<(String, Value), ToolError> {
     if name == "dashboard" {
+        if dashboard.is_empty() {
+            return Ok(("The web dashboard is disabled.\n".into(), json!({"url": ""})));
+        }
         let url = format!("{dashboard}{}", args["view"].as_str().unwrap_or("").trim_start_matches('/'));
         return Ok((format!("{url}\n"), json!({"url": url})));
     }

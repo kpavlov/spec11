@@ -205,7 +205,7 @@
   }
 
   // `server: "codegraph"` (WEB-29) only adds or removes the CodeGraph entry of .mcp.json
-  async function runSetup(tool: "install" | "uninstall", global = false, options: { server?: "codegraph"; only?: "skill" | "mcp" } = {}) {
+  async function runSetup(tool: "install" | "uninstall", global = false, options: { server?: "codegraph"; only?: "skill" | "mcp"; transport?: "stdio" | "http" } = {}) {
     busy = true;
     try {
       await guard(call(tool, { global, ...options }));
@@ -213,6 +213,11 @@
     } finally {
       busy = false;
     }
+  }
+
+  function launchCommand(launch?: { command: string; args: string[] } | null) {
+    if (!launch) return undefined;
+    return [launch.command, ...launch.args].map((arg) => /^[\w./:-]+$/.test(arg) ? arg : "'" + arg.replaceAll("'", "'\"'\"'") + "'").join(" ");
   }
 
   // each view loads what its URL names
@@ -587,8 +592,7 @@
   <p class="banner">
     <span>spec11 is not fully set up for this repo: {setup.suggestions[0]}</span>
     <span class="grow"></span>
-    <button disabled={busy} class="primary" onclick={() => runSetup("install")}>Install here</button>
-    <a class="tab" href="/setup">Details</a>
+    <a class="tab" href="/setup">Open Setup</a>
     <button aria-label="dismiss" title="Hide until the message changes" onclick={() => dismiss(setup!.suggestions[0])}>✕</button>
   </p>
 {/if}
@@ -598,25 +602,40 @@
     {#if !setup}
       {#if setupError}<p class="error">Could not check the setup: {setupError} <button onclick={loadSetup}>Retry</button></p>{:else}<p class="muted">Checking…</p>{/if}
     {:else}
+      {#snippet mcpControls(transport: "stdio" | "http", state: string, path: string, global: boolean, details?: string | null)}
+        {@const label = transport === "stdio" ? "stdio MCP" : "HTTP MCP"}
+        {@const present = state === "ok" || state === "other"}
+        <p class="setup-actions">
+          <Pill tone={state === "ok" ? "ok" : state === "other" ? "warn" : "bad"}>{label} {state === "ok" ? "installed" : state === "other" ? "custom entry" : "missing"}</Pill>
+          {#if present}
+            <button disabled={busy} onclick={() => confirm(`Remove the ${label} entry from ${path}?`) && runSetup("uninstall", global, { only: "mcp", transport })}>Remove {label}</button>
+          {:else}
+            <button disabled={busy} onclick={() => runSetup("install", global, { only: "mcp", transport })}>Install {label}</button>
+          {/if}
+        </p>
+        {#if present && details}<p class="setup-value muted"><code>{details}</code></p>{/if}
+      {/snippet}
       {#snippet row(title: string, where: any, global: boolean)}
-        {@const mcp = global ? where.mcp_file : where.mcp}
         <div class="card block setup">
           <h3>{title}</h3>
-          <!-- (WEB-38) -->
-          <p>
-            <Pill tone={where.skill === "current" ? "ok" : where.skill === "outdated" ? "warn" : "bad"}>skill {where.skill}</Pill> <span class="mono muted">{where.skill_path}</span>
+          <!-- (WEB-38, WEB-40) -->
+          <p class="setup-actions">
+            <Pill tone={where.skill === "current" ? "ok" : where.skill === "outdated" ? "warn" : "bad"}>skill {where.skill}</Pill>
+            <button disabled={busy || where.skill === "current"} onclick={() => runSetup("install", global, { only: "skill" })}>{where.skill === "outdated" ? "Update skill" : "Install skill"}</button>
             <button disabled={busy || where.skill === "missing"} onclick={() => confirm(`Remove the spec11 skill at ${where.skill_path}?`) && runSetup("uninstall", global, { only: "skill" })}>Remove skill</button>
           </p>
-          <p>
-            <Pill tone={mcp === "ok" ? "ok" : mcp === "other" ? "warn" : "bad"}>mcp {mcp === "ok" ? "installed" : mcp === "other" ? "custom entry" : "missing"}</Pill> <span class="mono muted">{where.mcp_path}</span>
-            <button disabled={busy || mcp === "missing"} onclick={() => confirm(`Remove the spec11 MCP entry from ${where.mcp_path}?`) && runSetup("uninstall", global, { only: "mcp" })}>Remove MCP entry</button>
-          </p>
+          <p class="setup-value muted"><code>{where.skill_path}</code></p>
+          {#if where.mcp_stdio !== undefined}
+            <p class="setup-value setup-config muted"><code>{where.mcp_path}</code></p>
+            <!-- (WEB-41) -->
+            {@render mcpControls("stdio", where.mcp_stdio, where.mcp_path, global, launchCommand(where.mcp_details?.stdio))}
+            {@render mcpControls("http", global ? where.mcp_file : where.mcp, where.mcp_path, global, where.mcp_details?.http_url)}
+          {:else}
+            <p class="muted">Update spec11 and restart the server to manage MCP transports.</p>
+          {/if}
           {#if global && where.mcp !== "missing"}
             <p class="muted">Claude user MCP entry {where.mcp === "ok" ? "installed" : "customised"} · <code>~/.claude.json</code> (read-only)</p>
           {/if}
-          <p>
-            <button disabled={busy} onclick={() => runSetup("install", global)}>{where.skill === "missing" ? "Install" : "Reinstall"}{global ? " skill globally" : " in this repo"}</button>
-          </p>
         </div>
       {/snippet}
       {#if noReqs}
@@ -627,7 +646,7 @@
       {/if}
       {@render row("This repo", setup.status.project, false)}
       {@render row("Global", setup.status.global, true)}
-      <p class="muted">The skill tells the agent to use spec11's MCP tools. Installing in the repo also adds the MCP server to <code>.mcp.json</code> (created if missing, other servers are kept); the global install covers the skill only. The agent needs this server running: <code>spec11</code>.</p>
+      <p class="muted">Stdio MCP starts a spec11 process for each session. HTTP MCP connects to a running <code>spec11</code> server.</p>
       {@const cgBin = checks.find((k) => k.name === "codegraph binary")}
       {@const cgIdx = checks.find((k) => k.name === "codegraph index")}
       {@const cgMcp = setup.status.project.codegraph_mcp === "ok" ? "this repo" : setup.status.global.codegraph_mcp === "ok" ? "global" : ""}
@@ -1150,5 +1169,8 @@ irm https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.ps1 | 
   .block { margin-bottom: 10px; }
   .setup h3 { margin: 0 0 6px; font-size: 15px; }
   .setup p { margin: 6px 0; }
+  .setup-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--gap); }
+  .setup-value { overflow-wrap: anywhere; }
+  .setup p.setup-config { margin-top: var(--gap); padding-top: var(--gap); border-top: 1px solid var(--line); }
   .log { margin-top: 12px; padding: 10px 14px; background: var(--raised); border-radius: var(--radius); font-family: var(--mono); font-size: 12.5px; }
 </style>
