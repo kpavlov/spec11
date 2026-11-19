@@ -340,21 +340,20 @@ fn serve(root: Option<PathBuf>, port: u16, ui_port: Option<u16>, no_open: bool, 
         if no_ui {
             state.dashboard.clear();
         }
-        // (API-21)
-        eprintln!("spec11 {LONG_VERSION}\n\n  workspace {}", root.display());
-        if !no_ui {
-            eprintln!("  dashboard {}", state.dashboard);
-        }
-        if !no_http_mcp {
-            eprintln!("  mcp       http://127.0.0.1:{port}/mcp");
-            let setup_ui = if no_ui { "" } else { "  (or use Setup in the dashboard)" };
-            match skill::status(Some(&root), port) {
-                Ok(st) => skill::suggestions(&st).iter().for_each(|t| eprintln!("  setup     {t}{setup_ui}")),
-                Err(e) => eprintln!("  setup     could not check the install: {e}"),
+        // (API-21) (API-23)
+        if !stdio_mcp {
+            eprintln!("spec11 {LONG_VERSION}\n\n  workspace {}", root.display());
+            if !no_ui {
+                eprintln!("  dashboard {}", state.dashboard);
             }
-        }
-        if stdio_mcp {
-            eprintln!("  mcp       stdio");
+            if !no_http_mcp {
+                eprintln!("  mcp       http://127.0.0.1:{port}/mcp");
+                let setup_ui = if no_ui { "" } else { "  (or use Setup in the dashboard)" };
+                match skill::status(Some(&root), port) {
+                    Ok(st) => skill::suggestions(&st).iter().for_each(|t| eprintln!("  setup     {t}{setup_ui}")),
+                    Err(e) => eprintln!("  setup     could not check the install: {e}"),
+                }
+            }
         }
         let stop = state.shutdown.clone();
         let signal_stop = stop.clone();
@@ -468,10 +467,14 @@ fn run(cli: Cli) -> Result<u8, String> {
 }
 
 fn main() -> ExitCode {
-    match run(Cli::parse()) {
+    let cli = Cli::parse();
+    let quiet = cli.transports.stdio_mcp; // (API-23)
+    match run(cli) {
         Ok(c) => ExitCode::from(c),
         Err(e) => {
-            eprintln!("{e}");
+            if !quiet {
+                eprintln!("{e}");
+            }
             ExitCode::FAILURE
         }
     }

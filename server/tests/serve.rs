@@ -3,6 +3,7 @@ use std::{path::Path, process::{Command, Stdio}, time::Duration};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 #[doc = "[API-22]"]
+#[doc = "[API-23]"]
 #[tokio::test]
 async fn independent_stdio_sessions_use_the_same_tools_and_exit_on_eof() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../core/test-data/nospecs");
@@ -35,7 +36,7 @@ async fn independent_stdio_sessions_use_the_same_tools_and_exit_on_eof() {
             let output = child.wait_with_output().await.unwrap();
             let diagnostics = String::from_utf8(output.stderr).unwrap();
             assert!(output.status.success(), "{diagnostics}");
-            assert!(diagnostics.contains("mcp       stdio") && !diagnostics.contains("127.0.0.1"), "{diagnostics}");
+            assert!(diagnostics.is_empty(), "{diagnostics}");
         }
     };
     tokio::time::timeout(Duration::from_secs(10), async { tokio::join!(session(false), session(true)); }).await.unwrap();
@@ -60,4 +61,13 @@ fn cli_install_defaults_to_http_in_both_scopes() {
         assert!(scope.join(".agents/skills/spec11/SKILL.md").is_file());
     }
     std::fs::remove_dir_all(home).unwrap();
+}
+
+#[doc = "[API-23]"]
+#[test]
+fn stdio_failure_is_silent() {
+    let missing = std::env::temp_dir().join(format!("spec11-no-repo-{}", std::process::id()));
+    let out = Command::new(env!("CARGO_BIN_EXE_spec11")).arg("--root").arg(&missing).args(["--stdio-mcp", "--no-http-mcp", "--no-ui"]).stdin(Stdio::null()).output().unwrap();
+    assert!(!out.status.success());
+    assert!(out.stdout.is_empty() && out.stderr.is_empty(), "{}", String::from_utf8_lossy(&out.stderr));
 }
