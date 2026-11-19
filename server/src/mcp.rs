@@ -27,7 +27,8 @@ impl ServerHandler for Mcp {
             .iter()
             .map(|t| {
                 let schema = t.schema.as_object().cloned().unwrap_or_default();
-                let mut tool = Tool::new(t.name, t.description, schema);
+                // (API-18)
+                let mut tool = Tool::new(t.name, t.description, schema).with_annotations(ToolAnnotations::new().read_only(t.read_only()));
                 if let Some(Value::Object(out)) = ops::output_schema(t.name) {
                     tool = tool.with_raw_output_schema(std::sync::Arc::new(out));
                 }

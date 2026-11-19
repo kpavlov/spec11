@@ -40,13 +40,15 @@ const STYLES: clap::builder::Styles = clap::builder::Styles::styled()
     .literal(clap::builder::styling::AnsiColor::Green.on_default().bold())
     .placeholder(clap::builder::styling::AnsiColor::Cyan.on_default());
 
+const LONG_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "\nCopyright (c) 2026 Konstantin Pavlov, IT Staff OÜ. All rights reserved.\n", env!("CARGO_PKG_REPOSITORY"));
+
 #[derive(Parser)]
 #[command(
     name = "spec11",
     version,
     about = "Deterministic spec-driven-development evidence: evidence, not truth.",
-    long_version = concat!(env!("CARGO_PKG_VERSION"), "\n© Konstantin Pavlov\n", env!("CARGO_PKG_REPOSITORY")),
-    after_help = concat!("© Konstantin Pavlov · About: ", env!("CARGO_PKG_REPOSITORY")),
+    long_version = LONG_VERSION,
+    after_help = concat!("Copyright (c) 2026 Konstantin Pavlov, IT Staff OÜ. All rights reserved. · About: ", env!("CARGO_PKG_REPOSITORY")),
     styles = STYLES
 )]
 struct Cli {
@@ -114,8 +116,12 @@ enum Cmd {
     },
     /// Remove what `install` added; other skills and MCP servers stay.
     Uninstall {
+        /// Use the home directory instead of the repo. Without --only, remove the global skill.
         #[arg(long)]
         global: bool,
+        /// Remove only the spec11 skill or only its entry in .mcp.json.
+        #[arg(long, value_enum, conflicts_with = "codegraph")]
+        only: Option<skill::UninstallPart>,
         /// Only remove the CodeGraph MCP server from <repo>/.mcp.json, whatever it holds; the skill and the spec11 entry are left alone.
         #[arg(long, conflicts_with = "global")]
         codegraph: bool,
@@ -291,7 +297,8 @@ fn serve(root: Option<PathBuf>, port: u16, ui_port: Option<u16>, no_open: bool) 
         let bind = |p: u16| async move { tokio::net::TcpListener::bind(("127.0.0.1", p)).await.map_err(|e| format!("127.0.0.1:{p}: {e}")) };
         let ports: Vec<u16> = std::iter::once(port).chain(ui_port).collect();
         let state = app_state(Some(root.clone()), &ports);
-        eprintln!("spec11: {}\n  dashboard {}\n  mcp       http://127.0.0.1:{port}/mcp", root.display(), state.dashboard);
+        // (API-21)
+        eprintln!("spec11 {LONG_VERSION}\n\n  workspace {}\n  dashboard {}\n  mcp       http://127.0.0.1:{port}/mcp", root.display(), state.dashboard);
         match skill::status(Some(&root), port) {
             Ok(st) => skill::suggestions(&st).iter().for_each(|t| eprintln!("  setup     {t}  (or use Setup in the dashboard)")),
             Err(e) => eprintln!("  setup     could not check the install: {e}"),
@@ -321,8 +328,8 @@ fn serve(root: Option<PathBuf>, port: u16, ui_port: Option<u16>, no_open: bool) 
 }
 
 /// `port` = install, `None` = uninstall.
-fn install(root: Option<&std::path::Path>, global: bool, port: Option<u16>) -> Result<u8, String> {
-    skill::apply(root, global, port)?.iter().for_each(|l| println!("{l}"));
+fn install(root: Option<&std::path::Path>, global: bool, port: Option<u16>, only: Option<skill::UninstallPart>) -> Result<u8, String> {
+    skill::apply(root, global, port, only)?.iter().for_each(|l| println!("{l}"));
     if port.is_some() && !global {
         println!("next   spec11   # starts the MCP server and dashboard the skill talks to");
     }
@@ -344,8 +351,8 @@ fn run(cli: Cli) -> Result<u8, String> {
         }
         Cmd::Install { codegraph: true, .. } => { skill::apply_codegraph(cli.root.as_deref(), true)?.iter().for_each(|l| println!("{l}")); return Ok(0) }
         Cmd::Uninstall { codegraph: true, .. } => { skill::apply_codegraph(cli.root.as_deref(), false)?.iter().for_each(|l| println!("{l}")); return Ok(0) }
-        Cmd::Install { global, port, .. } => return install(cli.root.as_deref(), global, Some(port)),
-        Cmd::Uninstall { global, .. } => return install(cli.root.as_deref(), global, None),
+        Cmd::Install { global, port, .. } => return install(cli.root.as_deref(), global, Some(port), None),
+        Cmd::Uninstall { global, only, .. } => return install(cli.root.as_deref(), global, None, only),
         _ => {}
     }
     // (API-14) the CLI is one more client of the tools: what MCP returns, printed
@@ -531,8 +538,8 @@ mod tests {
             assert_eq!(schema["type"], "object", "{}", t.name);
             // portable: nullable fields are `anyOf` of single types, never `"type": [.., "null"]`
             assert!(!schema.to_string().contains(r#""type":["#), "{}: {schema}", t.name);
-            // the writing tools are not run here, and overlap/uncovered need an index this fixture lacks
-            if matches!(t.name, "install" | "uninstall" | "codegraph" | "module" | "overlap" | "uncovered" | "changes" | "diff" | "history" | "commits" | "blame") {
+            // Writing tools and tools that need a different fixture are exercised in their own tests.
+            if matches!(t.name, "install" | "uninstall" | "codegraph" | "module" | "overlap" | "uncovered" | "changes" | "diff" | "history" | "commits" | "blame" | "search_requirements") {
                 continue;
             }
             let (_, data) = ops::call(Some(&d), t.name, &args(t.name), "http://x/", 7411).unwrap();
@@ -671,7 +678,7 @@ mod tests {
         std::fs::remove_dir_all(&d).ok();
     }
 
-    #[doc = "[SETUP-01]"]
+    #[doc = "[SETUP-01, SETUP-12]"]
     #[tokio::test]
     async fn install_tools_write_the_repo_and_report_status() {
         let repo = repo();
@@ -685,7 +692,26 @@ mod tests {
         assert!(body.contains(r#""skill":"current""#) && body.contains(r#""mcp":"ok""#), "{body}");
         let mcp = std::fs::read_to_string(repo.join(".mcp.json")).unwrap();
         assert!(mcp.contains("\"other\"") && mcp.contains("127.0.0.1:7411/mcp"), "{mcp}");
-        assert!(repo.join(".agents/skills/spec11/SKILL.md").exists());
+        let skill = repo.join(".agents/skills/spec11/SKILL.md");
+        for invalid in [
+            r#"{"only":"unknown"}"#,
+            r#"{"only":"mcp","global":"true"}"#,
+            r#"{"only":"mcp","server":"codegrph"}"#,
+            r#"{"only":null}"#,
+            r#"{"server":"codegraph","global":true}"#,
+        ] {
+            let (_, body) = send(&app, call("uninstall", invalid)).await;
+            assert!(body.contains(r#""isError":true"#) && skill.exists(), "{invalid}: {body}");
+            assert_eq!(std::fs::read_to_string(repo.join(".mcp.json")).unwrap(), mcp);
+        }
+        let (_, body) = send(&app, call("uninstall", r#"{"only":"skill"}"#)).await;
+        assert!(body.contains(r#""skill":"missing""#) && !skill.exists(), "{body}");
+        assert_eq!(std::fs::read_to_string(repo.join(".mcp.json")).unwrap(), mcp);
+        send(&app, call("install", r#"{"port":7500}"#)).await;
+        let (_, body) = send(&app, call("uninstall", r#"{"only":"mcp"}"#)).await;
+        assert!(body.contains(r#""mcp":"missing""#) && skill.exists(), "{body}");
+        let mcp = std::fs::read_to_string(repo.join(".mcp.json")).unwrap();
+        assert!(mcp.contains("\"other\"") && !mcp.contains("\"spec11\""), "{mcp}");
         let (_, body) = send(&app, call("uninstall", "{}")).await;
         assert!(body.contains(r#""skill":"missing""#), "{body}");
         assert!(!repo.join(".agents/skills/spec11/SKILL.md").exists());
@@ -714,13 +740,14 @@ mod tests {
         assert!(!d.join(".agents").exists(), "server=codegraph must not install the skill");
         let (_, body) = send(&app, call("uninstall", r#"{"server":"codegraph"}"#)).await;
         assert!(body.contains(r#""codegraph_mcp":"missing""#) && !body.contains(r#""isError":true"#), "{body}");
-        assert!(!d.join(".mcp.json").exists(), "the file held only codegraph, so it goes");
+        let mcp: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(d.join(".mcp.json")).unwrap()).unwrap();
+        assert_eq!(mcp, json!({"mcpServers": {}}));
         send(&app, call("install", r#"{"server":"codegraph"}"#)).await;
         let (_, body) = send(&app, call("codegraph", r#"{"action":"refresh"}"#)).await;
         assert!(body.contains("nothing to refresh"), "{body}");
     }
 
-    #[doc = "[API-01, API-04, API-07]"]
+    #[doc = "[API-01, API-04, API-07, API-18, API-19]"]
     #[tokio::test]
     async fn mcp_tools_and_ui_resource() {
         let (app, _) = routers(app_state(Some(repo()), &[7411]));
@@ -730,6 +757,15 @@ mod tests {
         assert_eq!(st, StatusCode::OK, "{body}");
         let (_, body) = send(&app, rpc(2, "tools/list", "{}")).await;
         assert!(body.contains("report") && body.contains("ui://spec11/dashboard"), "{body}");
+        // (API-18)
+        let listed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        for tool in listed["result"]["tools"].as_array().unwrap() {
+            let name = tool["name"].as_str().unwrap();
+            assert_eq!(tool["annotations"]["readOnlyHint"], !matches!(name, "install" | "uninstall" | "codegraph" | "module"), "{name}");
+            if name == "search_tests" {
+                assert_eq!(tool["inputSchema"]["properties"]["requirement_id"]["type"], "string");
+            }
+        }
         assert_eq!(body.matches("ui://spec11/dashboard").count(), 1, "only `dashboard` opens the app: {body}");
         let (_, body) = send(&app, rpc(5, "tools/call", r#"{"name":"dashboard","arguments":{"view":"/modules?module=core"}}"#)).await;
         assert!(body.contains("127.0.0.1:7411/modules?module=core"), "{body}");
@@ -744,11 +780,109 @@ mod tests {
         assert!(body.contains("application/json") && body.contains("modules"), "{body}");
         let (_, body) = send(&app, rpc(8, "resources/read", r#"{"uri":"spec11://tests"}"#)).await;
         assert!(body.contains("not run") && body.contains("total"), "{body}");
+        let (_, body) = send(&app, rpc(10, "tools/call", r#"{"name":"search_tests","arguments":{"state":"untagged","query":"no such test"}}"#)).await;
+        assert!(body.contains("not run") && body.contains("total") && body.contains('0'), "{body}");
         let (_, body) = send(&app, rpc(9, "resources/read", r#"{"uri":"spec11://nope"}"#)).await;
         assert!(body.contains("unknown resource"), "{body}");
         let mut bad = rpc(5, "tools/list", "{}");
         bad.headers_mut().insert("host", "evil.test".parse().unwrap());
         assert_eq!(send(&app, bad).await.0, StatusCode::FORBIDDEN);
+    }
+
+    #[doc = "[API-20]"]
+    #[tokio::test]
+    async fn search_requirements_by_test_file_and_line() {
+        let d = std::env::temp_dir().join(format!("spec11-requirement-search-{}", std::process::id()));
+        std::fs::create_dir_all(d.join("specs")).unwrap();
+        std::fs::create_dir_all(d.join("tests")).unwrap();
+        let specs = (1..=4).map(|i| format!("- **AAA-{i:02}** MUST — example {i}.\n")).collect::<String>();
+        std::fs::write(d.join("specs/example.md"), specs).unwrap();
+        let file = "tests/example_test.py";
+        std::fs::write(d.join(file), concat!(
+            "# Test cases\n\n",
+            "def test_first(): # [AAA\x2D01, AAA\x2D02]\n    assert True # [AAA\x2D03] body tag\n\n",
+            "def test_plain():\n    assert True\n\n",
+            "# [AAA\x2D04]\ndef test_last(): # [AAA\x2D02, AAA\x2D99]\n    assert True\n",
+        )).unwrap();
+        let (app, _) = routers(app_state(Some(d.clone()), &[7411]));
+        let (st, body) = send(&app, tool("search_requirements", &json!({"test_file": file, "line": 4}).to_string(), "127.0.0.1:7411")).await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        let response: serde_json::Value = serde_json::from_str(&body).unwrap();
+        let data = &response["result"]["structuredContent"];
+        assert_eq!(data["rows"][0]["id"], "AAA-01", "{body}");
+        let schema = ops::output_schema("search_requirements").unwrap();
+        assert_eq!(schema["required"], json!(["rows"]));
+
+        for (location, expected) in [
+            (json!({}), vec!["AAA-01", "AAA-02", "AAA-03", "AAA-04"]),
+            (json!({"line": 1}), vec![]),
+            (json!({"line": 4}), vec!["AAA-01", "AAA-02"]),
+            (json!({"line": 6}), vec![]),
+            (json!({"line": 10}), vec!["AAA-02", "AAA-04"]),
+            (json!({"line": 1, "end_line": 3}), vec!["AAA-01", "AAA-02"]),
+            (json!({"line": 4, "end_line": 9}), vec!["AAA-01", "AAA-02"]),
+            (json!({"line": 4, "end_line": 10}), vec!["AAA-01", "AAA-02", "AAA-04"]),
+        ] {
+            let mut args = location;
+            args["test_file"] = json!(file);
+            let (_, data) = ops::call(Some(&d), "search_requirements", &args, "", 7411).unwrap();
+            let ids: Vec<_> = data["rows"].as_array().unwrap().iter().map(|r| r["id"].as_str().unwrap()).collect();
+            assert_eq!(ids, expected, "{args}");
+        }
+        for bad in [json!({}), json!({"test_file":"../example_test.py"}), json!({"test_file":file,"line":0}), json!({"test_file":file,"end_line":4}), json!({"test_file":file,"line":4,"end_line":3})] {
+            assert!(ops::call(Some(&d), "search_requirements", &bad, "", 7411).is_err(), "{bad}");
+        }
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    #[doc = "[API-07, API-19]"]
+    #[test]
+    fn search_detected_tests() {
+        let d = std::env::temp_dir().join(format!("spec11-search-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        for dir in ["alpha/nested/src", "alpha/nested/tests", "beta/tests"] {
+            std::fs::create_dir_all(d.join(dir)).unwrap();
+        }
+        std::fs::write(d.join("alpha/nested/src/lib.py"), "def value():\n    return 1\n").unwrap();
+        std::fs::write(d.join("beta/pyproject.toml"), "").unwrap();
+        let plain_file = "alpha/nested/tests/example_test.py";
+        let plain_test = "def test_plain():\n    assert True\n";
+        std::fs::write(d.join(plain_file), plain_test).unwrap();
+        std::fs::write(d.join("beta/tests/example_test.py"), "def test_tagged(): # [AAA\x2D01]\n    assert True\n").unwrap();
+        let (_, all) = crate::ops::call(Some(&d), "search_tests", &serde_json::json!({}), "", 7411).unwrap();
+        assert_eq!(all["total"], 2);
+        let (_, plain) = crate::ops::call(Some(&d), "search_tests", &serde_json::json!({"state":"untagged", "query":"PLAIN"}), "", 7411).unwrap();
+        assert_eq!(plain["total"], 1);
+        let (_, none) = crate::ops::call(Some(&d), "search_tests", &serde_json::json!({"state":"tagged", "query":"plain"}), "", 7411).unwrap();
+        assert_eq!(none["total"], 0);
+        let (_, beta_tests) = crate::ops::call(Some(&d), "search_tests", &serde_json::json!({"module":"beta"}), "", 7411).unwrap();
+        assert_eq!(beta_tests["total"], 1);
+        assert_eq!(beta_tests["modules"][0]["module"], "beta");
+        let (_, by_id) = crate::ops::call(Some(&d), "search_tests", &serde_json::json!({"requirement_id":"aaa-01", "query":"tagged"}), "", 7411).unwrap();
+        assert_eq!(by_id["total"], 1);
+        assert_eq!(by_id["modules"][0]["module"], "beta");
+        let (_, partial_id) = crate::ops::call(Some(&d), "search_tests", &serde_json::json!({"requirement_id":"AAA-0"}), "", 7411).unwrap();
+        assert_eq!(partial_id["total"], 0);
+        let (_, other_module) = crate::ops::call(Some(&d), "search_tests", &serde_json::json!({"requirement_id":"AAA-01", "module":"alpha"}), "", 7411).unwrap();
+        assert_eq!(other_module["total"], 0);
+        let (_, found) = crate::ops::call(Some(&d), "search_modules", &serde_json::json!({"query":"BETA"}), "", 7411).unwrap();
+        assert_eq!(found["modules"].as_array().unwrap().len(), 1);
+        assert_eq!(found["modules"][0]["path"], "beta");
+        let (_, nested) = crate::ops::call(Some(&d), "search_modules", &serde_json::json!({"query":"nested"}), "", 7411).unwrap();
+        assert_eq!(nested["modules"][0]["path"], "alpha/nested");
+
+        let git = |args: &[&str]| assert!(std::process::Command::new("git").args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(args).current_dir(&d).output().unwrap().status.success(), "{args:?}");
+        git(&["init", "-q"]);
+        git(&["add", "."]);
+        git(&["commit", "-qm", "baseline"]);
+        std::fs::write(d.join(plain_file), format!("{plain_test}    assert 1 == 1\n")).unwrap();
+
+        let (_, tests) = crate::ops::call(Some(&d), "search_tests", &serde_json::json!({"changed":true}), "", 7411).unwrap();
+        assert_eq!(tests["total"], 1);
+        assert_eq!(tests["modules"][0]["files"][0]["file"], plain_file);
+        let (_, modules) = crate::ops::call(Some(&d), "search_modules", &serde_json::json!({"changed":true}), "", 7411).unwrap();
+        assert_eq!(modules["modules"].as_array().unwrap().len(), 1);
+        assert_eq!(modules["modules"][0]["path"], "alpha");
     }
 
     #[doc = "[API-05]"]

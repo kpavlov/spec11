@@ -205,10 +205,10 @@
   }
 
   // `server: "codegraph"` (WEB-29) only adds or removes the CodeGraph entry of .mcp.json
-  async function runSetup(tool: "install" | "uninstall", global = false, server?: "codegraph") {
+  async function runSetup(tool: "install" | "uninstall", global = false, options: { server?: "codegraph"; only?: "skill" | "mcp" } = {}) {
     busy = true;
     try {
-      await guard(call(tool, { global, server }));
+      await guard(call(tool, { global, ...options }));
       await loadSetup(); // the status and the checks name what is still missing
     } finally {
       busy = false;
@@ -245,7 +245,7 @@
   };
   $effect(() => {
     if (route.tab === "overlap") fetchOnce("overlap", () => call("overlap").then((r) => void (overlap = r.data.rows)));
-    if (route.tab === "tests" || (route.tab === "modules" && route.module)) fetchOnce("tests", () => read("spec11://tests").then((r) => void (tests = r)));
+    if (route.tab === "tests" || route.tab === "requirements" || route.tab === "changes" || (route.tab === "modules" && route.module)) fetchOnce("tests", () => read("spec11://tests").then((r) => void (tests = r)));
     if (route.tab === "uncovered") fetchOnce("uncovered", () => call("uncovered").then((r) => void (uncovered = r.data)));
   });
 
@@ -373,10 +373,13 @@
   const usedBy = $derived((modules?.modules ?? []).filter((m: any) => modOf && m.depends_on.some((d: any) => d.module === modOf.path)));
   const testsOf = (path: string) => tests?.modules.find((m: any) => m.module === path);
   const symbolsOf = (m: any) => Object.values<number>(m.symbols).reduce((a, b) => a + b, 0);
-  // the tests screen: every detected test, narrowed by module, tagged/untagged and text; capped so a monorepo stays responsive
+  // The tests screen filters the detected cases; the requirement table uses the same cases for its links (WEB-39).
   const testOpts = $derived(["all", "tagged", "untagged"].map((k) => ({ key: k, label: k, count: tcounts[k] })));
   const VIEWS = [{ key: "list", label: "📋 list" }, { key: "graph", label: "🕸️ graph" }];
-  const allCases = $derived<any[]>((tests?.modules ?? []).filter((m: any) => !route.module || m.module === route.module).flatMap((m: any) => m.files.flatMap((f: any) => f.tests.map((t: any) => ({ module: m.module, file: f.file, t })))));
+  const detectedCases = $derived<any[]>((tests?.modules ?? []).flatMap((m: any) => m.files.flatMap((f: any) => f.tests.map((t: any) => ({ module: m.module, file: f.file, t })))));
+  const testedIds = $derived(new Set<string>(detectedCases.flatMap((c) => c.t.ids)));
+  const testRequirement = $derived(route.requirementId?.toUpperCase());
+  const allCases = $derived(detectedCases.filter((c) => (!route.module || c.module === route.module) && (!testRequirement || c.t.ids.includes(testRequirement))));
   const tcounts = $derived({ all: allCases.length, tagged: allCases.filter((c) => c.t.ids.length).length, untagged: allCases.filter((c) => !c.t.ids.length).length } as Record<string, number>);
   const matched = $derived(allCases.filter((c) => (stateFilter === "all" || (stateFilter === "tagged") === c.t.ids.length > 0) && (!onlyChanged || fileOf.has(c.file)) && (!query || `${c.file} ${c.t.name} ${c.t.ids.join(" ")}`.toLowerCase().includes(query.toLowerCase()))));
   // list rows: a test is told apart by file and line, which is also how the URL selects it (`path` + `line`)
@@ -452,7 +455,12 @@
   {:else if k === "level"}{#if /^(MUST|SHOULD|MAY)$/.test(r.level)}<span class="rfc {r.level.toLowerCase()}">{r.level}</span>{/if}
   {:else if k === "state"}<Pill tone={r.deleted ? "bad" : stateTone[r.state]}>{r.state}</Pill>{#if r.done}<Pill tone="accent" title="check-marked: {r.verdict}">✓ {r.verdict}</Pill>{/if}
   {:else if k === "text"}<div class="txt" title={plain(r.text)}>{@html inline(r.text)}</div>
-    <div class="notes">{#each noteGroups(r.notes ?? changeOf.get(r.id)?.notes ?? []) as [what, files]}<Pill tone={r.deleted ? "bad" : "accent"} title={files.join(", ")}>✎ {what}</Pill>{/each}</div>
+    <div class="notes">
+      {#if !r.deleted && testedIds.has(r.id)}
+        <a href={u({ tab: "tests", requirementId: r.id })} aria-label="View tagged tests for {r.id}">View tagged tests</a>
+      {/if}
+      {#each noteGroups(r.notes ?? changeOf.get(r.id)?.notes ?? []) as [what, files]}<Pill tone={r.deleted ? "bad" : "accent"} title={files.join(", ")}>✎ {what}</Pill>{/each}
+    </div>
   {:else if r.line}<a href={u({ tab: "specs", file: r.file, id: r.id })}>{r.file}:{r.line}</a>{:else}{r.file}{/if}
 {/snippet}
 
@@ -591,13 +599,23 @@
       {#if setupError}<p class="error">Could not check the setup: {setupError} <button onclick={loadSetup}>Retry</button></p>{:else}<p class="muted">Checking…</p>{/if}
     {:else}
       {#snippet row(title: string, where: any, global: boolean)}
+        {@const mcp = global ? where.mcp_file : where.mcp}
         <div class="card block setup">
           <h3>{title}</h3>
-          <p><Pill tone={where.skill === "current" ? "ok" : where.skill === "outdated" ? "warn" : "bad"}>skill {where.skill}</Pill> <span class="mono muted">{where.skill_path}</span></p>
-          <p><Pill tone={where.mcp === "ok" ? "ok" : where.mcp === "other" ? "warn" : "bad"}>mcp {where.mcp === "ok" ? "installed" : where.mcp === "other" ? "other port" : "missing"}</Pill> <span class="mono muted">{where.mcp_path ?? "~/.claude.json (user scope, read-only here)"}</span></p>
+          <!-- (WEB-38) -->
+          <p>
+            <Pill tone={where.skill === "current" ? "ok" : where.skill === "outdated" ? "warn" : "bad"}>skill {where.skill}</Pill> <span class="mono muted">{where.skill_path}</span>
+            <button disabled={busy || where.skill === "missing"} onclick={() => confirm(`Remove the spec11 skill at ${where.skill_path}?`) && runSetup("uninstall", global, { only: "skill" })}>Remove skill</button>
+          </p>
+          <p>
+            <Pill tone={mcp === "ok" ? "ok" : mcp === "other" ? "warn" : "bad"}>mcp {mcp === "ok" ? "installed" : mcp === "other" ? "custom entry" : "missing"}</Pill> <span class="mono muted">{where.mcp_path}</span>
+            <button disabled={busy || mcp === "missing"} onclick={() => confirm(`Remove the spec11 MCP entry from ${where.mcp_path}?`) && runSetup("uninstall", global, { only: "mcp" })}>Remove MCP entry</button>
+          </p>
+          {#if global && where.mcp !== "missing"}
+            <p class="muted">Claude user MCP entry {where.mcp === "ok" ? "installed" : "customised"} · <code>~/.claude.json</code> (read-only)</p>
+          {/if}
           <p>
             <button disabled={busy} onclick={() => runSetup("install", global)}>{where.skill === "missing" ? "Install" : "Reinstall"}{global ? " skill globally" : " in this repo"}</button>
-            <button disabled={busy || (where.skill === "missing" && where.mcp !== "ok")} onclick={() => runSetup("uninstall", global)}>Uninstall</button>
           </p>
         </div>
       {/snippet}
@@ -608,7 +626,7 @@
         </section>
       {/if}
       {@render row("This repo", setup.status.project, false)}
-      {@render row("Global (~/.agents/skills)", setup.status.global, true)}
+      {@render row("Global", setup.status.global, true)}
       <p class="muted">The skill tells the agent to use spec11's MCP tools. Installing in the repo also adds the MCP server to <code>.mcp.json</code> (created if missing, other servers are kept); the global install covers the skill only. The agent needs this server running: <code>spec11</code>.</p>
       {@const cgBin = checks.find((k) => k.name === "codegraph binary")}
       {@const cgIdx = checks.find((k) => k.name === "codegraph index")}
@@ -624,8 +642,8 @@ irm https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.ps1 | 
         {/if}
         <p>
           <b>2. Connect the agent</b> <Pill tone={cgMcp ? "ok" : "warn"}>{cgMcp ? `codegraph server set (${cgMcp})` : "codegraph server missing"}</Pill>
-          <button disabled={busy || setup.status.project.codegraph_mcp === "ok"} onclick={() => runSetup("install", false, "codegraph")} title="Adds the codegraph MCP server to .mcp.json (created if missing; an entry that is there is kept)">Add CodeGraph to .mcp.json</button>
-          <button disabled={busy || setup.status.project.codegraph_mcp !== "ok"} onclick={() => confirm("Remove the codegraph server from .mcp.json? Your agent loses CodeGraph until it is added again, and a customised entry is not restored.") && runSetup("uninstall", false, "codegraph")} title="Removes only the codegraph entry from .mcp.json; the skill and the spec11 entry stay">Remove</button>
+          <button disabled={busy || setup.status.project.codegraph_mcp === "ok"} onclick={() => runSetup("install", false, { server: "codegraph" })} title="Adds the codegraph MCP server to .mcp.json (created if missing; an entry that is there is kept)">Add CodeGraph to .mcp.json</button>
+          <button disabled={busy || setup.status.project.codegraph_mcp !== "ok"} onclick={() => confirm("Remove the codegraph server from .mcp.json? Your agent loses CodeGraph until it is added again, and a customised entry is not restored.") && runSetup("uninstall", false, { server: "codegraph" })} title="Removes only the codegraph entry from .mcp.json; the skill and the spec11 entry stay">Remove</button>
         </p>
         <p><b>3. Index</b> {#if cgIdx}<Pill tone={levelTone(cgIdx.level)}>{cgIdx.level}</Pill> <span class="muted">{cgIdx.detail}</span>{/if}</p>
         {#if cgBin?.level === "ok"}
@@ -866,6 +884,9 @@ irm https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.ps1 | 
         {#each modules?.modules ?? [] as m}<option value={m.path}>{m.path}</option>{/each}
       </select>
       <input name="filter" aria-label="filter tests" placeholder="Filter test, file, requirement ID   ( / )" value={query} oninput={(e) => filter({ q: e.currentTarget.value })} />
+      {#if testRequirement}
+        <a href={u({ ...route, requirementId: undefined })} aria-label="Clear requirement filter {testRequirement}">{testRequirement} ×</a>
+      {/if}
       <SplitToggle />
     </div>
     {#if tests === null}<p class="muted">Loading…</p>
@@ -1020,7 +1041,7 @@ irm https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.ps1 | 
 
 <footer class="muted">
   Evidence, not truth: tags and citations do not prove a requirement is implemented or its test passes.
-  <div>© {new Date().getFullYear()} Konstantin Pavlov · <a href="https://github.com/kpavlov/spec11" target="_blank" rel="noopener noreferrer">About</a> · <a href="https://github.com/kpavlov/spec11/issues" target="_blank" rel="noopener noreferrer">Feedback</a></div>
+  <div>Copyright &copy; 2026 Konstantin Pavlov, <a href="https://itstaff.ee">Staff OÜ</a>. All rights reserved. · <a href="https://github.com/kpavlov/spec11" target="_blank" rel="noopener noreferrer">About</a> · <a href="https://github.com/kpavlov/spec11/issues" target="_blank" rel="noopener noreferrer">Feedback</a></div>
 </footer>
 
 <style>
@@ -1055,7 +1076,7 @@ irm https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.ps1 | 
   .lbl { margin-left: 7px; }
   /* narrow: icons only, except the current tab keeps its name */
   @media (max-width: 1350px) { a.tab .lbl { display: none; } a.tab.on .lbl { display: inline; } a.tab { padding: 5px 9px; } }
-  
+
 
   /* report */
   .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; box-shadow: var(--shadow); }
@@ -1083,7 +1104,7 @@ irm https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.ps1 | 
   .bar input:not([type=checkbox]) { flex: 1; min-width: 200px; }
   .bar input[type=checkbox] { padding: 0; margin: 0; }
   .bar label { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; cursor: pointer; }
-  
+
   .found { font-size: var(--text-sm); }
   .found a { margin-left: 6px; }
   /* list and preview are panes that scroll on their own: side by side (wide screens, default) or stacked (.h, and always on narrow screens) */

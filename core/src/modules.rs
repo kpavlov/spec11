@@ -1,10 +1,11 @@
 //! Modules and test cases: where the repo's code is grouped (build manifests, CodeGraph symbols and dependencies) and
 //! which test cases its test files declare. Detected, not run: a listed test says nothing about passing.
 use crate::detect;
-use crate::report::Analysis;
+use crate::report::{Analysis, Row};
+use crate::scan::sorted_ids;
 use regex::Regex;
 use serde::Serialize;
-use std::{collections::{BTreeMap, BTreeSet, HashMap}, sync::LazyLock};
+use std::{collections::{BTreeMap, BTreeSet, HashMap}, ops::RangeInclusive, sync::LazyLock};
 
 const NOTE: &str = "Detected from markers in test files, not run: a listed test does not mean it passes.";
 
@@ -74,23 +75,33 @@ pub struct ModulesView {
 static QUOTED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"["'`]([^"'`]+)["'`]"#).unwrap());
 
 impl Analysis {
-    /// The test cases one file declares: a case starts on a line matching `marker`; its IDs are the `[ID]` tags from three lines
-    /// above it to its declaration. `call`: the marker line is a call, so the name is its quoted string.
-    fn cases_in(&self, file: &str, marker: &Regex, call: bool) -> Vec<TestCase> {
+    /// A case starts on its marker. Tags come from its declaration and up to three attached comments or annotations above the marker.
+    fn cases_in(&self, file: &str, markers: &mut HashMap<&'static str, Regex>) -> Vec<TestCase> {
+        let Some(case) = detect::case_of(file) else { return vec![]; };
+        let marker = self.p.rx.case.as_ref().unwrap_or_else(|| markers.entry(case.marker).or_insert_with(|| Regex::new(case.marker).unwrap()));
         let decls = self.graph.as_ref().and_then(|g| g.decls_in(file).ok()).unwrap_or_default();
         let ls = self.p.lines(file);
         let mut tests = vec![];
         // a marker inside a string literal (a fixture that writes a test file) is not a test case
         let unescaped_quotes = |t: &str| t.matches('"').count() - t.matches("\\\"").count();
-        let opens = |l: &str| marker.find_iter(l).any(|f| call || unescaped_quotes(&l[..f.start()]) % 2 == 0);
+        let opens = |l: &str| marker.find_iter(l).any(|f| case.call || unescaped_quotes(&l[..f.start()]) % 2 == 0);
         for (m, line) in ls.iter().enumerate().filter(|(_, l)| opens(l)) {
             // the declaration is on the marker line or just below an attribute / annotation
             let decl = (m..(m + 4).min(ls.len())).find_map(|i| self.p.rx.decl.captures(&ls[i]).map(|c| (i, c[1].to_string())));
-            let (at, name) = match (decl, call) {
+            let (at, name) = match (decl, case.call) {
                 (Some((i, n)), false) => (i, n),
                 _ => (m, QUOTED.captures(line).map_or_else(|| line.trim().to_string(), |c| c[1].to_string())),
             };
-            let ids: Vec<String> = (m.saturating_sub(3)..=at).flat_map(|i| self.p.tagged(&ls[i])).collect::<BTreeSet<_>>().into_iter().collect();
+            let marker_text = line.trim_start();
+            let indent = line.len() - marker_text.len();
+            let leading = ls[..m].iter().rev().take(3).take_while(|l| {
+                let text = l.trim_start();
+                let annotation = text.starts_with('@') || text.starts_with("#[")
+                    || ['[', '<'].into_iter().any(|c| marker_text.starts_with(c) && text.starts_with(c));
+                l.len() - text.len() == indent && (annotation || self.p.is_comment(text)
+                    || case.profile.comment.iter().any(|c| text.starts_with(c.as_str())))
+            }).count();
+            let ids = ls[m - leading..=at].iter().flat_map(|l| self.p.tagged(l)).collect::<BTreeSet<_>>().into_iter().collect();
             let qualified = decls.iter().filter(|(lo, hi, _)| *lo <= at as i64 + 1 && at as i64 + 1 <= *hi).min_by_key(|(lo, hi, _)| hi - lo).map(|d| d.2.clone()).unwrap_or_default();
             tests.push(TestCase { name, qualified, line: m + 1, ids });
         }
@@ -100,19 +111,33 @@ impl Analysis {
     // (SCAN-14)
     /// The test cases of the test files, grouped by module and file (`case` in `spec11.json` replaces the built-in markers).
     pub fn tests_view(&self) -> TestsView {
-        let (mut rx, mut seen): (HashMap<&str, Regex>, _) = (HashMap::new(), HashMap::new());
-        let custom = &self.p.rx.case;
+        let (mut markers, mut seen) = (HashMap::new(), HashMap::new());
         let mut by: BTreeMap<String, Vec<TestFile>> = BTreeMap::new();
         for file in self.p.test_files() {
-            let Some(case) = detect::case_of(file) else { continue };
-            let marker = custom.clone().unwrap_or_else(|| rx.entry(case.marker).or_insert_with(|| Regex::new(case.marker).unwrap()).clone());
-            let tests = self.cases_in(file, &marker, case.call);
+            let tests = self.cases_in(file, &mut markers);
             if !tests.is_empty() {
                 by.entry(detect::module_of(&self.p.root, file, &mut seen).0).or_default().push(TestFile { file: file.clone(), tests });
             }
         }
         let modules: Vec<ModuleTests> = by.into_iter().map(|(module, files)| ModuleTests { module, tests: files.iter().map(|f| f.tests.len()).sum(), files }).collect();
         TestsView { note: NOTE, total: modules.iter().map(|m| m.tests).sum(), modules }
+    }
+
+    // (API-20)
+    /// Requirements tagged in a file, or on the last detected test at or before the range and any subsequent tests through its end.
+    pub fn requirements_in_test_file(&self, file: &str, lines: Option<RangeInclusive<usize>>) -> Result<Vec<Row>, String> {
+        if !self.p.test_files().iter().any(|p| p == file) {
+            return Err(format!("{file}: not a scanned test file"));
+        }
+        let ids: BTreeSet<String> = if let Some(lines) = lines {
+            let cases = self.cases_in(file, &mut HashMap::new());
+            let from = cases.partition_point(|test| test.line <= *lines.start()).saturating_sub(1);
+            let to = cases.partition_point(|test| test.line <= *lines.end());
+            cases.into_iter().take(to).skip(from).flat_map(|test| test.ids).collect()
+        } else {
+            self.t.iter().filter(|(_, refs)| refs.iter().any(|r| r.file == file)).map(|(id, _)| id.clone()).collect()
+        };
+        Ok(sorted_ids(self.s.keys().filter(|id| ids.contains(*id))).iter().map(|id| self.requirement_row(id)).collect())
     }
 
     // (GRAPH-05, GRAPH-06)

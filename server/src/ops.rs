@@ -38,6 +38,13 @@ pub struct Tool {
     pub ui: bool,
 }
 
+impl Tool {
+    // (API-18) New tools default to not read-only until reviewed.
+    pub fn read_only(&self) -> bool {
+        matches!(self.name, "report" | "status" | "changes" | "diff" | "history" | "commits" | "blame" | "trace" | "search_tests" | "search_requirements" | "search_modules" | "overlap" | "uncovered" | "file" | "source" | "doctor" | "install_status" | "dashboard")
+    }
+}
+
 pub const NOTE: &str = "Evidence, not truth: a citation or tag does not prove the requirement is implemented or that its test passes.";
 
 pub fn tools() -> &'static [Tool] {
@@ -81,15 +88,22 @@ fn tool_list() -> Vec<Tool> {
         Tool { name: "commits", description: "For each requirement, the newest commit that touched its lines (sha, short, author, date, subject), by git blame of its spec file: who last changed the specification and when; a requirement with an uncommitted line has none. When the text was last changed, not whether anyone reviewed it. Needs git.", schema: obj(json!({})), ui: false },
         Tool { name: "blame", description: "Who last changed the given lines of a scanned spec, test or source file: for each line the commit (sha, short, author, date, subject), by git blame; a line not committed yet has none. For a test pass the line of its tag or name, as `trace` and `spec11://tests` list it. Needs git.", schema: merge(obj(json!({"path": {"type": "string", "description": "repo-relative path of a scanned file, e.g. core/tests/core.rs"}, "lines": {"type": "array", "items": {"type": "integer"}, "description": "1-based line numbers"}})), json!({"required": ["path", "lines"]})), ui: false },
         Tool { name: "trace", description: "One requirement in depth: spec text, tests tagged with it, source citations with their declaration, related code. Evidence, not truth.", schema: required(obj(json!({"id": {"type": "string", "description": "requirement ID, e.g. DOC-25"}})), "id"), ui: false },
+        Tool { name: "search_tests", description: "Search detected tests, including untagged tests. Detected, not run; results do not say tests pass.", schema: obj(json!({"module": {"type": "string", "description": "exact module path"}, "state": {"type": "string", "enum": ["all", "tagged", "untagged"]}, "query": {"type": "string", "description": "case-insensitive text in file, test name or requirement IDs"}, "requirement_id": {"type": "string", "description": "exact requirement ID tagged on the test (case-insensitive)"}, "changed": {"type": "boolean", "description": "only files changed against HEAD"}})), ui: false },
+        Tool { name: "search_requirements", description: "Find requirements tagged in a test file or on detected tests at or near the given lines. Tags are evidence, not proof of coverage or passing tests.", schema: required(obj(json!({
+            "test_file": {"type": "string", "minLength": 1, "description": "exact repo-relative path of a scanned test file"},
+            "line": {"type": "integer", "minimum": 1, "description": "1-based line; select the nearest detected test starting at or before this line. Omit to search the entire file"},
+            "end_line": {"type": "integer", "minimum": 1, "description": "inclusive; also include tests starting after line through end_line. Requires line"},
+        })), "test_file"), ui: false },
+        Tool { name: "search_modules", description: "Search modules by path or changed files; includes module counts and dependencies. Index-derived data may be unavailable.", schema: obj(json!({"query": {"type": "string", "description": "case-insensitive text in module path"}, "changed": {"type": "boolean", "description": "only modules with files changed against HEAD"}})), ui: false },
         Tool { name: "overlap", description: "Code covered by 2+ requirements (CodeGraph index): where two specs may conflict or complement each other. A candidate list, not a verdict.", schema: obj(merge(path.clone(), json!({"all": {"type": "boolean", "description": "also pairs from the same spec file"}}))), ui: false },
         Tool { name: "uncovered", description: "Code no requirement covers (CodeGraph index): candidates for a missing requirement, not proof.", schema: obj(merge(path, json!({"fanin": {"type": "integer"}, "min": {"type": "integer"}}))), ui: false },
         Tool { name: "file", description: "A spec file's markdown (read-only; name is a file in the specs folder, e.g. 04-documents.md). Without name: the list of spec files.", schema: obj(json!({"name": {"type": "string", "description": "spec file name, e.g. 04-documents.md"}})), ui: false },
         Tool { name: "source", description: "A test or source file's text (read-only; path is one of the scanned test/source files, as in trace output).", schema: obj(json!({"path": {"type": "string", "description": "repo-relative path, e.g. src/main.rs"}})), ui: false },
         Tool { name: "doctor", description: "Repo setup checks: specs, tests and source folders, git, the codegraph binary and whether the CodeGraph index is initialized, readable and fresh, skill and MCP entry. Only looks; never indexes or installs.", schema: obj(json!({})), ui: false },
         Tool { name: "codegraph", description: "WRITES FILES, SLOW: build (action=init, when there is no .codegraph) or refresh (action=sync) the CodeGraph index by running the codegraph binary; action=refresh is the dashboard's rescan: sync when an index exists and the binary is on PATH, also beside a running codegraph (its watcher can be off); otherwise it says why it did nothing. Indexing is the user's decision: call only when the user asked for it. Same as `spec11 doctor --fix`.", schema: required(obj(json!({"action": {"type": "string", "enum": ["init", "sync", "refresh"]}})), "action"), ui: false },
-        Tool { name: "install_status", description: "Whether the spec11 skill and MCP entry are installed for this repo (.agents/skills, .mcp.json) or globally (~/.agents/skills), with what to run if not.", schema: obj(json!({})), ui: false },
+        Tool { name: "install_status", description: "Whether the spec11 skill and MCP entry are installed for this repo or in the home directory (.agents/skills and .mcp.json). Also checks ~/.claude.json.", schema: obj(json!({})), ui: false },
         Tool { name: "install", description: "WRITES FILES: install the spec11 skill into <repo>/.agents/skills (global=true: ~/.agents/skills) and add the spec11 entry to <repo>/.mcp.json, keeping other servers. With server=codegraph it only adds the CodeGraph MCP entry to <repo>/.mcp.json (never replacing one that is there), so the agent can use CodeGraph. Same as `spec11 install [--codegraph]`.", schema: obj(json!({"server": {"type": "string", "enum": ["spec11", "codegraph"], "description": "what to add to .mcp.json (default spec11, with the skill)"}, "global": {"type": "boolean", "description": "install the skill into ~/.agents/skills instead of this repo"}, "port": {"type": "integer", "description": "MCP port for the .mcp.json entry (default: the port this server runs on)"}})), ui: false },
-        Tool { name: "uninstall", description: "WRITES FILES: remove what install added (the skill, and the spec11 entry in .mcp.json), keeping everything else. With server=codegraph it only removes the codegraph entry from <repo>/.mcp.json, whatever it holds. Same as `spec11 uninstall [--codegraph]`.", schema: obj(json!({"server": {"type": "string", "enum": ["spec11", "codegraph"], "description": "what to remove (default spec11: the skill and its entry)"}, "global": {"type": "boolean"}})), ui: false },
+        Tool { name: "uninstall", description: "WRITES FILES: remove the spec11 skill and MCP entry in this repo. Set only=skill or only=mcp to remove one. With global=true, remove the skill in ~/.agents/skills by default, or the entry in ~/.mcp.json with only=mcp. Set server=codegraph to remove the CodeGraph entry in the repo.", schema: obj(json!({"server": {"type": "string", "enum": ["spec11", "codegraph"], "description": "server to remove (default: spec11)"}, "global": {"type": "boolean"}, "only": {"type": "string", "enum": ["skill", "mcp"], "description": "remove one spec11 component; omit with server=codegraph"}})), ui: false },
         Tool { name: "module", description: "WRITES FILES: set a module hidden (true) or shown (false) by adding or removing its folder line in <repo>/.spec11ignore (gitignore syntax), keeping every other line. To hide, path is a module listed by spec11://modules; to show, one of its `hidden`. Only when the user asked for it.", schema: merge(obj(json!({"path": {"type": "string", "description": "module path, e.g. server"}, "hidden": {"type": "boolean", "description": "true: leave the module out of every scan; false: list it again"}})), json!({"required": ["path", "hidden"]})), ui: false },
         Tool { name: "dashboard", description: "URL of the spec11 web dashboard served by this process; in an MCP Apps host this tool opens the dashboard. view (optional) picks the page: a tab, or a tab with its selection and filters, e.g. modules, changes, requirements/DOC-25, requirements?changed=1, tests?module=core&state=untagged, specs?file=04-documents.md, setup.", schema: obj(json!({"view": {"type": "string", "description": "tab or route to open, e.g. requirements/DOC-25?state=none (default: the dashboard)"}})), ui: true },
     ]
@@ -106,18 +120,36 @@ fn change_opts(args: &Value) -> ChangeOpts {
 /// The install tools: they write the skill and `.mcp.json`, so they never run an analysis.
 fn setup(root: Option<&Path>, name: &str, args: &Value, mcp_port: u16) -> Option<Result<(String, Value), String>> {
     use crate::skill;
-    let global = args["global"].as_bool().unwrap_or(false);
-    let changes = match name {
-        "install_status" => None,
-        "install" | "uninstall" if txt(args, "server") == "codegraph" => Some(skill::apply_codegraph(root, name == "install")),
-        "install" => Some(skill::apply(root, global, Some(num(args, "port").map_or(mcp_port, |p| p as u16)))),
-        "uninstall" => Some(skill::apply(root, global, None)),
-        _ => return None,
-    };
+    if !matches!(name, "install_status" | "install" | "uninstall") { return None; }
     Some((|| {
-        let changed = changes.transpose()?;
+        let changed = if name == "install_status" {
+            vec![]
+        } else {
+            let global = match args.get("global") {
+                None => false,
+                Some(v) => v.as_bool().ok_or("global must be a boolean")?,
+            };
+            let codegraph = match args.get("server") {
+                None => false,
+                Some(v) if v == "spec11" => false,
+                Some(v) if v == "codegraph" => true,
+                Some(_) => return Err("server must be spec11 or codegraph".into()),
+            };
+            if codegraph {
+                if global || args.get("only").is_some() {
+                    return Err("global and only apply to spec11".into());
+                }
+                skill::apply_codegraph(root, name == "install")?
+            } else if name == "install" {
+                skill::apply(root, global, Some(num(args, "port").map_or(mcp_port, |p| p as u16)), None)?
+            } else {
+                let only = args.get("only").map(|v| serde_json::from_value(v.clone())).transpose()
+                    .map_err(|_| "only must be skill or mcp")?;
+                skill::apply(root, global, None, only)?
+            }
+        };
         let st = skill::status(root, mcp_port)?;
-        let mut text = changed.unwrap_or_default().join("\n");
+        let mut text = changed.join("\n");
         let todo = skill::suggestions(&st);
         text += &(if todo.is_empty() { "\ninstalled: the agent can use spec11 here".to_string() } else { format!("\n{}", todo.join("\n")) });
         Ok((text.trim_start().to_string() + "\n", json!({"status": st, "suggestions": todo})))
@@ -226,6 +258,64 @@ pub fn call(root: Option<&Path>, name: &str, args: &Value, dashboard: &str, mcp_
             Some(t) => (t.text(), json!(t)),
             None => return Err(format!("{}: not in specs", txt(args, "id").to_uppercase()).into()),
         },
+        // (API-07)
+        "search_modules" => {
+            let mut view = a.modules_view();
+            let query = txt(args, "query").to_lowercase();
+            let changed = if args["changed"].as_bool().unwrap_or(false) {
+                let files = a.changes(&ChangeOpts::default())?.files;
+                let mut seen = std::collections::HashMap::new();
+                Some(files.iter().map(|f| spec11_core::detect::module_of(&a.p.root, &f.path, &mut seen).0).collect::<std::collections::HashSet<_>>())
+            } else { None };
+            view.modules.retain(|m| m.path.to_lowercase().contains(&query) && changed.as_ref().is_none_or(|c| c.contains(&m.path)));
+            view.hidden.retain(|m| m.to_lowercase().contains(&query));
+            (serde_json::to_string_pretty(&view).map_err(|e| e.to_string())?, json!(view))
+        }
+        // (API-07, API-19)
+        "search_tests" => {
+            let mut view = a.tests_view();
+            let changed = if args["changed"].as_bool().unwrap_or(false) { Some(a.changes(&ChangeOpts::default())?.files.into_iter().map(|f| f.path).collect::<std::collections::HashSet<_>>()) } else { None };
+            let query = txt(args, "query").to_lowercase();
+            let requirement_id = txt(args, "requirement_id");
+            let state = txt(args, "state");
+            if !matches!(state, "" | "all" | "tagged" | "untagged") { return Err("state: expected all, tagged or untagged".into()); }
+            view.modules.retain_mut(|m| {
+                if !txt(args, "module").is_empty() && m.module != txt(args, "module") { return false; }
+                m.files.retain_mut(|f| {
+                    if changed.as_ref().is_some_and(|c| !c.contains(&f.file)) { return false; }
+                    f.tests.retain(|t| {
+                        (state != "tagged" || !t.ids.is_empty())
+                            && (state != "untagged" || t.ids.is_empty())
+                            && (requirement_id.is_empty() || t.ids.iter().any(|id| id.eq_ignore_ascii_case(requirement_id)))
+                            && (query.is_empty() || format!("{} {} {}", f.file, t.name, t.ids.join(" ")).to_lowercase().contains(&query))
+                    });
+                    !f.tests.is_empty()
+                });
+                m.tests = m.files.iter().map(|f| f.tests.len()).sum();
+                m.tests > 0
+            });
+            view.total = view.modules.iter().map(|m| m.tests).sum();
+            (serde_json::to_string_pretty(&view).map_err(|e| e.to_string())?, json!(view))
+        }
+        // (API-20)
+        "search_requirements" => {
+            let file = txt(args, "test_file");
+            if file.is_empty() { return Err("test_file: expected a repo-relative test file path".into()); }
+            let line_number = |key: &str| -> Result<Option<usize>, ToolError> {
+                args.get(key).map(|v| {
+                    v.as_u64().and_then(|n| usize::try_from(n).ok()).filter(|n| *n > 0)
+                        .ok_or_else(|| format!("{key}: expected a positive integer").into())
+                }).transpose()
+            };
+            let lines = match (line_number("line")?, line_number("end_line")?) {
+                (Some(line), Some(end)) if end < line => return Err("end_line: must be at least line".into()),
+                (Some(line), end) => Some(line..=end.unwrap_or(line)),
+                (None, Some(_)) => return Err("end_line: requires line".into()),
+                (None, None) => None,
+            };
+            let result = RequirementSearch { rows: a.requirements_in_test_file(file, lines)? };
+            (serde_json::to_string_pretty(&result).map_err(|e| e.to_string())?, json!(result))
+        }
         "overlap" => {
             let rows = a.overlap(txt(args, "path"), args["all"].as_bool().unwrap_or(false)).map_err(|e| e.to_string())?.ok_or_else(|| ToolError::NoIndex(note(&a)))?;
             (a.overlap_text(&rows, 25), json!({"rows": rows}))
@@ -347,6 +437,11 @@ fn shape(props: Value, required: &[&str]) -> Value {
     json!({"$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "properties": props, "required": required})
 }
 
+#[derive(serde::Serialize, schemars::JsonSchema)]
+struct RequirementSearch {
+    rows: Vec<spec11_core::report::Row>,
+}
+
 /// JSON Schema of a result's structured content: `report`, `status`, `trace`, `overlap`, `uncovered`, `modules`, `tests`,
 /// `file`, `source`, `doctor`, `codegraph`, `install`, `dashboard`. Typed from the core structs where there are any.
 pub fn schema(name: &str) -> Option<Value> {
@@ -386,8 +481,9 @@ pub fn schema(name: &str) -> Option<Value> {
         "trace" => of::<Trace>(),
         "uncovered" => of::<Uncovered>(),
         "overlap" => of::<Overlap>(),
-        "modules" => of::<ModulesView>(),
-        "tests" => of::<TestsView>(),
+        "modules" | "search_modules" => of::<ModulesView>(),
+        "tests" | "search_tests" => of::<TestsView>(),
+        "search_requirements" => of::<RequirementSearch>(),
         "doctor" => of::<Doctor>(),
         "file" => shape(json!({"files": strs(), "name": {"type": "string"}, "markdown": {"type": "string"}}), &[]),
         "diff" => of::<FileDiff>(),

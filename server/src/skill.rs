@@ -42,8 +42,6 @@ pub enum McpChange {
     Updated,
     Unchanged,
     Removed,
-    /// The file held nothing else, so it was deleted.
-    Deleted,
     Absent,
 }
 
@@ -97,7 +95,7 @@ fn add_server(base: &Path, name: &str, entry: Value, replace: bool) -> Result<(P
 }
 
 // (SETUP-03)
-/// Removes `mcpServers.spec11`; an `mcpServers` left empty goes with it, and a file left with no keys is deleted.
+/// Removes `mcpServers.spec11` and keeps the config file even if there are no servers left.
 pub fn remove_mcp(base: &Path) -> Result<(PathBuf, McpChange), String> {
     remove_server(base, NAME)
 }
@@ -113,13 +111,6 @@ fn remove_server(base: &Path, name: &str) -> Result<(PathBuf, McpChange), String
     let Some(Value::Object(servers)) = m.get_mut("mcpServers") else { return Ok((f, McpChange::Absent)) };
     if servers.remove(name).is_none() {
         return Ok((f, McpChange::Absent));
-    }
-    if servers.is_empty() {
-        m.remove("mcpServers");
-    }
-    if m.is_empty() {
-        std::fs::remove_file(&f).map_err(|e| format!("{}: {e}", f.display()))?;
-        return Ok((f, McpChange::Deleted));
     }
     write_config(&f, m)?;
     Ok((f, McpChange::Removed))
@@ -167,6 +158,8 @@ pub struct GlobalInstall {
     pub skill: SkillState,
     pub skill_path: PathBuf,
     pub mcp: McpState,
+    pub mcp_file: McpState,
+    pub mcp_path: PathBuf,
     pub codegraph_mcp: McpState,
 }
 
@@ -200,16 +193,16 @@ fn codegraph_state(config: &Path) -> McpState {
     }
 }
 
-/// Where the skill and the MCP entry are installed: this repo (`.agents/skills`, `.mcp.json`) and the user's global skills
-/// (`~/.agents/skills`; the user-scope MCP entry in `~/.claude.json` is only looked at, never written).
+// (SETUP-04, SETUP-12) Read the user-scope entry in ~/.claude.json separately from ~/.mcp.json.
 pub fn status(root: Option<&Path>, port: u16) -> Result<InstallStatus, String> {
     let base = repo_root(root)?;
+    let home = home()?;
     let pdir = base.join(".agents/skills");
-    let gdir = home()?.join(".agents/skills");
-    let (pmcp, gmcp) = (base.join(".mcp.json"), home()?.join(".claude.json"));
+    let gdir = home.join(".agents/skills");
+    let (pmcp, gmcp, claude) = (base.join(".mcp.json"), home.join(".mcp.json"), home.join(".claude.json"));
     Ok(InstallStatus {
         project: ProjectInstall { skill: skill_state(&pdir), skill_path: pdir.join(NAME).join("SKILL.md"), mcp: mcp_state(&pmcp, port), codegraph_mcp: codegraph_state(&pmcp), mcp_path: pmcp, root: base },
-        global: GlobalInstall { skill: skill_state(&gdir), skill_path: gdir.join(NAME).join("SKILL.md"), mcp: mcp_state(&gmcp, port), codegraph_mcp: codegraph_state(&gmcp) },
+        global: GlobalInstall { skill: skill_state(&gdir), skill_path: gdir.join(NAME).join("SKILL.md"), mcp: mcp_state(&claude, port), mcp_file: mcp_state(&gmcp, port), mcp_path: gmcp, codegraph_mcp: codegraph_state(&claude) },
     })
 }
 
@@ -237,30 +230,42 @@ pub fn apply_codegraph(root: Option<&Path>, add: bool) -> Result<Vec<String>, St
         McpChange::Created => "created with codegraph",
         McpChange::Added => "added codegraph",
         McpChange::Removed => "removed codegraph",
-        McpChange::Deleted => "removed codegraph, deleted the empty file",
         McpChange::Absent => "no codegraph entry",
         _ => "codegraph already set, kept as it is",
     };
     Ok(vec![format!("mcp    {} ({what})", f.display())])
 }
 
-/// install (`port` = Some) or uninstall; returns one line per change, as the CLI prints them.
-pub fn apply(root: Option<&Path>, global: bool, port: Option<u16>) -> Result<Vec<String>, String> {
+#[derive(Clone, Copy, PartialEq, clap::ValueEnum, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum UninstallPart {
+    Skill,
+    Mcp,
+}
+
+/// Install (`port` = Some) or uninstall; returns one line per change, as the CLI prints them.
+// (SETUP-12)
+pub fn apply(root: Option<&Path>, global: bool, port: Option<u16>, only: Option<UninstallPart>) -> Result<Vec<String>, String> {
     use McpChange::*;
-    let dir = skills_dir(root, global)?;
     let mut out = vec![];
-    match port {
-        Some(_) => out.push(format!("skill  {}", install(&dir)?.display())),
-        None => out.push(match uninstall(&dir)? {
-            Some(f) => format!("skill  removed {}", f.display()),
-            None => format!("skill  not installed in {}", dir.display()),
-        }),
+    if only != Some(UninstallPart::Mcp) {
+        let dir = skills_dir(root, global)?;
+        match port {
+            Some(_) => out.push(format!("skill  {}", install(&dir)?.display())),
+            None => out.push(match uninstall(&dir)? {
+                Some(f) => format!("skill  removed {}", f.display()),
+                None => format!("skill  not installed in {}", dir.display()),
+            }),
+        }
     }
-    if global {
-        out.push(format!("mcp    per repo: `spec11 {}` inside a repo handles its .mcp.json", if port.is_some() { "install" } else { "uninstall" }));
+    if only == Some(UninstallPart::Skill) {
         return Ok(out);
     }
-    let base = repo_root(root)?;
+    if global && only.is_none() {
+        out.push(if port.is_some() { "mcp    per repo: `spec11 install` inside a repo handles its .mcp.json" } else { "mcp    use `spec11 uninstall --global --only mcp` to remove the entry from ~/.mcp.json" }.to_string());
+        return Ok(out);
+    }
+    let base = if global { home()? } else { repo_root(root)? };
     let (f, change) = match port {
         Some(p) => add_mcp(&base, p)?,
         None => remove_mcp(&base)?,
@@ -271,7 +276,6 @@ pub fn apply(root: Option<&Path>, global: bool, port: Option<u16>) -> Result<Vec
         Updated => "updated spec11",
         Unchanged => "spec11 already set",
         Removed => "removed spec11",
-        Deleted => "removed spec11, deleted the empty file",
         Absent => "no spec11 entry",
     };
     out.push(format!("mcp    {} ({what})", f.display()));
@@ -349,10 +353,14 @@ mod tests {
 
     #[doc = "[SETUP-02, SETUP-03]"]
     #[test]
-    fn mcp_file_we_created_is_deleted_on_uninstall_and_bad_json_is_untouched() {
+    fn uninstall_keeps_an_empty_config_and_leaves_bad_json_untouched() {
         let d = tmp("n");
+        let f = d.join(".mcp.json");
+        std::fs::write(&f, "{}").unwrap();
         let (f, _) = add_mcp(&d, 7411).unwrap();
-        assert!(matches!(remove_mcp(&d).unwrap().1, McpChange::Deleted) && !f.exists());
+        assert!(matches!(remove_mcp(&d).unwrap().1, McpChange::Removed));
+        let v: Value = serde_json::from_str(&std::fs::read_to_string(&f).unwrap()).unwrap();
+        assert_eq!(v, json!({"mcpServers": {}}));
         std::fs::write(&f, "{ not json").unwrap();
         assert!(add_mcp(&d, 7411).is_err() && remove_mcp(&d).is_err());
         assert_eq!(std::fs::read_to_string(&f).unwrap(), "{ not json");
@@ -366,14 +374,14 @@ mod tests {
         let st = status(Some(&repo), 7411).unwrap();
         assert!(st.project.skill == SkillState::Missing && st.project.mcp == McpState::Missing);
         assert!(suggestions(&st).len() >= 1 || st.global.skill != SkillState::Missing); // a real ~/.agents may already hold it
-        apply(Some(&repo), false, Some(7411)).unwrap();
+        apply(Some(&repo), false, Some(7411), None).unwrap();
         let st = status(Some(&repo), 7411).unwrap();
         assert!(st.project.skill == SkillState::Current && st.project.mcp == McpState::Ok);
         assert!(suggestions(&st).is_empty(), "{:?}", suggestions(&st));
         assert!(status(Some(&repo), 7500).unwrap().project.mcp == McpState::Other);
         std::fs::write(repo.join(".agents/skills/spec11/SKILL.md"), "old").unwrap();
         assert!(status(Some(&repo), 7411).unwrap().project.skill == SkillState::Outdated);
-        apply(Some(&repo), false, None).unwrap();
+        apply(Some(&repo), false, None, None).unwrap();
         assert!(status(Some(&repo), 7411).unwrap().project.skill == SkillState::Missing);
     }
 
@@ -427,9 +435,11 @@ mod tests {
         assert!(v["mcpServers"].get("codegraph").is_none() && v["mcpServers"]["other"]["command"] == "x" && v["keep"] == 1);
         assert!(status(Some(&d), 7411).unwrap().project.mcp == McpState::Ok && status(Some(&d), 7411).unwrap().project.codegraph_mcp == McpState::Missing);
         assert!(matches!(remove_codegraph(&d).unwrap().1, McpChange::Absent)); // twice is fine
-        // a file that held only this entry goes with it, like spec11's own (SETUP-03)
+        // Keep the config file when its last server is removed (SETUP-03).
         std::fs::remove_file(&f).unwrap();
         add_codegraph(&d).unwrap();
-        assert!(matches!(remove_codegraph(&d).unwrap().1, McpChange::Deleted) && !f.exists());
+        assert!(matches!(remove_codegraph(&d).unwrap().1, McpChange::Removed));
+        let v: Value = serde_json::from_str(&std::fs::read_to_string(&f).unwrap()).unwrap();
+        assert_eq!(v, json!({"mcpServers": {}}));
     }
 }

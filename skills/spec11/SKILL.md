@@ -30,6 +30,9 @@ Add it to the client's MCP config if the spec11 tools are not available. `spec11
 | `commits` | none | MCP only: for each requirement the newest commit that touched it (sha, author, date, subject; git blame of its spec file): who last changed the specification and when, not that it was reviewed |
 | `blame` | `path` (a scanned spec, test or source file), `lines` | MCP only: who last changed those lines (git blame), e.g. a test by the line `trace` lists for it |
 | `trace` | `id` | `spec11 trace ID [--codegraph]` |
+| `search_tests` | `module`, `state`, `query`, `requirement_id`, `changed` | MCP only: filter detected tests, including untagged tests. `requirement_id` matches a full tag ID case-insensitively |
+| `search_requirements` | `test_file`, `line`, `end_line` | MCP only: find requirements tagged in the file. With a 1-based `line`, use the nearest detected test starting at or before it. With an inclusive `end_line`, also include tests starting after `line` through `end_line` |
+| `search_modules` | `query`, `changed` | MCP only: filter modules, with counts and dependency data when available |
 | `overlap` | `path`, `all` | `spec11 overlap [PATH]` |
 | `uncovered` | `path`, `fanin`, `min` | `spec11 uncovered [PATH]` |
 | `file` | `name` (omit to list) | read `specs/NAME` |
@@ -39,7 +42,8 @@ Add it to the client's MCP config if the spec11 tools are not available. `spec11
 | `codegraph` | `action` (init\|sync\|refresh) | builds or refreshes the CodeGraph index (`doctor --fix`); `refresh` syncs when an index exists, also beside a running codegraph; writes files, slow: only when the user asks |
 | `module` | `path` (a module), `hidden` (true/false) | hides the module (adds its folder to `.spec11ignore` so scans leave it out) or shows it again (removes that line; the path is one of `hidden` in `spec11://modules`); writes a file: only when the user asks |
 | `install_status` | none | whether the skill and MCP entry are installed here or globally |
-| `install`, `uninstall` | `global`, `port`, `server` (`spec11` default, or `codegraph`: only adds or removes the CodeGraph MCP entry of `.mcp.json`) | `spec11 install/uninstall [--global]` (they write files: only when the user asks) |
+| `install` | `global`, `port`, `server` (`spec11` default, or `codegraph` to add the CodeGraph entry to the repo's `.mcp.json`) | `spec11 install [--global]` (writes files: only when the user asks) |
+| `uninstall` | `global`, `only` (`skill` or `mcp`), `server` (`spec11` default, or `codegraph` to remove the CodeGraph entry from the repo) | `spec11 uninstall [--global] [--only skill\|mcp]`. With `only=mcp`, remove the spec11 entry from the repo's `.mcp.json` or `~/.mcp.json` (writes files: only when the user asks) |
 
 **CLI (no server needed).** `spec11 [--root DIR] [--json] report|status|trace|changes|diff|history|overlap|uncovered`. Output is plain text, identical on every run for the same tree.
 

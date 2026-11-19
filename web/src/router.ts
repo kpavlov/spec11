@@ -1,5 +1,5 @@
 // The URL is the state: every view and selection round-trips through parse/format, so back/forward, reload and shared links work.
-//   /  (the dashboard; /report still works)   /requirements[/DOC-25][?state=none&level=MUST&q=text]   /modules[?module=core&q=text]   /tests[?module=core&state=untagged&q=text]
+//   /  (the dashboard; /report still works)   /requirements[/DOC-25][?state=none&level=MUST&q=text]   /modules[?module=core&q=text]   /tests[?requirement_id=DOC-25&module=core&state=tagged&q=text]
 //   /specs[?file=04-documents.md&id=DOC-25]            /code?path=RunSolo/RunSolo/A.swift&line=12
 //   /overlap[?id=DOC-25]   /uncovered[?id=…]   /setup
 //   /changes[?staged=1&untracked=0&ref=main&commit=SHA&ws=1&ignored=1&all=1]      ?changed=1 on requirements, tests, specs and modules: only what the working tree changed   ?reviewed=0 on requirements: only the unreviewed ones
@@ -7,7 +7,7 @@
 export const TABS = ["dashboard", "changes", "requirements", "modules", "tests", "specs", "overlap", "uncovered", "setup"] as const;
 export type Tab = (typeof TABS)[number] | "code";
 
-export type Route = { tab: Tab; id?: string; file?: string; path?: string; line?: number; state?: string; level?: string; q?: string; module?: string; changed?: string; reviewed?: string; staged?: string; untracked?: string; ref?: string; commit?: string; ws?: string; ignored?: string; all?: string };
+export type Route = { tab: Tab; id?: string; file?: string; path?: string; line?: number; state?: string; level?: string; q?: string; module?: string; requirementId?: string; changed?: string; reviewed?: string; staged?: string; untracked?: string; ref?: string; commit?: string; ws?: string; ignored?: string; all?: string };
 
 export function parse(url: URL): Route {
   const [first, second] = url.pathname.split("/").filter(Boolean).map(decodeURIComponent);
@@ -24,6 +24,7 @@ export function parse(url: URL): Route {
     level: p.get("level") ?? undefined,
     q: p.get("q") ?? undefined,
     module: p.get("module") ?? undefined,
+    requirementId: tab === "tests" ? p.get("requirement_id") ?? undefined : undefined,
     changed: p.get("changed") ?? undefined,
     reviewed: p.get("reviewed") ?? undefined,
     staged: p.get("staged") ?? undefined,
@@ -47,6 +48,7 @@ export function format(r: Route): string {
   put("level", r.level);
   put("q", r.q);
   put("module", r.module);
+  put("requirement_id", r.requirementId);
   put("changed", r.changed);
   put("reviewed", r.reviewed);
   put("staged", r.staged);

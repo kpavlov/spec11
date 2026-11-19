@@ -99,13 +99,18 @@ The URL is the view, so back/forward, reload and shared links work: `/` (the das
 
 ```sh
 spec11 install              # <repo>/.agents/skills/spec11/SKILL.md  +  spec11 entry in <repo>/.mcp.json
-spec11 install --global     # ~/.agents/skills/spec11/SKILL.md (the MCP entry is per repo)
+spec11 install --global     # ~/.agents/skills/spec11/SKILL.md
 spec11 install --codegraph  # only adds the codegraph MCP server to <repo>/.mcp.json (an existing entry is kept)
 spec11 uninstall --codegraph # only removes that entry (customised or not), nothing else
-spec11 uninstall [--global] # removes only what install added
+spec11 uninstall            # remove the project skill and spec11 MCP entry
+spec11 uninstall --global   # remove the global skill
+spec11 uninstall --only skill [--global] # remove the skill independently
+spec11 uninstall --only mcp [--global]   # remove the spec11 entry in <repo>/.mcp.json or ~/.mcp.json
 ```
 
 The skill is built into the binary and tells the agent to use the MCP tools (CLI as fallback). `.mcp.json` is created if missing; other servers and keys are kept as they are, and a file with invalid JSON is left untouched. `--port N` sets the port the entry points at (default 7411). Start the server with `spec11`.
+
+Setup offers separate **Remove skill** and **Remove MCP entry** actions for each scope. The MCP `uninstall` tool takes `only: "skill"` or `only: "mcp"` and `global: true` for the home directory. Removing the last server entry leaves `.mcp.json` in place. Setup also reads `~/.claude.json` to show Claude's user-scope entry.
 
 ## Layout
 
