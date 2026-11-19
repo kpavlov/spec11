@@ -50,23 +50,29 @@ spec11 report --json --root ../other   # JSON, for another repo
 
 `ROOT` defaults to this repo (spec11 scans itself: see `specs/` and `spec11.json`); point it at another repo with `ROOT=...`. Needs Rust, Node and pnpm; the release binary needs neither at runtime.
 
-`spec11` with no command runs `serve` for the repo that holds the current directory (nearest ancestor with specs, else the git work tree, or `--root`) and opens the dashboard; a repo with no specs works too (Modules and Tests still list its sources and tests) and the dashboard opens on Setup the first time; `--no-open` skips the browser. At startup it checks whether the skill and MCP entry are installed for this repo or globally and prints what to run if not; the dashboard shows the same in a banner and a Setup tab with Install/Uninstall buttons.
+`spec11` starts the server for the nearest repo with specs or Git work tree. Use `--root DIR` to choose a workspace. Repos without specs still show their sources and tests. The dashboard opens in the browser by default. Use `spec11 serve --no-open` to skip opening it.
 
-`spec11 serve [--port 7411] [--ui-port N] [--no-open]`: one listener serves `/`, `/api/info` and `/mcp`; with `--ui-port` the UI and `/api/info` move to that port (which also carries `/mcp`, the dashboard's only data path) and the main port carries only `/mcp`. Binds 127.0.0.1 only and rejects unknown `Host`/`Origin` (403).
+### Streamable HTTP
 
-`--stdio-mcp` enables MCP on stdin and stdout. `--no-ui` disables the web dashboard and skips opening a browser. `--no-http-mcp` disables `/mcp` on every port, so a browser dashboard served with that flag cannot load its data. Use all three for one port-free process per agent session. The process exits when the client closes stdin. Set `--root DIR` in the client config if it launches the process outside the intended workspace.
-
-Streamable HTTP client config:
+By default, `spec11 serve` serves the dashboard and `/mcp` together on `127.0.0.1:7411`. Use `--port N` to change the port. With `--ui-port N`, both ports serve `/mcp` and only the UI port serves the dashboard and `/api/info`. HTTP listeners bind to `127.0.0.1` and reject unknown `Host` and `Origin` values.
 
 ```json
 {"mcpServers": {"spec11": {"type": "http", "url": "http://127.0.0.1:7411/mcp"}}}
 ```
 
-Stdio client config:
+### Stdio
+
+Use stdio to let each agent session launch its own spec11 process without binding a TCP port. The process exits when the client closes stdin.
+
+```sh
+spec11 --stdio-mcp --no-http-mcp --no-ui
+```
 
 ```json
 {"mcpServers": {"spec11-stdio": {"type": "stdio", "command": "spec11", "args": ["--stdio-mcp", "--no-http-mcp", "--no-ui"]}}}
 ```
+
+Add `"--root", "/path/to/repo"` to `args` if the MCP client launches spec11 outside the intended workspace. `--stdio-mcp` enables stdin and stdout for MCP. `--no-ui` disables the browser dashboard and `/api/info`. `--no-http-mcp` disables `/mcp` on every listener. The browser dashboard needs HTTP MCP to load its data.
 
 Tools: `report`, `status`, `changes` (what changed against a ref or in one commit: files, renames, deleted files and requirements, and the requirements the changed lines touch; also `spec11://changes`), `diff` (one changed file, with the requirements each hunk touches), `history` (commits not on the base branch), `commits` (the newest commit that touched each requirement, with its author, date and subject, by git blame: who last changed the specification; the dashboard's "reviewed" flag is kept against it), `blame` (`path`, `lines`: who last changed those lines of a scanned file, e.g. a test), `trace`, `overlap`, `uncovered`, `file`, `source`, `dashboard`, `module` (hide or show a module: adds it to or removes it from `.spec11ignore`), and `install_status` / `install` / `uninstall` (`server=codegraph` adds or removes only the CodeGraph MCP entry) / `codegraph` (`action=init|sync|refresh`; `refresh` syncs whenever an index exists, also beside a running codegraph); the last three write files. Plain-text resources with the same output as `report`, `status`, `uncovered` and `overlap`: `spec11://report`, `spec11://status`, `spec11://uncovered`, `spec11://overlap`; prefer them where the client reads resources (a client on 2026-07-28 can also `subscriptions/listen` to them and is notified when the repo changes). The tools stay for clients without resource support and for arguments. The same four as JSON (`spec11://report.json`, `status.json`, `uncovered.json`, `overlap.json`), typed by JSON Schemas readable at `spec11://schemas/<name>`; the tools declare them as `outputSchema`. Read-only JSON resources: `spec11://modules` (modules by build manifest, with CodeGraph symbols and the modules each depends on) and `spec11://tests` (test cases detected by marker, grouped by module, with the requirement IDs tagged on each; detected, not run). The dashboard is also an MCP Apps resource (`ui://spec11/dashboard`) for hosts that render it: only the `dashboard` tool opens it, and its optional `view` (e.g. `modules`, `requirements/DOC-25?state=none`) picks the page; elsewhere use the URL from `dashboard`.
 
@@ -104,22 +110,31 @@ The URL is the view, so back/forward, reload and shared links work: `/` (the das
 
 `spec11 doctor` checks the repo: specs found, test and source folders, git, whether the `codegraph` binary is on PATH and its index is initialized, readable and not older than the sources, and whether the skill and MCP entry are installed. It prints a hint per problem and exits 1 only when spec11 cannot work at all (no repo, unreadable `spec11.json`); no specs is a warning. It never indexes or installs anything on its own (when the `codegraph` binary is missing it prints the install commands). When the index is missing or stale, `spec11 doctor --fix` runs `codegraph init` / `codegraph sync` for you, and the Setup tab has the same buttons (asks to confirm); the dashboard's ↻ rescan also runs `codegraph sync` (also while an agent's codegraph MCP server runs: its file watcher can be off); the index check compares the index's last write with the newest source or test file; all are your call, nothing indexes automatically. The same list is the MCP tool `doctor` and the Setup tab.
 
-## Install the skill
+## Install the skill and connect an MCP client
 
 ```sh
-spec11 install              # <repo>/.agents/skills/spec11/SKILL.md  +  spec11 entry in <repo>/.mcp.json
+spec11 install              # repo skill + HTTP entry in <repo>/.mcp.json
 spec11 install --global     # ~/.agents/skills/spec11/SKILL.md + HTTP entry in ~/.mcp.json
 spec11 install --codegraph  # only adds the codegraph MCP server to <repo>/.mcp.json (an existing entry is kept)
 spec11 uninstall --codegraph # only removes that entry (customised or not), nothing else
-spec11 uninstall            # remove the project skill and spec11 MCP entry
+spec11 uninstall            # remove the repo skill and HTTP MCP entry
 spec11 uninstall --global   # remove the global skill
 spec11 uninstall --only skill [--global] # remove the skill independently
-spec11 uninstall --only mcp [--global]   # remove the spec11 entry in <repo>/.mcp.json or ~/.mcp.json
+spec11 uninstall --only mcp [--global]   # remove the HTTP entry in <repo>/.mcp.json or ~/.mcp.json
 ```
 
-The skill is built into the binary and tells the agent to use the MCP tools (CLI as fallback). `.mcp.json` is created if missing; other servers and keys are kept as they are, and a file with invalid JSON is left untouched. `--port N` sets the port the entry points at (default 7411). Start the server with `spec11`.
+The skill is built into the binary and tells the agent to use the MCP tools, with the CLI as a fallback. For HTTP, set `spec11 install --port N` to match the port of the running server. The default is `7411`.
 
-Setup offers separate install and remove actions for the skill, stdio MCP and HTTP MCP in each scope. The transports use the `spec11-stdio` and `spec11` keys respectively. The `install` and `uninstall` tools take `only: "skill"` or `only: "mcp"`, `transport: "stdio"` or `"http"` with `only: "mcp"`, and `global: true` for the home directory. Removing the last server entry leaves `.mcp.json` in place. Setup also reads `~/.claude.json` to show Claude's user-scope entry.
+Open **Setup** in the dashboard to install or remove each entry independently under **This repo** or **Global**. The page shows the configured HTTP URL and the full stdio launch command for entries it installs. Both are selectable. The project stdio launcher includes `--root` for that repo. The global launcher uses the client's working directory.
+
+| Entry | Key in `mcpServers` | How it connects |
+| --- | --- | --- |
+| HTTP MCP | `spec11` | Connects to a running spec11 server |
+| stdio MCP | `spec11-stdio` | Launches a spec11 process for the agent session |
+
+Both entries can coexist in `<repo>/.mcp.json` or `~/.mcp.json`. Setup preserves other servers and leaves invalid JSON untouched. It also displays Claude's user-scope entry from `~/.claude.json` as read-only. If Setup asks you to update spec11, restart the server with the updated binary to enable the transport controls.
+
+The MCP `install` and `uninstall` tools accept `only: "skill"` or `only: "mcp"`. With `only: "mcp"`, use `transport: "stdio"` or `"http"` (the default). Set `global: true` to use the home directory.
 
 ## Layout
 
