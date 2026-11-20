@@ -207,12 +207,14 @@ fn spec17_json_adds_and_merges_profiles() {
     let d = std::env::temp_dir().join(format!("spec17-{}-profiles", std::process::id()));
     let _ = fs::remove_dir_all(&d);
     write(&d, "specs/01-demo.md", "- **DEM-01** MUST — a.\n- **DEM-02** MUST — b.\n- **DEM-03** MUST — c.\n- **DEM-04** MUST — d.\n");
-    write(&d, "spec17.json", r#"{"tests":["tests"],"src":["src"],"ext":["rs","as","sql"],"profiles":[
+    write(&d, "spec17.json", r#"{"tests":["tests"],"src":["src"],"ext":["rs","as","sql","pgt"],"profiles":[
         {"name":"actionscript","ext":["as"],"comment":["//"],"decl":"^\\s*(?:public\\s+)?function\\s+(\\w+)"},
         {"name":"rust","assert":"check!"}]}"#);
     write(&d, "src/a.as", "public function f():void {} // (DEM\x2D01)\n");
     write(&d, "src/b.sql", "CREATE OR REPLACE FUNCTION h() -- (DEM\x2D04)\n");
     write(&d, "tests/b_test.sql", "-- [DEM\x2D04]\nCREATE FUNCTION test_h() RETURNS SETOF TEXT AS $$\n  SELECT ok(h());\n$$ LANGUAGE sql;\n");
+    write(&d, "tests/d.pgt", "CREATE FUNCTION test_d() RETURNS SETOF TEXT AS $$ SELECT ok(true); $$ LANGUAGE sql;\n");
+    write(&d, "tests/c_test.sql", "-- [DEM\x2D04]\nCREATE PROCEDURE [Orders].[test saves order] AS\n  EXEC tSQLt.AssertEquals 1, 1;\n");
     write(&d, "src/lib.rs", "pub fn g() {} // (DEM\x2D02)\n");
     write(&d, "tests/a.rs", "#[doc = \"[DEM\x2D03]\"]\n#[test]\nfn a() {\n    check!(true);\n}\n");
     let a = Analysis::load(Some(&d)).unwrap();
@@ -223,6 +225,8 @@ fn spec17_json_adds_and_merges_profiles() {
     assert!(a.report().invalid_tests["no-assert"].is_empty()); // and takes the `assert` it was given
     let sql = a.tests_view().modules.iter().flat_map(|m| &m.files).find(|f| f.file == "tests/b_test.sql").map(|f| f.tests.iter().map(|c| (c.name.clone(), c.ids.clone())).collect::<Vec<_>>());
     assert_eq!(sql, Some(vec![("test_h".to_string(), vec!["DEM-04".to_string()])])); // a pgTAP test case
+    assert_eq!(a.tests_view().modules.iter().flat_map(|m| &m.files).find(|f| f.file == "tests/c_test.sql").map(|f| f.tests.len()), Some(1)); // a tSQLt one, schema in brackets
+    assert_eq!(a.tests_view().modules.iter().flat_map(|m| &m.files).find(|f| f.file == "tests/d.pgt").map(|f| f.tests[0].name.clone()), Some("test_d".into())); // no profile knows `.pgt`: the dominant one (SQL) reads it
 
     write(&d, "spec17.json", r#"{"comment":["//"]}"#);
     let err = Analysis::load(Some(&d)).err().expect("a retired field is an error");
@@ -236,6 +240,13 @@ fn spec17_json_adds_and_merges_profiles() {
     write(&d, "spec17.json", r#"{"profiles":[{"name":"rust","inline":false,"asert":"x"}]}"#);
     let err = Analysis::load(Some(&d)).err().expect("an unknown profile field is an error");
     assert!(err.contains("profile rust") && err.contains("asert"), "{err}");
+    write(&d, "spec17.json", r#"{"profiles":[{"name":"rust","decl":"^fn \\w+"}]}"#);
+    let err = Analysis::load(Some(&d)).err().expect("a decl without group 1 is an error");
+    assert!(err.contains("profile rust") && err.contains("capture group 1"), "{err}");
+    // the `test` of a second same-named entry is checked too, also where `src` and `tests` are listed by hand
+    write(&d, "spec17.json", r#"{"tests":["tests"],"src":["src"],"profiles":[{"name":"rust","inline":false},{"name":"rust","test":"("}]}"#);
+    let err = Analysis::load(Some(&d)).err().expect("a bad test regex is an error");
+    assert!(err.contains("profile rust") && err.contains("bad regex"), "{err}");
 }
 
 /// A minimal CodeGraph index: the tagged test calls `Demo.run`.

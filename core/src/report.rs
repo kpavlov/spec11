@@ -580,8 +580,8 @@ impl Analysis {
         for f in self.p.src_files() {
             let (mut types, decl) = (BTreeSet::new(), &self.p.lang(f).decl);
             for line in self.p.lines(f).iter() {
-                if let Some(m) = decl.captures(line) && idents.contains(&m[1]) && TYPE_KEYWORD.is_match(line) {
-                    types.insert(m[1].to_string());
+                if let Some(m) = decl.captures(line).and_then(|c| c.get(1)) && idents.contains(m.as_str()) && TYPE_KEYWORD.is_match(line) {
+                    types.insert(m.as_str().to_string());
                 }
             }
             if !types.is_empty() {

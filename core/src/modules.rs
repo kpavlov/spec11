@@ -77,18 +77,19 @@ static QUOTED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"["'`]([^"'`]+)["
 impl Analysis {
     /// A case starts on its marker. Tags come from its declaration and up to three attached comments or annotations above the marker.
     fn cases_in(&self, file: &str) -> Vec<TestCase> {
-        let Some(case) = detect::case_of(&self.p.profiles, file) else { return vec![]; };
-        let marker = &self.p.lang(file).case;
+        // the profile of the file's extension, else the dominant one (`Project::lang`)
+        let lang = self.p.lang(file);
+        let (marker, call) = (&lang.case, lang.call);
         let decls = self.graph.as_ref().and_then(|g| g.decls_in(file).ok()).unwrap_or_default();
         let ls = self.p.lines(file);
         let mut tests = vec![];
         // a marker inside a string literal (a fixture that writes a test file) is not a test case
         let unescaped_quotes = |t: &str| t.matches('"').count() - t.matches("\\\"").count();
-        let opens = |l: &str| marker.find_iter(l).any(|f| case.call || unescaped_quotes(&l[..f.start()]) % 2 == 0);
+        let opens = |l: &str| marker.find_iter(l).any(|f| call || unescaped_quotes(&l[..f.start()]) % 2 == 0);
         for (m, line) in ls.iter().enumerate().filter(|(_, l)| opens(l)) {
             // the declaration is on the marker line or just below an attribute / annotation
-            let decl = (m..(m + 4).min(ls.len())).find_map(|i| self.p.lang(file).decl.captures(&ls[i]).map(|c| (i, c[1].to_string())));
-            let (at, name) = match (decl, case.call) {
+            let decl = (m..(m + 4).min(ls.len())).find_map(|i| lang.decl.captures(&ls[i]).and_then(|c| c.get(1)).map(|c| (i, c.as_str().to_string())));
+            let (at, name) = match (decl, call) {
                 (Some((i, n)), false) => (i, n),
                 _ => (m, QUOTED.captures(line).map_or_else(|| line.trim().to_string(), |c| c[1].to_string())),
             };
@@ -98,7 +99,7 @@ impl Analysis {
                 let text = l.trim_start();
                 let annotation = text.starts_with('@') || text.starts_with("#[")
                     || ['[', '<'].into_iter().any(|c| marker_text.starts_with(c) && text.starts_with(c));
-                l.len() - text.len() == indent && (annotation || self.p.lang(file).is_comment(text))
+                l.len() - text.len() == indent && (annotation || lang.is_comment(text))
             }).count();
             let ids = ls[m - leading..=at].iter().flat_map(|l| self.p.tagged(l)).collect::<BTreeSet<_>>().into_iter().collect();
             let qualified = decls.iter().filter(|(lo, hi, _)| *lo <= at as i64 + 1 && at as i64 + 1 <= *hi).min_by_key(|(lo, hi, _)| hi - lo).map(|d| d.2.clone()).unwrap_or_default();

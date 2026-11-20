@@ -31,7 +31,7 @@ stdio, so each agent session launches its own process and binds no port:
 {"mcpServers": {"spec17-stdio": {"type": "stdio", "command": "spec17", "args": ["--stdio-mcp", "--no-http-mcp", "--no-ui"]}}}
 ```
 
-Add `"--root", "/path/to/repo"` to `args` if the client starts spec17 outside the repo. The Setup tab and the `install` tool write this entry with the absolute path of the binary as `command` and `--root` already set.
+Add `"--root", "/path/to/repo"` to `args` if the client starts spec17 outside the repo. The Setup tab and the `install` tool write this entry with the absolute path of the binary as `command`; a repo-scoped entry also sets `--root`, a global one does not.
 
 ## Tools
 

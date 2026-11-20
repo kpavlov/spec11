@@ -210,4 +210,4 @@ decl = '(?i)^\s*create\s+(?:or\s+replace\s+)?(?:function|procedure|proc|view|tab
 assert = '(?i)\b(?:ok|is|isnt|matches|results_eq|set_eq|bag_eq|throws_ok|lives_ok|has_\w+|col_\w+)\s*\(|tSQLt\.(?:Assert\w+|Fail)\b'
 off = '(?i)\b(?:skip|todo)\s*\('
 test = '(^|/)(tests?|spec)/[^/]*\.sql$|_test\.sql$'
-case = '(?i)^\s*create\s+(?:or\s+replace\s+)?(?:function|procedure|proc)\s+[\w."\[]*test'
+case = '(?i)^\s*create\s+(?:or\s+replace\s+)?(?:function|procedure|proc)\s+[\w."\[\]]*test'
