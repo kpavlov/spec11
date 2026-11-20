@@ -31,7 +31,21 @@ q.addEventListener('input', async () => {
   out.hidden = false;
 });
 
-q.addEventListener('keydown', e => { if (e.key === 'Enter') out.querySelector('a')?.click(); });
+q.addEventListener('keydown', e => {
+  const links = [...out.querySelectorAll('a')];
+  if (out.hidden || !links.length) return;
+  const cur = links.findIndex(a => a.parentNode.classList.contains('active'));
+  if (e.key === 'Enter') return (links[cur] ?? links[0]).click();
+  const step = { ArrowDown: 1, ArrowUp: -1 }[e.key];
+  if (!step) return;
+  e.preventDefault();
+  links[cur]?.parentNode.classList.remove('active');
+  const next = Math.min(cur + step, links.length - 1); // -1 = back on the search field (the caret stays there)
+  if (next < 0) return;
+  const li = links[next].parentNode;
+  li.classList.add('active');
+  li.scrollIntoView({ block: 'nearest' });
+});
 document.addEventListener('click', e => { if (!e.target.closest('.search')) clear(); });
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') { q.value = ''; clear(); q.blur(); }

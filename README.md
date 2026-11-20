@@ -142,12 +142,12 @@ python3 bench/bench.py --help
 - The first revision listed is the baseline. The table has median, min and stdev in ms, the change of the median against the baseline, and a hash of each command's output; the run says whether the output is the same for every revision. A speed-up must not change the output.
 - Stdlib Python only.
 
-Results (scale 4: 8,000 requirements, 1,600 source files, 400 test files, 400 docs; median of 10 runs; one macOS machine, so compare the ratios, not the milliseconds):
+Results at `0eb1fbd` (0.1.0), scale 4 (8,000 requirements, 1,600 source files, 400 test files, 400 docs), 10 runs, wall time per command in ms; one macOS machine, so the absolute times only mean something on that machine:
 
-| command | `main` | `e1755f6` (new spec formats) | `HEAD` (+ scan speed-ups) |
+| command | median | min | stdev |
 |---|--:|--:|--:|
-| `report` | 98 ms | 167 ms (+70%) | 113 ms (+15%) |
-| `status --all` | 125 ms | 180 ms (+44%) | 139 ms (+11%) |
-| `trace GEN-0001` | 102 ms | 160 ms (+57%) | 117 ms (+15%) |
+| `report` | 116.7 | 116.1 | 1.8 |
+| `status --all` | 142.3 | 140.8 | 1.0 |
+| `trace GEN-0001` | 122.0 | 121.6 | 0.5 |
 
-The output of every command is byte-identical across the three revisions. Supporting the new spec formats (heading and paragraph blocks, dotted IDs, OpenSpec deltas, UTF-8 cleaning) cost 44–70%; the speed-ups (one walk per folder, ASCII word boundaries, one pass for struck and removed IDs, slices instead of copies) won back about two thirds of it, and the scan is still 11–15% slower than before. The 1-second change poll behind `resources/updated` is not covered: the CLI does not expose it.
+The 1-second change poll behind `resources/updated` is not covered: the CLI does not expose it.
