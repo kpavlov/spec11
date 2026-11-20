@@ -76,9 +76,9 @@ static QUOTED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"["'`]([^"'`]+)["
 
 impl Analysis {
     /// A case starts on its marker. Tags come from its declaration and up to three attached comments or annotations above the marker.
-    fn cases_in(&self, file: &str, markers: &mut HashMap<&'static str, Regex>) -> Vec<TestCase> {
-        let Some(case) = detect::case_of(file) else { return vec![]; };
-        let marker = self.p.rx.case.as_ref().unwrap_or_else(|| markers.entry(case.marker).or_insert_with(|| Regex::new(case.marker).unwrap()));
+    fn cases_in(&self, file: &str) -> Vec<TestCase> {
+        let Some(case) = detect::case_of(&self.p.profiles, file) else { return vec![]; };
+        let marker = &self.p.lang(file).case;
         let decls = self.graph.as_ref().and_then(|g| g.decls_in(file).ok()).unwrap_or_default();
         let ls = self.p.lines(file);
         let mut tests = vec![];
@@ -87,7 +87,7 @@ impl Analysis {
         let opens = |l: &str| marker.find_iter(l).any(|f| case.call || unescaped_quotes(&l[..f.start()]) % 2 == 0);
         for (m, line) in ls.iter().enumerate().filter(|(_, l)| opens(l)) {
             // the declaration is on the marker line or just below an attribute / annotation
-            let decl = (m..(m + 4).min(ls.len())).find_map(|i| self.p.rx.decl.captures(&ls[i]).map(|c| (i, c[1].to_string())));
+            let decl = (m..(m + 4).min(ls.len())).find_map(|i| self.p.lang(file).decl.captures(&ls[i]).map(|c| (i, c[1].to_string())));
             let (at, name) = match (decl, case.call) {
                 (Some((i, n)), false) => (i, n),
                 _ => (m, QUOTED.captures(line).map_or_else(|| line.trim().to_string(), |c| c[1].to_string())),
@@ -98,8 +98,7 @@ impl Analysis {
                 let text = l.trim_start();
                 let annotation = text.starts_with('@') || text.starts_with("#[")
                     || ['[', '<'].into_iter().any(|c| marker_text.starts_with(c) && text.starts_with(c));
-                l.len() - text.len() == indent && (annotation || self.p.is_comment(text)
-                    || case.profile.comment.iter().any(|c| text.starts_with(c.as_str())))
+                l.len() - text.len() == indent && (annotation || self.p.lang(file).is_comment(text))
             }).count();
             let ids = ls[m - leading..=at].iter().flat_map(|l| self.p.tagged(l)).collect::<BTreeSet<_>>().into_iter().collect();
             let qualified = decls.iter().filter(|(lo, hi, _)| *lo <= at as i64 + 1 && at as i64 + 1 <= *hi).min_by_key(|(lo, hi, _)| hi - lo).map(|d| d.2.clone()).unwrap_or_default();
@@ -109,12 +108,12 @@ impl Analysis {
     }
 
     // (SCAN-14)
-    /// The test cases of the test files, grouped by module and file (`case` in `spec17.json` replaces the built-in markers).
+    /// The test cases of the test files, grouped by module and file (a `case` in a `spec17.json` profile replaces the built-in marker).
     pub fn tests_view(&self) -> TestsView {
-        let (mut markers, mut seen) = (HashMap::new(), HashMap::new());
+        let mut seen = HashMap::new();
         let mut by: BTreeMap<String, Vec<TestFile>> = BTreeMap::new();
         for file in self.p.test_files() {
-            let tests = self.cases_in(file, &mut markers);
+            let tests = self.cases_in(file);
             if !tests.is_empty() {
                 by.entry(detect::module_of(&self.p.root, file, &mut seen).0).or_default().push(TestFile { file: file.clone(), tests });
             }
@@ -130,7 +129,7 @@ impl Analysis {
             return Err(format!("{file}: not a scanned test file"));
         }
         let ids: BTreeSet<String> = if let Some(lines) = lines {
-            let cases = self.cases_in(file, &mut HashMap::new());
+            let cases = self.cases_in(file);
             let from = cases.partition_point(|test| test.line <= *lines.start()).saturating_sub(1);
             let to = cases.partition_point(|test| test.line <= *lines.end());
             cases.into_iter().take(to).skip(from).flat_map(|test| test.ids).collect()
@@ -153,7 +152,7 @@ impl Analysis {
         };
         let mut langs: HashMap<String, BTreeSet<&str>> = HashMap::new();
         for f in &self.p.files {
-            let Some(case) = detect::case_of(f) else { continue };
+            let Some(case) = detect::case_of(&self.p.profiles, f) else { continue };
             let m = module(f, &mut mods);
             let info = mods.get_mut(&m).unwrap();
             if self.p.is_test_only(f) { info.test_files += 1 } else { info.src_files += 1; info.sources.push(f.clone()) }

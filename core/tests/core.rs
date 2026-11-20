@@ -94,7 +94,7 @@ fn config_comes_from_spec17_json_or_defaults() {
     assert_eq!(a.p.cfg.specs, "specs");
     assert!(a.p.cfg.ext.is_empty() && a.p.cfg.src.is_empty()); // nothing to detect from
 
-    write(&bare, "spec17.json", r#"{"case": "("}"#);
+    write(&bare, "spec17.json", r#"{"profiles": [{"name": "swift", "case": "("}]}"#);
     let err = Analysis::load(Some(&bare)).err().expect("a bad case regex is an error");
     assert!(err.contains("bad regex"), "{err}");
 
@@ -180,6 +180,64 @@ fn last() {
     assert_eq!([decl("DEM-01"), decl("DEM-02"), decl("DEM-03"), decl("DEM-04")], ["after", "body", "third", "last"]);
 }
 
+#[doc = "[SCAN-33]"]
+#[test]
+fn each_file_reads_with_its_own_profile() {
+    let d = std::env::temp_dir().join(format!("spec17-{}-mixed", std::process::id()));
+    let _ = fs::remove_dir_all(&d);
+    write(&d, "spec17.json", r#"{"tests":["tests"],"src":["src"],"ext":["rs","py"]}"#);
+    write(&d, "specs/01-demo.md", "- **DEM-01** MUST — a.\n- **DEM-02** MUST — b.\n- **DEM-03** MUST — c.\n- **DEM-04** MUST — d.\n");
+    write(&d, "tests/a.rs", "#[doc = \"[DEM\x2D01]\"]\n#[test]\nfn a() {\n    assert!(true);\n}\n");
+    write(&d, "tests/test_b.py", "# [DEM\x2D02]\ndef test_b():\n    assert 1 == 1\n\ndef test_c():\n    \"\"\"[DEM\x2D03]\"\"\"\n    assert 1 == 1\n");
+    write(&d, "src/lib.rs", "pub fn f() {} // (DEM\x2D04) #[not a comment here]\n");
+    write(&d, "src/c.py", "def g():  # (DEM\x2D04)\n    pass\n");
+    let a = Analysis::load(Some(&d)).unwrap();
+    let r = a.report();
+    let bad = |k: &str| r.invalid_tests[k].iter().map(|p| p.id.as_str()).collect::<Vec<_>>();
+    assert_eq!(bad("comment-only"), ["DEM-02"]); // a Rust attribute is not a Python comment; a `#` line in Python is
+    assert!(bad("no-assert").is_empty()); // a Python `assert` counts in a .py file
+    let mut decls: Vec<String> = a.trace("DEM-04").unwrap().source_cites.iter().map(|c| c.decl.clone()).collect();
+    decls.sort();
+    assert_eq!(decls, ["f", "g"]);
+}
+
+#[doc = "[SCAN-34]"]
+#[test]
+fn spec17_json_adds_and_merges_profiles() {
+    let d = std::env::temp_dir().join(format!("spec17-{}-profiles", std::process::id()));
+    let _ = fs::remove_dir_all(&d);
+    write(&d, "specs/01-demo.md", "- **DEM-01** MUST — a.\n- **DEM-02** MUST — b.\n- **DEM-03** MUST — c.\n- **DEM-04** MUST — d.\n");
+    write(&d, "spec17.json", r#"{"tests":["tests"],"src":["src"],"ext":["rs","as","sql"],"profiles":[
+        {"name":"actionscript","ext":["as"],"comment":["//"],"decl":"^\\s*(?:public\\s+)?function\\s+(\\w+)"},
+        {"name":"rust","assert":"check!"}]}"#);
+    write(&d, "src/a.as", "public function f():void {} // (DEM\x2D01)\n");
+    write(&d, "src/b.sql", "CREATE OR REPLACE FUNCTION h() -- (DEM\x2D04)\n");
+    write(&d, "tests/b_test.sql", "-- [DEM\x2D04]\nCREATE FUNCTION test_h() RETURNS SETOF TEXT AS $$\n  SELECT ok(h());\n$$ LANGUAGE sql;\n");
+    write(&d, "src/lib.rs", "pub fn g() {} // (DEM\x2D02)\n");
+    write(&d, "tests/a.rs", "#[doc = \"[DEM\x2D03]\"]\n#[test]\nfn a() {\n    check!(true);\n}\n");
+    let a = Analysis::load(Some(&d)).unwrap();
+    let cite = |id: &str| a.trace(id).unwrap().source_cites.iter().map(|c| c.decl.clone()).collect::<Vec<_>>();
+    assert_eq!(cite("DEM-01"), ["f"]); // a new ecosystem (Flash ActionScript has no built-in profile)
+    assert_eq!(cite("DEM-04"), ["h"]); // SQL has one
+    assert_eq!(cite("DEM-02"), ["g"]); // the merged Rust profile keeps its `//` and its `decl`
+    assert!(a.report().invalid_tests["no-assert"].is_empty()); // and takes the `assert` it was given
+    let sql = a.tests_view().modules.iter().flat_map(|m| &m.files).find(|f| f.file == "tests/b_test.sql").map(|f| f.tests.iter().map(|c| (c.name.clone(), c.ids.clone())).collect::<Vec<_>>());
+    assert_eq!(sql, Some(vec![("test_h".to_string(), vec!["DEM-04".to_string()])])); // a pgTAP test case
+
+    write(&d, "spec17.json", r#"{"comment":["//"]}"#);
+    let err = Analysis::load(Some(&d)).err().expect("a retired field is an error");
+    assert!(err.contains("`comment` moved into `profiles`"), "{err}");
+    write(&d, "spec17.json", r#"{"test_files":"x"}"#);
+    let err = Analysis::load(Some(&d)).err().expect("a retired field is an error");
+    assert!(err.contains("`test_files` moved into `profiles`") && err.contains(r#""test": …"#), "{err}");
+    write(&d, "spec17.json", r#"{"profiles":[{"name":"rust","inline":false}]}"#);
+    let a = Analysis::load(Some(&d)).unwrap();
+    assert_eq!(a.p.cfg.tests, ["tests"]); // a bool turned off: Rust tests no longer live in `src` too
+    write(&d, "spec17.json", r#"{"profiles":[{"name":"rust","inline":false,"asert":"x"}]}"#);
+    let err = Analysis::load(Some(&d)).err().expect("an unknown profile field is an error");
+    assert!(err.contains("profile rust") && err.contains("asert"), "{err}");
+}
+
 /// A minimal CodeGraph index: the tagged test calls `Demo.run`.
 fn index(d: &Path, with_edges_kind: bool) {
     fs::create_dir_all(d.join(".codegraph")).unwrap();
@@ -255,7 +313,7 @@ fn every_profile_compiles() {
 #[doc = "[SCAN-09]"]
 #[test]
 fn layout_is_detected_when_spec17_json_is_missing() {
-    use spec17_core::detect::{layout, spec_dir};
+    use spec17_core::detect::{PROFILES, layout, spec_dir};
     let d = std::env::temp_dir().join(format!("spec17-{}-detect", std::process::id()));
     let _ = fs::remove_dir_all(&d);
     write(&d, "docs/specs/01-a.md", "- **AAA-01** MUST — one.\n");
@@ -264,7 +322,7 @@ fn layout_is_detected_when_spec17_json_is_missing() {
     write(&d, "tests/test_mod.py", "# [AAA\x2D01]\ndef test_f():\n    assert True\n");
     let a = Analysis::load(Some(&d)).unwrap();
     let c = &a.p.cfg;
-    assert_eq!((c.specs.as_str(), c.src.clone(), c.tests.clone(), c.ext.clone(), c.comment.clone()), ("docs/specs", vec!["pkg".to_string()], vec!["tests".to_string()], vec!["py".to_string()], vec!["#".to_string()]));
+    assert_eq!((c.specs.as_str(), c.src.clone(), c.tests.clone(), c.ext.clone(), a.p.lang("pkg/mod.py").comment.clone()), ("docs/specs", vec!["pkg".to_string()], vec!["tests".to_string()], vec!["py".to_string()], vec!["#".to_string()]));
     assert_eq!(a.s.len(), 1);
     assert!(a.c.contains_key("AAA-01"));
 
@@ -279,7 +337,7 @@ fn layout_is_detected_when_spec17_json_is_missing() {
     assert_eq!(spec_dir(&e, &allow(&e)).as_deref(), Some("openspec/specs"));
 
     // ecosystems, from file lists alone
-    let l = |fs: &[&str]| { let v: Vec<String> = fs.iter().map(|s| s.to_string()).collect(); layout(&v).map(|l| (l.profile.name.as_str(), l.src, l.tests)) };
+    let l = |fs: &[&str]| { let v: Vec<String> = fs.iter().map(|s| s.to_string()).collect(); layout(&PROFILES, &v).map(|l| (l.profile.name.as_str(), l.src, l.tests)) };
     let s = |xs: &[&str]| xs.iter().map(|x| x.to_string()).collect::<Vec<_>>();
     assert_eq!(l(&["RunSolo/RunSolo/A.swift", "RunSolo/RunSoloTests/ATests.swift"]), Some(("swift", s(&["RunSolo"]), s(&["RunSolo/RunSoloTests"]))));
     assert_eq!(l(&["Sources/App/A.swift", "Tests/AppTests/ATests.swift"]), Some(("swift", s(&["Sources"]), s(&["Tests"]))));
@@ -450,7 +508,7 @@ fn specs_in_a_single_file_or_anywhere() {
 #[test]
 fn linked_docs_and_adrs_are_reference_docs() {
     let d = scratch("adr");
-    write(&d, "spec17.json", r#"{"src":["src"],"tests":["tests"],"ext":["kt"],"comment":["//"]}"#);
+    write(&d, "spec17.json", r#"{"src":["src"],"tests":["tests"],"ext":["kt"]}"#);
     write(&d, "docs/arch/drivers.md", "\
 The fold ([state-machine.md](state-machine.md)) decides nothing; see
 [ADR\x2D0003](../../decisions/0003-patterns.md) \u{a7}5 and [ADR\x2D0009](../../decisions/0009-gone.md).
@@ -476,7 +534,7 @@ Also [site](https://example.com/ADR\x2D0004.md).
 #[test]
 fn modules_and_test_cases() {
     let d = scratch("modules");
-    write(&d, "spec17.json", r#"{"specs":"SPEC.md","src":["a/src","b/src","web/src"],"tests":["a/tests","b/src"],"ext":["rs","ts"],"comment":["//"],"test_files":"\\.test\\.ts$"}"#);
+    write(&d, "spec17.json", r#"{"specs":"SPEC.md","src":["a/src","b/src","web/src"],"tests":["a/tests","b/src"],"ext":["rs","ts"],"profiles":[{"name":"typescript","test":"\\.test\\.ts$"}]}"#);
     write(&d, "SPEC.md", "- MOD-01 MUST — x.\n");
     for m in ["a", "b"] {
         write(&d, &format!("{m}/Cargo.toml"), "[package]\n");
@@ -553,7 +611,7 @@ fn symlinks_are_followed_only_inside_root_or_allowed_paths() {
 #[test]
 fn ignore_files_and_agents_are_left_out() {
     let d = scratch("ignored");
-    write(&d, "spec17.json", r#"{"src":["src"],"tests":["tests"],"ext":["kt"],"comment":["//"]}"#);
+    write(&d, "spec17.json", r#"{"src":["src"],"tests":["tests"],"ext":["kt"]}"#);
     write(&d, "specs/a.md", "- AAA-01 MUST — one.\n");
     write(&d, ".aiignore", "# generated\nsrc/gen/\n");
     write(&d, ".spec17ignore", "src/skip.kt\n*.tmp.kt\n!src/keep.tmp.kt\n");
@@ -612,7 +670,7 @@ fn a_tests_body_stops_at_its_closing_brace() {
 fn changes_split_staged_unstaged_and_untracked() {
     use spec17_core::ChangeOpts;
     let d = scratch("changes");
-    write(&d, "spec17.json", r#"{"src":["src"],"tests":["tests"],"ext":["kt"],"comment":["//"]}"#);
+    write(&d, "spec17.json", r#"{"src":["src"],"tests":["tests"],"ext":["kt"]}"#);
     write(&d, "specs/a.md", "- **AAA-01** MUST — one.\n- **AAA-02** MUST — two.\n");
     write(&d, "src/a.kt", "// (AAA-01)\nclass A\n");
     write(&d, "src/b.kt", "// (AAA-02)\nclass B\n");
@@ -673,7 +731,7 @@ fn changes_list_requirements_whose_tests_reach_a_changed_file() {
 fn changes_by_ref_commit_rename_delete_whitespace_and_history() {
     use spec17_core::ChangeOpts;
     let d = scratch("changes2");
-    write(&d, "spec17.json", r#"{"src":["src"],"tests":["tests"],"ext":["kt"],"comment":["//"]}"#);
+    write(&d, "spec17.json", r#"{"src":["src"],"tests":["tests"],"ext":["kt"]}"#);
     write(&d, ".spec17ignore", "hidden/\n");
     write(&d, "specs/a.md", "- **AAA-01** MUST — one.\n- **AAA-02** MUST — two.\n- **AAA-03** MUST — three.\n");
     write(&d, "tests/AT.kt", "// [AAA\x2D01]\nfun t1() {\n    check(1)\n}\n\n// [AAA\x2D02]\nfun t2() {\n    check(2)\n}\n");
@@ -756,7 +814,7 @@ fn changes_by_ref_commit_rename_delete_whitespace_and_history() {
 fn history_leaves_out_commits_the_filters_hide() {
     use spec17_core::ChangeOpts;
     let d = scratch("history_filters");
-    write(&d, "spec17.json", r#"{"src":["src"],"tests":["tests"],"ext":["kt"],"comment":["//"]}"#);
+    write(&d, "spec17.json", r#"{"src":["src"],"tests":["tests"],"ext":["kt"]}"#);
     write(&d, "specs/a.md", "- **AAA-01** MUST — one.\n");
     write(&d, "notes.txt", "n\n");
     let git = |a: &[&str]| {
@@ -782,7 +840,7 @@ fn history_leaves_out_commits_the_filters_hide() {
 fn braces_in_strings_do_not_stretch_a_unit() {
     use spec17_core::ChangeOpts;
     let d = scratch("braces");
-    write(&d, "spec17.json", r#"{"src":["src"],"tests":["tests"],"ext":["kt"],"comment":["//"]}"#);
+    write(&d, "spec17.json", r#"{"src":["src"],"tests":["tests"],"ext":["kt"]}"#);
     write(&d, "specs/a.md", "- **AAA-01** MUST — one.\n- **AAA-02** MUST — two.\n");
     // the first test opens a brace inside a string and never closes it in code
     let t = |b: &str| format!("// [AAA\\x2D01]\nfun t1() {{\n    check(\"{{\")  // {{\n}}\n\n// [AAA\\x2D02]\nfun t2() {{\n    check({b})\n}}\n").replace("\\x2D", "-");
@@ -853,7 +911,7 @@ fn a_requirement_names_the_newest_commit_that_touched_it() {
 fn a_requirement_changes_only_when_its_text_differs_from_the_base() {
     use spec17_core::ChangeOpts;
     let d = scratch("realchange");
-    write(&d, "spec17.json", r#"{"src":["src"],"tests":["tests"],"ext":["kt"],"comment":["//"]}"#);
+    write(&d, "spec17.json", r#"{"src":["src"],"tests":["tests"],"ext":["kt"]}"#);
     write(&d, "specs/a.md", "- **REA-01** MUST — one long\n  wrapped bullet.\n- **REA-02** MUST — two.\n- **REA-03** MUST — three.\n");
     write(&d, "src/a.kt", "// (REA-03)\nfun f() {\n    1\n}\n");
     let git = |a: &[&str]| assert!(std::process::Command::new("git").args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(a).current_dir(&d).output().unwrap().status.success(), "{a:?}");

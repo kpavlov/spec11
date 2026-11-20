@@ -2,7 +2,7 @@
 //! Specs come from the folder conventions of spec-driven tools; sources and tests from the file list of the CodeGraph
 //! index (else a directory walk) classified by ecosystem. Symlinks are followed only into the repo root or `ALLOWED_PATHS`.
 use regex::Regex;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 use walkdir::{DirEntry, WalkDir};
@@ -23,8 +23,10 @@ const SKIP: [&str; 12] = ["node_modules", "target", "build", "dist", "vendor", "
 /// Matches nothing: the regex of an ecosystem spec17 knows nothing about.
 pub const NEVER: &str = r"[^\s\S]";
 
-/// One ecosystem: how its files, comments, declarations and tests look. Loaded from `resources/profiles.toml`.
-#[derive(Deserialize)]
+/// One ecosystem: how its files, comments, declarations and tests look. Loaded from `resources/profiles.toml`; a `profiles`
+/// entry of `spec17.json` has the same shape (see `profiles`).
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct Profile {
     pub name: String,
     pub ext: Vec<String>,
@@ -44,6 +46,14 @@ pub struct Profile {
     pub call: bool,
 }
 
+impl Profile {
+    /// An ecosystem spec17 knows nothing about: no files, no comments, regexes that match nothing.
+    pub fn unknown(name: &str) -> Profile {
+        let n = || NEVER.to_string();
+        Profile { name: name.into(), ext: vec![], comment: vec![], decl: n(), assert: n(), off: n(), test: n(), inline: false, case: n(), call: false }
+    }
+}
+
 #[derive(Deserialize)]
 struct Profiles {
     profile: Vec<Profile>,
@@ -54,17 +64,41 @@ pub static PROFILES: LazyLock<Vec<Profile>> = LazyLock::new(|| {
     toml::from_str::<Profiles>(include_str!("../resources/profiles.toml")).expect("resources/profiles.toml").profile
 });
 
-/// How test cases are found in one file: its ecosystem, the line regex that opens one, and whether that line is a call.
-pub struct Case {
-    pub profile: &'static Profile,
-    pub marker: &'static str,
+// (SCAN-34)
+/// The built-in profiles with the `profiles` of `spec17.json`: an entry named like a built-in one replaces the fields it sets, any
+/// other is a new ecosystem, ahead of the built-ins so it wins an extension they share; the regexes it leaves out match nothing.
+pub fn profiles(extra: &[serde_json::Map<String, serde_json::Value>]) -> Result<Vec<Profile>, String> {
+    let mut all = PROFILES.clone();
+    for e in extra {
+        let name = e.get("name").and_then(|n| n.as_str()).ok_or("spec17.json: a profile needs a `name`")?;
+        let at = all.iter().position(|p| p.name == name);
+        let base = at.map_or_else(|| Profile::unknown(name), |i| all[i].clone());
+        let serde_json::Value::Object(mut v) = serde_json::to_value(base).map_err(|e| e.to_string())? else { unreachable!() };
+        v.extend(e.clone());
+        let p: Profile = serde_json::from_value(v.into()).map_err(|e| format!("spec17.json: profile {name}: {e}"))?;
+        match at {
+            Some(i) => all[i] = p,
+            None => all.insert(0, p),
+        }
+    }
+    Ok(all)
+}
+
+/// How test cases are found in one file: its ecosystem, and whether the line that opens one is a call.
+pub struct Case<'a> {
+    pub profile: &'a Profile,
     pub call: bool,
 }
 
 /// The test-case rule of a file's ecosystem, by extension.
-pub fn case_of(file: &str) -> Option<Case> {
-    let p = PROFILES.iter().find(|p| p.ext.iter().any(|e| e == ext_of(file)))?;
-    Some(Case { profile: p, marker: &p.case, call: p.call })
+pub fn case_of<'a>(profiles: &'a [Profile], file: &str) -> Option<Case<'a>> {
+    let p = &profiles[profile_of(profiles, file)?];
+    Some(Case { profile: p, call: p.call })
+}
+
+/// The index in `profiles` of a file's ecosystem, by extension.
+pub fn profile_of(profiles: &[Profile], file: &str) -> Option<usize> {
+    profiles.iter().position(|p| p.ext.iter().any(|e| e == ext_of(file)))
 }
 
 /// Build manifests that make a folder a module.
@@ -316,8 +350,8 @@ fn generic_dir(root: &Path, allow: &[PathBuf], ignore: &Ignore) -> Option<String
 }
 
 /// What the file list says about the code: the dominant ecosystem and the folders of its sources and tests.
-pub struct Layout {
-    pub profile: &'static Profile,
+pub struct Layout<'a> {
+    pub profile: &'a Profile,
     pub src: Vec<String>,
     pub tests: Vec<String>,
 }
@@ -355,9 +389,9 @@ fn minimal(mut v: Vec<String>) -> Vec<String> {
 }
 
 /// `files`: repo-relative, `/`-separated. `None` when no known ecosystem has a file.
-pub fn layout(files: &[String]) -> Option<Layout> {
+pub fn layout<'a>(profiles: &'a [Profile], files: &[String]) -> Option<Layout<'a>> {
     let mine: Vec<&String> = files.iter().filter(|f| !f.split('/').any(|c| c.starts_with('.') && c != "." || SKIP.contains(&c))).collect();
-    let (profile, _) = PROFILES.iter().map(|p| (p, mine.iter().filter(|f| p.ext.iter().any(|e| e == ext_of(f))).count())).fold(None, |best: Option<(&Profile, usize)>, c| if c.1 > best.map_or(0, |b| b.1) { Some(c) } else { best })?;
+    let (profile, _) = profiles.iter().map(|p| (p, mine.iter().filter(|f| p.ext.iter().any(|e| e == ext_of(f))).count())).fold(None, |best: Option<(&Profile, usize)>, c| if c.1 > best.map_or(0, |b| b.1) { Some(c) } else { best })?;
     let test = Regex::new(&profile.test).unwrap();
     let (tests, src): (Vec<&String>, Vec<&String>) = mine.into_iter().filter(|f| profile.ext.iter().any(|e| e == ext_of(f))).partition(|f| test.is_match(f));
     let src_dirs = minimal(src.iter().map(|f| src_root(f)).collect());

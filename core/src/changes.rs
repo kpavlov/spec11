@@ -405,21 +405,21 @@ impl Analysis {
         chars(&crate::scan::lead(rest, lv), 160)
     }
 
-    fn mentions(&self, role: &str, line: &str) -> Vec<String> {
+    fn mentions(&self, file: &str, role: &str, line: &str) -> Vec<String> {
         match role {
             "spec" => crate::scan::LINE.head.captures(line).map(|m| m[1].to_string()).filter(|i| crate::scan::is_id(i)).into_iter().collect(),
             "test" => self.p.tagged(line),
-            _ => self.p.comment_of(line).map(|c| self.p.rx.mention.captures_iter(c).map(|m| m[1].to_string()).filter(|i| crate::scan::is_id(i)).collect()).unwrap_or_default(),
+            _ => self.p.lang(file).comment_of(line).map(|c| self.p.rx.mention.captures_iter(c).map(|m| m[1].to_string()).filter(|i| crate::scan::is_id(i)).collect()).unwrap_or_default(),
         }
     }
 
     /// (id, first line, last line) of each requirement a line of the new side mentions: a bullet with its wrapped lines, or the
     /// tagged test / cited code unit (the whole file when it has no braces).
-    fn units(&self, role: &str, ls: &[String]) -> Vec<(String, usize, usize)> {
+    fn units(&self, file: &str, role: &str, ls: &[String]) -> Vec<(String, usize, usize)> {
         let mut out = vec![];
         for (i, l) in ls.iter().enumerate() {
             let n = i + 1;
-            for id in self.mentions(role, l) {
+            for id in self.mentions(file, role, l) {
                 let end = if role == "spec" {
                     crate::scan::block_end(ls, n)
                 } else {
@@ -450,13 +450,13 @@ impl Analysis {
             m
         };
         for &role in roles {
-            let units = self.units(role, ls);
-            let (now, before) = (sigs(&units, ls), sigs(&self.units(role, old), old));
+            let units = self.units(file, role, ls);
+            let (now, before) = (sigs(&units, ls), sigs(&self.units(file, role, old), old));
             let present: HashSet<&str> = units.iter().map(|u| u.0.as_str()).collect();
             let (added, changed, removed) = match role { "spec" => ("added", "edited", "removed"), "test" => ("tag added", "changed", "tag removed"), _ => ("citation added", "changed", "citation removed") };
             for (k, h) in hs.iter().enumerate() {
                 let (lo, hi) = (h.new_start, h.new_start + h.new_len.max(1) - 1);
-                let gone: HashMap<String, String> = h.removed.iter().flat_map(|l| self.mentions(role, l).into_iter().map(|id| (id, l.trim().to_string()))).collect();
+                let gone: HashMap<String, String> = h.removed.iter().flat_map(|l| self.mentions(file, role, l).into_iter().map(|id| (id, l.trim().to_string()))).collect();
                 for (id, a, b) in &units {
                     let (a, b) = (*a as i64, *b as i64);
                     // a pure deletion (no new lines) sits between two lines: it touches only a unit that spans both

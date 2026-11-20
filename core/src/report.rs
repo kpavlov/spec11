@@ -572,15 +572,15 @@ impl Analysis {
         let mut source_cites = vec![];
         for r in self.c.get(&want).cloned().unwrap_or_default() {
             cited.insert(r.file.clone());
-            let decl = self.p.enclosing(&self.p.lines(&r.file), r.line);
+            let decl = self.p.enclosing(&r.file, r.line);
             if !decl.is_empty() { names.insert(decl.clone()); }
             source_cites.push(SourceCite { r, decl });
         }
         let mut defs: IndexMap<String, Vec<String>> = IndexMap::new();
         for f in self.p.src_files() {
-            let mut types = BTreeSet::new();
+            let (mut types, decl) = (BTreeSet::new(), &self.p.lang(f).decl);
             for line in self.p.lines(f).iter() {
-                if let Some(m) = self.p.rx.decl.captures(line) && idents.contains(&m[1]) && TYPE_KEYWORD.is_match(line) {
+                if let Some(m) = decl.captures(line) && idents.contains(&m[1]) && TYPE_KEYWORD.is_match(line) {
                     types.insert(m[1].to_string());
                 }
             }
