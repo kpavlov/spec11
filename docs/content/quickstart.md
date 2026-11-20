@@ -107,6 +107,8 @@ spec17
 
 This starts the server on `127.0.0.1:7411` and opens the dashboard in your browser; stop it with Ctrl-C. To pick another port or skip the browser: `spec17 serve --port 7500 --no-open`.
 
+![Changes view: requirements a working-tree edit may affect, with spec edited and spec added badges](../img/changes.png)
+
 ## 5. Connect an agent (optional)
 
 ```sh
