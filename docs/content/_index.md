@@ -9,6 +9,8 @@ spec17 reads the requirement IDs in your specs and reports which ones have tests
 
 One Rust binary gives three interfaces over the same core: a CLI, an MCP server (streamable HTTP or stdio) and a web dashboard.
 
+![spec17 dashboard: 98% of due requirements have a tagged test, one changed spec, one requirement with no test or code](img/dashboard-light.png)
+
 ## Get started
 
 The [Quickstart](quickstart/) covers installing spec17 (Homebrew on Apple Silicon, or from source), scanning a repo, and a three-file example that shows a requirement, a test and a code citation meeting in the report.

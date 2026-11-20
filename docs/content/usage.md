@@ -29,6 +29,8 @@ spec17 report --json --root ../other # JSON for another repo
 
 The URL is the view, so back/forward, reload and shared links work: `/changes`, `/modules`, `/tests`, `/requirements/ID`, `/specs`, `/code`, `/overlap`, `/uncovered`, `/setup`.
 
+![Requirements view: API-02 selected, with its tagged test, code citation and who last changed it](../img/requirements.png)
+
 ## CodeGraph
 
 An optional [CodeGraph](https://github.com/colbymchenry/codegraph) index (`.codegraph/codegraph.db`, opened read-only) adds test-to-code links, overlap and uncovered-code analysis. Without it `report` and the dashboard say "not checked" or "not available", and everything else works. The commands and tools that need the index (`spec17 overlap`, `uncovered`, `status --overlap`, `status --uncovered`, and the matching MCP tools) fail with "no .codegraph index here" instead: the CLI exits 1, the tools return an error. `spec17 doctor --fix` or the dashboard's Setup tab can create or refresh it, only when you ask.
