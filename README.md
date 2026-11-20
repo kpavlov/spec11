@@ -19,12 +19,15 @@ It replaces the earlier Python scripts (output is identical; `make parity` can d
 
 ## Quickstart
 
-Install the tagged release with Homebrew once the tap contains a release formula.
+Add the Homebrew tap and install the prebuilt development version on Apple Silicon.
 
 ```sh
 brew tap kpavlov/spec17 https://github.com/kpavlov/spec17
-brew install kpavlov/spec17/spec17
+brew install kpavlov/spec17/spec17-dev
 ```
+
+The dev formula becomes available after the first [dev release](#dev-releases). 
+For a tagged release, use `brew install kpavlov/spec17/spec17`.
 
 From the project you want to scan, run `spec17 report` for a terminal summary or `spec17` to open the dashboard.
 
@@ -144,17 +147,23 @@ gh release edit v0.1.0 --prerelease=false --latest
 
 Archives are named `spec17-<version>-<os>-<arch>.tar.gz` (`.zip` on Windows), each with a `.sha256` file. Use `make dist` to package locally. The Mac build signs ad hoc by default. Set `SIGN_IDENTITY` on `make upload` or `make dist` to use another signing identity. Run the upload on each Mac architecture you want to ship. Uploads require an authenticated `gh`, and tap generation requires permission for the workflow token to push to the default branch.
 
-### HEAD builds
+### Dev releases
 
-On a Mac with a clean `main` matching `origin/main`, run `make upload-edge` to build, sign, and replace that architecture's archive on the [rolling edge prerelease](https://github.com/kpavlov/spec17/releases/tag/edge). The rolling tag and release notes identify the built commit.
+On an Apple Silicon Mac, run this from a clean `main` matching `origin/main`.
 
-After adding the tap in the [quickstart](#quickstart), use Homebrew's HEAD installation to check out the default branch and build locally with Node, pnpm, and Rust.
+```sh
+make release-dev
+```
+
+The command builds and signs a timestamped archive, uploads it with its checksum to the rolling prerelease, and writes `Formula/spec17-dev.rb`. Commit and push that file to publish the Homebrew update. Users get the new binary with `brew update && brew upgrade spec17-dev`. [Rolling prerelease](https://github.com/kpavlov/spec17/releases/tag/edge)
+
+Homebrew's standard HEAD option still builds the default branch locally.
 
 ```sh
 brew install --HEAD kpavlov/spec17/spec17
 ```
 
-If the repository is private, set `HOMEBREW_GITHUB_API_TOKEN` to a token with repository read access for the tagged archive download.
+If the repository is private, set `HOMEBREW_GITHUB_API_TOKEN` to a token with repository read access for prebuilt downloads.
 
 ## Benchmark
 

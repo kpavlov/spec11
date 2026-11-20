@@ -9,14 +9,14 @@ OS   := $(shell uname -s | tr A-Z a-z)
 ARCH := $(shell uname -m | sed s/arm64/aarch64/)
 OPENER := $(shell command -v open || command -v xdg-open)
 VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
-# archive label: the version, or "edge" (the rolling prerelease of main); TAG: the release a tagged upload goes to
+# Archive label: the workspace version or a timestamped dev build. TAG selects the tagged release.
 LABEL ?= $(VERSION)
 TAG ?= v$(VERSION)
 # macOS signing identity: "-" is ad hoc (enough for Homebrew); a "Developer ID Application: ..." identity for wider distribution
 SIGN_IDENTITY ?= -
 archive = dist/spec17-$(1)-$(OS)-$(ARCH).tar.gz
 
-.PHONY: help dev serve web build release-build run install uninstall dist sign check-tag upload upload-edge report test parity bench upgrade clean mcp-inspector
+.PHONY: help dev serve web build release-build run install uninstall dist sign check-tag upload release-dev upload-edge report test parity bench upgrade clean mcp-inspector
 
 help:
 	@echo "make dev      Vite (HMR, :5173) + Rust server on :$(PORT) proxying to it, scanning $(ROOT)"
@@ -27,7 +27,7 @@ help:
 	@echo "make dist      dist/spec17-$(VERSION)-$(OS)-$(ARCH).tar.gz (+ .sha256) for this machine (macOS or Linux); signed on macOS"
 	@echo "make sign      macOS: codesign the release binary (SIGN_IDENTITY, default ad hoc)"
 	@echo "make upload    add this machine's archive to the prerelease TAG (default v$(VERSION), must be pushed and checked out); creates it if missing"
-	@echo "make upload-edge  add it to the rolling 'edge' prerelease: HEAD must be origin/main; moves the edge tag to HEAD for direct downloads"
+	@echo "make release-dev  upload an Apple Silicon build from origin/main and write Formula/spec17-dev.rb"
 	@echo "make report   print the text report for $(ROOT)"
 	@echo "make test     cargo tests; make parity compares with the old Python scripts if vendored in $(ROOT)"
 	@echo "make bench    time spec17 on a generated repo at REVS (default: main HEAD; . = working tree), SCALE=1 RUNS=10 JSON=1"
@@ -98,19 +98,43 @@ upload: check-tag
 	  || { echo "$(TAG) must be a published prerelease"; exit 1; }
 	gh release upload "$(TAG)" $(call archive,$(VERSION)) $(call archive,$(VERSION)).sha256 --clobber
 
-# (NFR-05) Rolling Mac archive for direct downloads of the latest main.
-upload-edge:
-	@[ "$(OS)" = darwin ] || { echo "upload-edge: macOS only"; exit 1; }
+# (NFR-05) Keep the rolling edge release, with a distinct archive for each dev build.
+upload-edge: release-dev
+
+release-dev: DEV_VERSION := $(shell date -u +%Y%m%d%H%M%S)
+release-dev:
+	@[ "$(OS)-$(ARCH)" = darwin-aarch64 ] || { echo "release-dev: Apple Silicon macOS only"; exit 1; }
 	@git fetch -q origin main
-	@[ "$$(git branch --show-current)" = main ] || { echo "upload-edge runs on main"; exit 1; }
-	@[ "$$(git rev-parse HEAD)" = "$$(git rev-parse origin/main)" ] || { echo "edge is the latest main: HEAD is not origin/main"; exit 1; }
+	@[ "$$(git branch --show-current)" = main ] || { echo "release-dev runs on main"; exit 1; }
+	@[ "$$(git rev-parse HEAD)" = "$$(git rev-parse origin/main)" ] || { echo "HEAD is not origin/main"; exit 1; }
 	@[ -z "$$(git status --porcelain)" ] || { echo "uncommitted changes: the archive would not be main"; exit 1; }
-	@$(MAKE) --no-print-directory dist LABEL=edge
-	git push --force origin HEAD:refs/tags/edge
-	@set -e; n="Rolling build of main at $$(git rev-parse HEAD), replaced on every run."; \
+	@$(MAKE) --no-print-directory dist LABEL="dev.$(DEV_VERSION)"
+	@set -e; \
+	file=$(call archive,dev.$(DEV_VERSION)); name=$${file##*/}; \
+	read -r sha _ < "$$file.sha256"; \
+	repo=$$(gh repo view --json nameWithOwner --jq .nameWithOwner); \
+	private=$$(gh repo view --json isPrivate --jq .isPrivate); \
+	n="Latest Apple Silicon dev build of main at $$(git rev-parse HEAD)."; \
+	git push --force origin HEAD:refs/tags/edge; \
 	gh release view edge >/dev/null 2>&1 || gh release create edge --prerelease --verify-tag --title edge --notes "$$n" || gh release view edge >/dev/null; \
-	gh release edit edge --prerelease --notes "$$n"
-	gh release upload edge $(call archive,edge) $(call archive,edge).sha256 --clobber
+	gh release upload edge "$$file" "$$file.sha256"; \
+	gh release edit edge --prerelease --notes "$$n"; \
+	if [ "$$private" = true ]; then \
+	  id=$$(gh api "repos/$$repo/releases/tags/edge" --jq ".assets[] | select(.name == \"$$name\") | .id"); \
+	  [ -n "$$id" ] || { echo "missing release asset ID for $$name"; exit 1; }; \
+	  url=$$(printf 'url "https://api.github.com/repos/%s/releases/assets/%s", using: :curl, headers: ["Accept: application/octet-stream", "Authorization: token #{ENV["HOMEBREW_GITHUB_API_TOKEN"]}"]' "$$repo" "$$id"); \
+	else \
+	  url=$$(printf 'url "https://github.com/%s/releases/download/edge/%s"' "$$repo" "$$name"); \
+	fi; \
+	printf '%s\n' 'class Spec17Dev < Formula' \
+	  '  desc "Prebuilt development version of spec17 for Apple Silicon"' \
+	  '  homepage "https://spec17.dev"' \
+	  "  $$url" '  version "$(DEV_VERSION)"' "  sha256 \"$$sha\"" '' \
+	  '  depends_on :macos' '  depends_on arch: :arm64' \
+	  '  conflicts_with "spec17", because: "both install a spec17 binary"' '' \
+	  '  def install' '    bin.install "spec17"' '  end' '' \
+	  '  test do' '    system "#{bin}/spec17", "--version"' '  end' 'end' > Formula/spec17-dev.rb; \
+	echo "Commit and push Formula/spec17-dev.rb to publish spec17-dev."
 
 report:
 	cargo run -q -p spec17 -- --root "$(ROOT)" report
