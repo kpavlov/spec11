@@ -1,0 +1,111 @@
+name: tap
+# (NFR-10) Generate the formula after all uploads and before manual promotion.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Prerelease tag to write the formula for, e.g. v0.1.0"
+        required: true
+permissions:
+  contents: write
+concurrency: tap
+env:
+  TAG: ${{ inputs.tag }}
+  GH_TOKEN: ${{ github.token }}
+jobs:
+  tap:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+      - name: Write the formula from the release archives
+        env:
+          PRIVATE: ${{ github.event.repository.private }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          [[ "$TAG" =~ ^v[0-9][0-9A-Za-z.+-]*$ ]] || { echo "not a version tag: $TAG"; exit 1; }
+          [ "$(gh release view "$TAG" --json isPrerelease,isDraft --jq '.isPrerelease and (.isDraft | not)')" = true ] \
+            || { echo "$TAG must be a published prerelease"; exit 1; }
+          manifest=$(gh api --method GET "repos/$GITHUB_REPOSITORY/contents/Cargo.toml" \
+            --raw-field "ref=refs/tags/$TAG" --header 'Accept: application/vnd.github.raw+json')
+          V=$(sed -n 's/^version = "\(.*\)"/\1/p' <<< "$manifest" | head -1)
+          case "$TAG" in "v$V" | "v$V"-?*) ;; *) echo "tag $TAG does not match the Cargo version v$V"; exit 1 ;; esac
+          API=https://api.github.com/repos/$GITHUB_REPOSITORY/releases/assets
+          prefix=spec17-$V
+          gh release download "$TAG" -p "$prefix-*.tar.gz" -p "$prefix-*.tar.gz.sha256" \
+            -p "$prefix-windows-x86_64.zip" -p "$prefix-windows-x86_64.zip.sha256" -D dl
+          (
+            cd dl
+            mac=()
+            for f in "$prefix"-darwin-{aarch64,x86_64}.tar.gz; do
+              if [[ -f "$f" ]]; then mac+=("$f"); fi
+            done
+            (( ${#mac[@]} )) || { echo "missing a macOS archive"; exit 1; }
+            for f in "$prefix"-linux-{x86_64,aarch64}.tar.gz "$prefix-windows-x86_64.zip" "${mac[@]}"; do
+              [[ -f "$f" && -f "$f.sha256" ]] || { echo "missing $f or its checksum"; exit 1; }
+              read -r expected _ < "$f.sha256"
+              actual=$(sha256sum "$f")
+              [[ "${actual%% *}" = "$expected" ]] || { echo "checksum mismatch for $f"; exit 1; }
+            done
+          )
+
+          # a private repo needs the API asset URL and a token; a public one the plain download URL
+          url_of() {
+            if [ "$PRIVATE" = true ]; then
+              id=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq ".assets[] | select(.name==\"$1\") | .id")
+              printf 'url "%s", using: :curl, headers: ["Accept: application/octet-stream", "Authorization: token #{ENV["HOMEBREW_GITHUB_API_TOKEN"]}"]' "$API/$id"
+            else
+              printf 'url "https://github.com/%s/releases/download/%s/%s"' "$GITHUB_REPOSITORY" "$TAG" "$1"
+            fi
+          }
+
+          # one block per archive the release has: <brew os> <asset os>
+          section() {
+            local body="" part pair kind arch f
+            for pair in arm:aarch64 intel:x86_64; do
+              kind=${pair%%:*}; arch=${pair##*:}
+              f=dl/$prefix-$2-$arch.tar.gz
+              [ -f "$f" ] || continue
+              printf -v part '    on_%s do\n      %s\n      sha256 "%s"\n    end\n' "$kind" "$(url_of "$(basename "$f")")" "$(sha256sum "$f" | cut -d' ' -f1)"
+              body+=$part
+            done
+            [ -z "$body" ] || printf '  on_%s do\n%s  end\n\n' "$1" "$body"
+          }
+
+          mkdir -p Formula
+          {
+            printf 'class Spec17 < Formula\n  desc "CLI, MCP server and web dashboard for spec-driven-development evidence"\n  homepage "https://spec17.dev"\n  version "%s"\n\n' "$V"
+            # brew install --HEAD: build the default branch from source; the build tools are needed for that only
+            printf '  head do\n    url "https://github.com/%s.git", branch: "%s"\n    depends_on "node" => :build\n    depends_on "pnpm" => :build\n    depends_on "rust" => :build\n  end\n\n' "$GITHUB_REPOSITORY" "$DEFAULT_BRANCH"
+            section macos darwin
+            section linux linux
+            printf '%s\n' \
+              '  def install' \
+              '    if build.head?' \
+              '      cd "web" do' \
+              '        system "pnpm", "install", "--frozen-lockfile", "--store-dir", buildpath/".pnpm-store"' \
+              '        system "pnpm", "run", "build"' \
+              '      end' \
+              '      ENV["SKIP_WEB_BUILD"] = "1"' \
+              '      system "cargo", "install", *std_cargo_args(path: "server")' \
+              '    else' \
+              '      bin.install "spec17"' \
+              '    end' \
+              '  end' \
+              '' \
+              '  test do' \
+              '    system "#{bin}/spec17", "--version"' \
+              '  end' \
+              'end'
+          } > Formula/spec17.rb
+          cat Formula/spec17.rb
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/spec17.rb
+          git diff --cached --quiet && exit 0
+          git commit -m "spec17 ${TAG#v}"
+          git pull --rebase && git push

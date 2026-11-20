@@ -17,6 +17,25 @@ One Rust binary, three interfaces over the same core:
 
 It replaces the earlier Python scripts (output is identical; `make parity` can diff against a vendored copy of them).
 
+## Quickstart
+
+Install the tagged release with Homebrew once the tap contains a release formula.
+
+```sh
+brew tap kpavlov/spec17 https://github.com/kpavlov/spec17
+brew install kpavlov/spec17/spec17
+```
+
+From the project you want to scan, run `spec17 report` for a terminal summary or `spec17` to open the dashboard.
+
+```sh
+cd /path/to/your/repo
+spec17 report
+spec17
+```
+
+For agent setup, see [Install the skill and connect an MCP client](#install-the-skill-and-connect-an-mcp-client).
+
 ## Conventions it reads
 
 - Spec bullets: `- **ABC-12** MUST|SHOULD|MAY — text` in `specs/*.md` (also single files such as `SPEC.md`, IDs up to 4 digits, links `[ADR-0003](decisions/0003-x.md)` as reference docs, plain/backtick IDs, `ID:`, `*`/numbered lists, `SHALL`, `| ID | MUST | text |` rows, `### ID: title` headings and `**ID** title` paragraphs with the level or EARS `shall` anywhere in the block, OpenSpec `### Requirement: ID name`, IDs like `FR-001`, `AC-1.2`, `REQ_001` but not `UTF-8`; UTF-8 files with or without a BOM; patterns in `core/resources/spec_format.toml`)
@@ -77,6 +96,65 @@ spec17 --stdio-mcp --no-http-mcp --no-ui
 Add `"--root", "/path/to/repo"` to `args` if the MCP client launches spec17 outside the intended workspace. `--stdio-mcp` enables stdin and stdout for MCP. `--no-ui` disables the browser dashboard and `/api/info`. `--no-http-mcp` disables `/mcp` on every listener. The browser dashboard needs HTTP MCP to load its data.
 
 Tools: `report`, `status`, `changes` (what changed against a ref or in one commit: files, renames, deleted files and requirements, and the requirements the changed lines touch; also `spec17://changes`), `diff` (one changed file, with the requirements each hunk touches), `history` (commits not on the base branch), `commits` (the newest commit that touched each requirement, with its author, date and subject, by git blame: who last changed the specification; the dashboard's "reviewed" flag is kept against it), `blame` (`path`, `lines`: who last changed those lines of a scanned file, e.g. a test), `trace`, `overlap`, `uncovered`, `file`, `source`, `dashboard`, `module` (hide or show a module: adds it to or removes it from `.spec17ignore`), and `install_status` / `install` / `uninstall` (`server=codegraph` adds or removes only the CodeGraph MCP entry) / `codegraph` (`action=init|sync|refresh`; `refresh` syncs whenever an index exists, also beside a running codegraph); the last three write files. Plain-text resources with the same output as `report`, `status`, `uncovered` and `overlap`: `spec17://report`, `spec17://status`, `spec17://uncovered`, `spec17://overlap`; prefer them where the client reads resources (a client on 2026-07-28 can also `subscriptions/listen` to them and is notified when the repo changes). The tools stay for clients without resource support and for arguments. The same four as JSON (`spec17://report.json`, `status.json`, `uncovered.json`, `overlap.json`), typed by JSON Schemas readable at `spec17://schemas/<name>`; the tools declare them as `outputSchema`. Read-only JSON resources: `spec17://modules` (modules by build manifest, with CodeGraph symbols and the modules each depends on) and `spec17://tests` (test cases detected by marker, grouped by module, with the requirement IDs tagged on each; detected, not run). The dashboard is also an MCP Apps resource (`ui://spec17/dashboard`) for hosts that render it: only the `dashboard` tool opens it, and its optional `view` (e.g. `modules`, `requirements/DOC-25?state=none`) picks the page; elsewhere use the URL from `dashboard`.
+
+## Build and install locally
+
+To build you need Rust (stable), Node and pnpm (its version is pinned by `packageManager` in `web/package.json`). The release build embeds the web UI; the binary needs none of the three at runtime.
+
+```sh
+make build         # target/release/spec17 (pnpm install, the UI build, then cargo build --release)
+make install       # cargo install --path server --locked --force: spec17 goes to ~/.cargo/bin, which must be on your PATH
+spec17 --version   # then: spec17 doctor
+make uninstall     # cargo uninstall spec17
+```
+
+Without `make`:
+
+```sh
+(cd web && pnpm install --frozen-lockfile && pnpm run build)
+SKIP_WEB_BUILD=1 cargo install --path server --locked   # or: cargo build --release, then target/release/spec17
+```
+
+`SKIP_WEB_BUILD=1` skips the UI build that `build.rs` runs for release builds, once `web/dist` exists. `make dist` also packs `dist/spec17-<version>-<os>-<arch>.tar.gz` with a `.sha256`. To use spec17 on a repo after installing, see "Install the skill and connect an MCP client" below.
+
+## Releases
+
+For a tagged release, start from a clean checkout with the version set in `Cargo.toml`. Push the tag and dispatch the Linux x86_64, Linux ARM64, and Windows x86_64 builds:
+
+```sh
+git tag v0.1.0
+git push origin v0.1.0
+gh workflow run prerelease.yml -f tag=v0.1.0
+```
+
+On a Mac, build, sign, and upload its native archive to the same prerelease. The Mac and CI uploads can happen in either order.
+
+```sh
+git checkout v0.1.0
+make upload TAG=v0.1.0
+```
+
+Once all uploads finish, dispatch tap generation. It verifies the Linux and Windows assets and at least one Mac archive against their uploaded checksums, then pushes `Formula/spec17.rb` to the default branch. Rerun it if you replace an archive. After the tap run succeeds, promote the release by hand:
+
+```sh
+gh workflow run tap.yml -f tag=v0.1.0
+# Wait for the tap workflow to succeed before promoting.
+gh release edit v0.1.0 --prerelease=false --latest
+```
+
+Archives are named `spec17-<version>-<os>-<arch>.tar.gz` (`.zip` on Windows), each with a `.sha256` file. Use `make dist` to package locally. The Mac build signs ad hoc by default. Set `SIGN_IDENTITY` on `make upload` or `make dist` to use another signing identity. Run the upload on each Mac architecture you want to ship. Uploads require an authenticated `gh`, and tap generation requires permission for the workflow token to push to the default branch.
+
+### HEAD builds
+
+On a Mac with a clean `main` matching `origin/main`, run `make upload-edge` to build, sign, and replace that architecture's archive on the [rolling edge prerelease](https://github.com/kpavlov/spec17/releases/tag/edge). The rolling tag and release notes identify the built commit.
+
+After adding the tap in the [quickstart](#quickstart), use Homebrew's HEAD installation to check out the default branch and build locally with Node, pnpm, and Rust.
+
+```sh
+brew install --HEAD kpavlov/spec17/spec17
+```
+
+If the repository is private, set `HOMEBREW_GITHUB_API_TOKEN` to a token with repository read access for the tagged archive download.
 
 ## Benchmark
 

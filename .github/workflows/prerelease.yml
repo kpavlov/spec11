@@ -1,0 +1,83 @@
+name: prerelease
+# (NFR-02) Build Linux and Windows for an existing tag. macOS uploads to the same prerelease.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build, e.g. v0.1.0"
+        required: true
+permissions:
+  contents: write
+concurrency:
+  group: prerelease-${{ inputs.tag }}
+env:
+  TAG: ${{ inputs.tag }}
+  GH_TOKEN: ${{ github.token }}
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+      - name: Ensure the prerelease exists
+        run: |
+          set -euo pipefail
+          V=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          # (NFR-03) Read the version from the tagged checkout.
+          case "$TAG" in "v$V" | "v$V"-?*) ;; *) echo "tag $TAG does not match the Cargo version v$V"; exit 1 ;; esac
+          gh release view "$TAG" >/dev/null 2>&1 \
+            || gh release create "$TAG" --prerelease --generate-notes --title "$TAG" --verify-tag \
+            || gh release view "$TAG" >/dev/null
+          [ "$(gh release view "$TAG" --json isPrerelease,isDraft --jq '.isPrerelease and (.isDraft | not)')" = true ] \
+            || { echo "$TAG must be a published prerelease"; exit 1; }
+  build:
+    needs: release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, name: linux-x86_64 }
+          - { os: ubuntu-24.04-arm, name: linux-aarch64 }
+          - { os: windows-latest, name: windows-x86_64 }
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+      - uses: pnpm/action-setup@v6 # the version comes from `packageManager` in web/package.json
+        with:
+          package_json_file: web/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: |
+          (cd web && pnpm install --frozen-lockfile && pnpm run build)
+          SKIP_WEB_BUILD=1 cargo build --release --locked -p spec17
+      - name: Smoke test and package
+        run: |
+          V=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          version=$(target/release/spec17 --version | tr -d '\r' | sed -n '1p')
+          [ "$version" = "spec17 $V" ]
+          N=spec17-$V-${{ matrix.name }}
+          mkdir dist
+          if [ "$RUNNER_OS" = Windows ]; then
+            (cd target/release && 7z a -tzip "../../dist/$N.zip" spec17.exe)
+          else
+            tar -czf "dist/$N.tar.gz" -C target/release spec17
+          fi
+          (cd dist && for f in "$N".*; do sha256sum "$f" > "$f.sha256"; done)
+      - name: Upload to the prerelease
+        run: |
+          # (NFR-04) Recheck after the build in case someone promoted the release.
+          [ "$(gh release view "$TAG" --json isPrerelease,isDraft --jq '.isPrerelease and (.isDraft | not)')" = true ] \
+            || { echo "$TAG must be a published prerelease"; exit 1; }
+          gh release upload "$TAG" dist/* --clobber
