@@ -196,12 +196,18 @@ pub struct Lang {
     /// None when `spec17.json` lists both `src` and `tests` and does not set this profile's `test`: the folders say it all.
     test: Option<Regex>,
     pub(crate) case: Regex,
+    /// `case` matches a call: the name is its quoted string.
+    pub(crate) call: bool,
 }
 
 impl Lang {
     fn new(p: &detect::Profile, test: bool) -> Result<Lang, String> {
         let r = |s: &str| Regex::new(s).map_err(|e| format!("profile {}: bad regex {s}: {e}", p.name));
-        Ok(Lang { comment: p.comment.clone(), decl: r(&p.decl)?, assert: r(&p.assert)?, off: r(&p.off)?, test: if test { Some(r(&p.test)?) } else { None }, case: r(&p.case)? })
+        let decl = r(&p.decl)?;
+        if decl.captures_len() < 2 && p.decl != detect::NEVER {
+            return Err(format!("profile {}: decl {} needs a capture group 1 for the declared name", p.name, p.decl));
+        }
+        Ok(Lang { comment: p.comment.clone(), decl, assert: r(&p.assert)?, off: r(&p.off)?, test: if test { Some(r(&p.test)?) } else { None }, case: r(&p.case)?, call: p.call })
     }
 
     /// The text after the first line-comment marker of `line`.
@@ -360,11 +366,11 @@ impl Project {
         let files: Vec<String> = indexed.map(|v| v.into_iter().filter(|f| !ignore.hides(f)).collect()).unwrap_or_else(|| detect::walk(&root, &allow, &ignore).iter().filter_map(|f| f.strip_prefix(&root).ok()).map(|f| f.to_string_lossy().replace('\\', "/")).collect());
         let profiles = detect::profiles(&cfg.profiles)?;
         // a hand-written src/tests list keeps the user's meaning: no profile's test-path regex, unless spec17.json sets it
-        let own = |p: &detect::Profile| cfg.profiles.iter().find(|e| e.get("name").and_then(|n| n.as_str()) == Some(&p.name));
-        let tests_by_path: Vec<bool> = profiles.iter().map(|p| cfg.src.is_empty() || cfg.tests.is_empty() || own(p).is_some_and(|e| e.contains_key("test"))).collect();
-        // (SCAN-34) a bad regex in spec17.json is an error here, not a panic on first use
-        for (p, &t) in profiles.iter().zip(&tests_by_path).filter(|(p, _)| own(p).is_some()) {
-            Lang::new(p, t)?;
+        let own = |p: &detect::Profile| cfg.profiles.iter().filter(|e| e.get("name").and_then(|n| n.as_str()) == Some(&p.name)).collect::<Vec<_>>();
+        let tests_by_path: Vec<bool> = profiles.iter().map(|p| cfg.src.is_empty() || cfg.tests.is_empty() || own(p).iter().any(|e| e.contains_key("test"))).collect();
+        // (SCAN-34) a bad regex in spec17.json is an error here, not a panic on first use; `test` too, which `cfg.detect` compiles
+        for p in profiles.iter().filter(|p| !own(p).is_empty()) {
+            Lang::new(p, true)?;
         }
         let main = cfg.detect(&profiles, &files);
         let rx = Rx::new()?;
@@ -741,7 +747,7 @@ impl Project {
     /// declaration (only comment, doc and attribute lines between), else the nearest above.
     pub fn enclosing(&self, rel: &str, n: usize) -> String {
         let (ls, lang) = (self.lines(rel), self.lang(rel));
-        let decl = |l: &String| lang.decl.captures(l).map(|m| m[1].to_string());
+        let decl = |l: &String| lang.decl.captures(l).and_then(|m| m.get(1)).map(|m| m.as_str().to_string());
         let lead = |l: &&String| { let l = l.trim_start(); lang.is_comment(l) || l.starts_with("#[") || l.starts_with('@') };
         if lang.is_comment(ls[n - 1].trim_start()) && let Some(d) = ls[n..].iter().skip_while(lead).next().and_then(decl) {
             return d;
