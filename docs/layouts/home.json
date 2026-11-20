@@ -1,0 +1,5 @@
+{{- $docs := slice -}}
+{{- range site.Pages -}}
+  {{- $docs = $docs | append (dict "title" .Title "url" .RelPermalink "text" (.Plain | htmlUnescape | replaceRE `\s+` " ")) -}}
+{{- end -}}
+{{- $docs | jsonify -}}

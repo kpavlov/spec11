@@ -58,6 +58,8 @@ make report                   # text report
 make test                     # cargo tests
 make parity                   # Rust output == the old Python scripts' output (needs them vendored in ROOT)
 make bench                    # time the scan at main vs HEAD (see Benchmark)
+make docs                     # build the Hugo site in docs/ into docs/public (Hugo >= 0.146)
+make site                     # Hugo dev server with live reload on :1313
 make dev ROOT=/path/to/repo PORT=7500 OPEN=0
 ```
 
@@ -234,6 +236,7 @@ core/     spec17-core: scan, config, report, coverage, codegraph (the only SQL)
 server/   spec17 binary: CLI, axum API, MCP (rmcp), UI serving
 web/      Svelte 5 + Vite (no SvelteKit), builds to one dist/index.html
 skills/   the agent skill (SKILL.md), embedded in the binary
+docs/     Hugo site for spec17.dev (make docs); .github/workflows/pages.yml publishes it to GitHub Pages
 bench/    bench.py: before/after timings (make bench)
 ```
 

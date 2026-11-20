@@ -1,0 +1,12 @@
+baseURL = "https://spec17.dev/"
+title = "spec17"
+disableKinds = ["section", "taxonomy", "term", "rss"]
+
+[module.hugoVersion]
+  min = "0.146.0" # layouts/all.html
+
+[markup.highlight]
+  noClasses = false # CSS classes, coloured by static/syntax.css (light and dark)
+
+[outputs]
+  home = ["html", "json"] # json: index.json for search.js

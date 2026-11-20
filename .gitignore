@@ -8,3 +8,6 @@ __pycache__/
 dist/
 .DS_Store
 .idea
+docs/public/
+docs/resources/
+.hugo_build.lock
