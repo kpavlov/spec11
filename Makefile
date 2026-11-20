@@ -71,7 +71,11 @@ uninstall:
 release-build:
 	cd web && pnpm install --frozen-lockfile && pnpm run build
 	SKIP_WEB_BUILD=1 cargo build --release --locked -p spec17
-	@set -o pipefail; version=$$($(BIN) --version | sed -n '1p') && [ "$$version" = "spec17 $(VERSION)" ]
+	@set -eo pipefail; \
+	expected="spec17 $(VERSION)"; \
+	if [ -n "$$SPEC17_DEV_HASH" ]; then expected="$$expected-dev+$$SPEC17_DEV_HASH ($$SPEC17_DEV_DATE)"; fi; \
+	version=$$($(BIN) --version | sed -n '1p'); \
+	[ "$$version" = "$$expected" ] || { echo "expected $$expected, got $$version"; exit 1; }
 
 dist: $(if $(filter darwin,$(OS)),sign,release-build)
 	@mkdir -p dist
@@ -101,14 +105,16 @@ upload: check-tag
 # (NFR-05) Keep the rolling edge release, with a distinct archive for each dev build.
 upload-edge: release-dev
 
-release-dev: DEV_VERSION := $(shell date -u +%Y%m%d%H%M%S)
+release-dev: DEV_STAMP := $(shell date -u '+%Y%m%d%H%M%S %Y-%m-%dT%H:%M:%SZ')
+release-dev: DEV_VERSION = $(word 1,$(DEV_STAMP))
 release-dev:
 	@[ "$(OS)-$(ARCH)" = darwin-aarch64 ] || { echo "release-dev: Apple Silicon macOS only"; exit 1; }
 	@git fetch -q origin main
 	@[ "$$(git branch --show-current)" = main ] || { echo "release-dev runs on main"; exit 1; }
 	@[ "$$(git rev-parse HEAD)" = "$$(git rev-parse origin/main)" ] || { echo "HEAD is not origin/main"; exit 1; }
 	@[ -z "$$(git status --porcelain)" ] || { echo "uncommitted changes: the archive would not be main"; exit 1; }
-	@$(MAKE) --no-print-directory dist LABEL="dev.$(DEV_VERSION)"
+	@SPEC17_DEV_HASH="$$(git rev-parse --short=12 HEAD)" SPEC17_DEV_DATE="$(word 2,$(DEV_STAMP))" \
+	  $(MAKE) --no-print-directory dist LABEL="dev.$(DEV_VERSION)"
 	@set -e; \
 	file=$(call archive,dev.$(DEV_VERSION)); name=$${file##*/}; \
 	read -r sha _ < "$$file.sha256"; \

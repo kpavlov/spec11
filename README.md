@@ -157,6 +157,8 @@ make release-dev
 
 The command builds and signs a timestamped archive, uploads it with its checksum to the rolling prerelease, and writes `Formula/spec17-dev.rb`. Commit and push that file to publish the Homebrew update. Users get the new binary with `brew update && brew upgrade spec17-dev`. [Rolling prerelease](https://github.com/kpavlov/spec17/releases/tag/edge)
 
+`spec17 --version` and the dashboard's Setup screen show the dev build's commit and UTC build time, for example `0.1.0-dev+a91c8e8b23c4 (2026-11-20T18:08:16Z)`.
+
 Homebrew's standard HEAD option still builds the default branch locally.
 
 ```sh

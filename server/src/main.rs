@@ -41,12 +41,13 @@ const STYLES: clap::builder::Styles = clap::builder::Styles::styled()
     .literal(clap::builder::styling::AnsiColor::Green.on_default().bold())
     .placeholder(clap::builder::styling::AnsiColor::Cyan.on_default());
 
-const LONG_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "\nCopyright (c) 2026 Konstantin Pavlov, IT Staff OÜ. All rights reserved.\n", env!("CARGO_PKG_HOMEPAGE"), "\n", env!("CARGO_PKG_REPOSITORY"));
+const VERSION: &str = env!("SPEC17_VERSION");
+const LONG_VERSION: &str = concat!(env!("SPEC17_VERSION"), "\nCopyright (c) 2026 Konstantin Pavlov, IT Staff OÜ. All rights reserved.\n", env!("CARGO_PKG_HOMEPAGE"), "\n", env!("CARGO_PKG_REPOSITORY"));
 
 #[derive(Parser)]
 #[command(
     name = "spec17",
-    version,
+    version = VERSION,
     about = "Deterministic spec-driven-development evidence: evidence, not truth.",
     long_version = LONG_VERSION,
     after_help = concat!("Copyright (c) 2026 Konstantin Pavlov, IT Staff OÜ. All rights reserved. · About: ", env!("CARGO_PKG_HOMEPAGE")),
@@ -809,7 +810,7 @@ mod tests {
         std::fs::remove_dir_all(&d).ok();
     }
 
-    #[doc = "[SETUP-01, SETUP-12]"]
+    #[doc = "[SETUP-01, SETUP-12, WEB-42]"]
     #[tokio::test]
     async fn install_tools_write_the_repo_and_report_status() {
         let repo = repo();
@@ -817,6 +818,10 @@ mod tests {
         let call = |n: &str, a: &str| tool(n, a, "127.0.0.1:7411");
         let (_, body) = send(&app, call("install_status", "{}")).await;
         assert!(body.contains(r#""skill":"missing""#) && body.contains("spec17 install"), "{body}");
+        let response: serde_json::Value = serde_json::from_str(&body).unwrap();
+        let cli = <Cli as clap::CommandFactory>::command();
+        assert_eq!(response["result"]["structuredContent"]["version"], VERSION, "{body}");
+        assert_eq!(cli.render_version().lines().next(), cli.render_long_version().lines().next());
         std::fs::write(repo.join(".mcp.json"), r#"{"mcpServers":{"other":{"command":"x"}}}"#).unwrap();
         let (st, body) = send(&app, call("install", "{}")).await;
         assert_eq!(st, StatusCode::OK, "{body}");

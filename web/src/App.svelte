@@ -105,7 +105,7 @@
   });
 
   // ---- data ----
-  let setup = $state<{ status: any; suggestions: string[]; text: string } | null>(null);
+  let setup = $state<{ status: any; suggestions: string[]; text: string; version?: string } | null>(null);
   let setupError = $state("");
   let busy = $state(false);
   let checks = $state<{ name: string; level: string; detail: string; hint: string | null }[]>([]);
@@ -602,6 +602,8 @@
     {#if !setup}
       {#if setupError}<p class="error">Could not check the setup: {setupError} <button onclick={loadSetup}>Retry</button></p>{:else}<p class="muted">Checking…</p>{/if}
     {:else}
+      <!-- (WEB-42) -->
+      {#if setup.version}<p class="setup-value muted">spec17 <code>{setup.version}</code></p>{/if}
       {#snippet mcpControls(transport: "stdio" | "http", state: string, path: string, global: boolean, details?: string | null)}
         {@const label = transport === "stdio" ? "stdio MCP" : "HTTP MCP"}
         {@const present = state === "ok" || state === "other"}
