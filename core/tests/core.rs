@@ -342,7 +342,7 @@ fn every_requirement_style_of_the_test_data_parses() {
         ("HDG-1", "SHALL"), ("HDG-2", "SHALL"), ("RUL-1", "MUST"),
         ("PAR-1.1", "SHALL"), ("PAR-1.2", "SHALL"), ("PAR-1.10", "SHALL"),
         ("FR-001", "MUST"), ("FR-002", "MUST"), ("NFR-001", "SHOULD"),
-        ("REQ_001", "MUST"), ("REQ_002", "SHOULD"),
+        ("REQ_001", "MUST"), ("REQ_002", "SHOULD"), ("REQ_003.1", "MUST"), ("REQ_003.2", "MAY"),
         ("UNI-01", "MUST"), ("UNI-02", "MUST"), ("UNI-03", "SHOULD"),
     ]);
     // the negatives (A1 table rows, B-1, **Covers:**, UTF-8, ISO-8601, TLS-1.3, a level-less mention of STY-01) raise nothing
@@ -353,13 +353,15 @@ fn every_requirement_style_of_the_test_data_parses() {
     assert!(a.s["UNI-02"].done);
     // new ID forms trace end to end: test tags and source citations, a pasted non-breaking hyphen too
     let state = |i: &str| a.state[i].as_str();
-    assert_eq!([state("REQ_001"), state("PAR-1.2"), state("FR-001"), state("HDG-1"), state("UNI-03"), state("REQ_002")], ["tested", "tested", "tested", "src-only", "src-only", "none"]);
+    assert_eq!([state("REQ_001"), state("PAR-1.2"), state("FR-001"), state("HDG-1"), state("UNI-03"), state("REQ_002"), state("REQ_003.1"), state("REQ_003.2")], ["tested", "tested", "tested", "src-only", "src-only", "none", "tested", "none"]);
     assert!(!a.t.contains_key("UTF-8"));
     let r = a.report();
     assert!(r.invalid_tests.values().all(Vec::is_empty), "{:?}", r.invalid_tests);
     assert_eq!(spec17_core::scan::sorted_ids(a.s.keys().filter(|i| i.starts_with("PAR"))), ["PAR-1.1", "PAR-1.2", "PAR-1.10"]);
     assert_eq!(spec17_core::scan::ranges(["FR-001", "FR-002", "REQ_001", "REQ_002", "SEC-4"]), "FR-001..002,REQ_001..002,SEC-04");
     assert_eq!(spec17_core::scan::ranges(["PAR-1.1", "PAR-1.2", "HDG-1"]), "PAR-1.1..2,HDG-01");
+    assert_eq!(spec17_core::scan::sorted_ids(a.s.keys().filter(|i| i.starts_with("REQ_003"))), ["REQ_003.1", "REQ_003.2"]);
+    assert_eq!(spec17_core::scan::ranges(["REQ_003.1", "REQ_003.2"]), "REQ_003.1..2");
     assert_eq!((a.s["HDG-1"].line, a.s["HDG-1"].end), (3, 6)); // a heading runs to the next heading, trailing blank lines left out
     // a heading with an ID but no level is reported, not counted
     let d = scratch("blocks");
