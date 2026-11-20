@@ -31,14 +31,14 @@ The URL is the view, so back/forward, reload and shared links work: `/changes`, 
 
 ## CodeGraph
 
-An optional [CodeGraph](https://github.com/colbymchenry/codegraph) index (`.codegraph/codegraph.db`, opened read-only) adds test-to-code links, overlap and uncovered-code analysis. Without it those views say "not checked"; a missing index is not an error. `spec17 doctor --fix` or the dashboard's Setup tab can create or refresh it, only when you ask.
+An optional [CodeGraph](https://github.com/colbymchenry/codegraph) index (`.codegraph/codegraph.db`, opened read-only) adds test-to-code links, overlap and uncovered-code analysis. Without it `report` and the dashboard say "not checked" or "not available", and everything else works. The commands and tools that need the index (`spec17 overlap`, `uncovered`, `status --overlap`, `status --uncovered`, and the matching MCP tools) fail with "no .codegraph index here" instead: the CLI exits 1, the tools return an error. `spec17 doctor --fix` or the dashboard's Setup tab can create or refresh it, only when you ask.
 
 ## Build from source
 
 ```sh
 make build     # target/release/spec17, UI embedded
 make install   # into ~/.cargo/bin
-make dev       # Vite + Rust server with hot reload
+make dev       # Vite dev server (hot reload) + Rust server
 make report    # text report for ROOT (default: this repo)
 ```
 

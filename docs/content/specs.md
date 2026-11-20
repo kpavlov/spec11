@@ -7,15 +7,15 @@ spec17 recognises requirement IDs in markdown, test tags in test code, and citat
 
 ## Requirement IDs
 
-An ID is a prefix of 2 to 10 capital letters or digits (the first is a letter), a `-` and 1 to 5 digits, with optional dotted parts: `ABC-12`, `REQ-0001`, `FR-001`, `AC-1.2`. An underscore works too: `REQ_001`. A non-breaking hyphen (U+2011) reads as `-`.
+An ID is a prefix of 2 to 10 capital letters or digits (the first is a letter), a `-` and 1 to 5 digits, with optional dotted parts: `ABC-12`, `REQ-0001`, `FR-001`, `AC-1.2`. An underscore works too, dotted parts included: `REQ_001`, `REQ_001.2`. A non-breaking hyphen (U+2011) reads as `-`.
 
-Well-known tokens that look like IDs are never requirements: `UTF-8`, `ISO-8601`, `TLS-1.3`, `SHA-256`, `RFC-…`, `CVE-…` and similar. `HTTP-01` is still an ID.
+Well-known tokens that look like IDs are never requirements: `UTF-8`, `ISO-8601`, `TLS-1.3`, `SHA-256`, `RFC-2119`, `CVE-2024` and similar. Only these shapes are skipped (the list is `not_id` in `core/resources/spec_format.toml`), so `HTTP-01` and `RFC-1` are still IDs.
 
-A requirement also has a level: `MUST`, `SHOULD`, `MAY` or `SHALL`. Heading and paragraph styles accept the EARS `shall` in lower case too.
+A requirement also has a level: `MUST`, `SHOULD`, `MAY` or `SHALL`. Heading and paragraph styles accept the EARS `shall` in lower case too; bullets and table rows do not, and `should` and `may` must always be capitals.
 
 ## Requirement styles
 
-spec17 reads several ways of writing a requirement, and one repo can mix them. Each style below is a small fixture repo in `core/test-data` that the tests load. Spec folders are detected, so there is nothing to configure.
+spec17 reads several ways of writing a requirement, and one repo can mix them. The styles below are small fixtures in `core/test-data` that the tests load: bullets, tables, Spec Kit, headings and paragraphs are files of the `styles` repo; OpenSpec, Kiro, Superpowers and the fallback each have a repo of their own. Spec folders are detected, so there is nothing to configure.
 
 ### Bullets
 

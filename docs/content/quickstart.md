@@ -33,7 +33,7 @@ spec17 doctor    # what spec17 found, and what is missing
 spec17 report    # coverage, problems, where to look next
 ```
 
-No config is needed: the specs folder, the source and test folders and the language are detected. `doctor` warns about optional things (a CodeGraph index, the agent skill, a Git work tree) and still works without them. A repo with no requirement lines opens with zero requirements; `doctor` tells you where spec17 looked.
+No config is needed: the specs folder, the source and test folders and the language are detected. `doctor` warns about optional things (a CodeGraph index, the agent skill and MCP entries, a Git work tree) and still works without them. A repo with no requirement lines opens with zero requirements; `doctor` tells you where spec17 looked.
 
 ## 3. Try it on a scratch repo
 
@@ -92,6 +92,7 @@ source cites (file:line  declaration):
   src/greeter.py:2  greet  # (GRT-01) greet by name
 related code (types the tests name; * = also cites the ID):
   none found
+next: codegraph explore "greet"
 ```
 
 `GRT-01` has a tagged test and a citation. `GRT-02` has neither, so it is listed as missing. `GRT-03` is `later` and not counted as due. spec17 only reads the files: it does not run the test, so a tag is evidence that a test claims the requirement, not that the requirement is met or the test passes. Add a `[GRT-02]` test and run `spec17 status` again to see it move.
