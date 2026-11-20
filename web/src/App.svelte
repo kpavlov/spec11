@@ -445,6 +445,7 @@
     return cache.get(id)!;
   }
   const req = (id: string): Route => ({ tab: "requirements", id });
+  const docs = "https://spec17.dev";
   const withId = (tab: Route["tab"], id: string): Route => ({ tab, id });
   // typing in the filter replaces the URL instead of stacking a history entry per keystroke
   const filter = (patch: Partial<Route>) => navigate(Object.assign(route, patch), true);
@@ -724,13 +725,14 @@
           {@render item("Stdio MCP", where.mcp_stdio, where.mcp_path, "stdio", launchCommand(where.mcp_details?.stdio))}
           {@render item("HTTP MCP", globalScope ? where.mcp_file : where.mcp, where.mcp_path, "http", where.mcp_details?.http_url)}
         {:else}<p>Update spec17 and restart the server to manage MCP transports.</p>{/if}
+        <p class="muted"><a href="{docs}/agents/" target="_blank" rel="noopener noreferrer">Agent docs</a>: connect a client, the tools it gets.</p>
         {#if globalScope && where.mcp !== "missing"}
           <p class="muted">Claude user MCP entry {where.mcp === "ok" ? "installed" : "customised"} · <code>~/.claude.json</code> (read-only)</p>
         {/if}
       {#if noReqs}
         <section>
           <h3>No specs yet</h3>
-          <p>spec17 found no requirements in this repo and works without them: Modules and Tests still list its sources and tests. {setup.suggestions.length ? "Install the skill, then ask" : "Ask"} your agent to draft <code>specs/01-name.md</code> with you (lines like <code>- **ABC-12** MUST — text</code>).</p>
+          <p>spec17 found no requirements in this repo and works without them: Modules and Tests still list its sources and tests. {setup.suggestions.length ? "Install the skill, then ask" : "Ask"} your agent to draft <code>specs/01-name.md</code> with you (lines like <code>- **ABC-12** MUST — text</code>). <a href="{docs}/specs/#requirement-styles" target="_blank" rel="noopener noreferrer">Requirement formats</a>.</p>
         </section>
       {/if}
       </section>
@@ -744,7 +746,7 @@
         {#if indexLog}<pre class="log" aria-live="polite">{indexLog}</pre>{/if}
         <details open={cgBin?.level !== "ok" || cgIdx?.level !== "ok" || !cgMcp}>
           <summary>{cgBin?.level === "ok" ? "Installed" : "Installation needed"} · {cgMcp ? `Connected (${cgMcp})` : "Agent disconnected"} · {cgIdx?.level === "ok" ? "Index current" : "Check index"}</summary>
-          <p class="muted">Enables test-to-code links, overlap and uncovered-code analysis.</p>
+          <p class="muted">Enables test-to-code links, overlap and uncovered-code analysis. <a href="{docs}/usage/#codegraph" target="_blank" rel="noopener noreferrer">How spec17 uses it</a>.</p>
           {#if cgBin}<p><strong>Installation</strong> · {cgBin.detail}</p>{/if}
         {#if cgBin && cgBin.level !== "ok"}
           <pre class="log">curl -fsSL https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.sh | sh
@@ -771,7 +773,7 @@ irm https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.ps1 | 
     {#if noReqs}
       <section class="hero card">
         <h2>No requirements yet</h2>
-        <p>spec17 found none. Write them as <code>- **ABC-12** MUST — text</code> in <code>specs/01-name.md</code> or <code>SPEC.md</code>, tag tests <code>[ABC-12]</code> and cite <code>// (ABC-12)</code> in code. <a href="/setup">Setup</a> installs the skill so your agent drafts them with you.</p>
+        <p>spec17 found none. Write them as <code>- **ABC-12** MUST — text</code> in <code>specs/01-name.md</code> or <code>SPEC.md</code>, tag tests <code>[ABC-12]</code> and cite <code>// (ABC-12)</code> in code. <a href="/setup">Setup</a> installs the skill so your agent drafts them with you. <a href="{docs}/specs/#requirement-styles" target="_blank" rel="noopener noreferrer">Requirement formats</a>.</p>
         {#if modules}<p class="facts muted"><a href={u({ tab: "modules" })}>{plural(sum("src_files"), "source file")}</a> · {plural(sum("test_files"), "test file")} · <a href={u({ tab: "tests" })}>{plural(sum("tests"), "test")} detected</a></p>{/if}
       </section>
     {:else}
@@ -838,6 +840,7 @@ irm https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.ps1 | 
     {/if}
     {#if invalidN}
       <Section title="Invalid tests" count={invalidN} tone="bad">
+        <p class="muted"><a href="{docs}/specs/#tests-and-citations" target="_blank" rel="noopener noreferrer">What these mean</a></p>
         {#each Object.entries(report.invalid_tests) as [kind, list]}
           {#if (list as any[]).length}<p><code>{kind}</code> {#each list as any[] as p}{@render idlink(p.id, req(p.id))} <a class="muted mono" href={u({ tab: "code", path: p.file, line: p.line })}>{p.file}:{p.line}</a> {/each}</p>{/if}
         {/each}
@@ -850,11 +853,12 @@ irm https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.ps1 | 
     {/if}
     {#if report.dangling_tests.length + report.dangling_sources.length}
       <Section title="Dangling citations" count={report.dangling_tests.length + report.dangling_sources.length} tone="warn">
+        <p class="muted"><a href="{docs}/specs/#tests-and-citations" target="_blank" rel="noopener noreferrer">What these mean</a></p>
         <p class="mono">{#if report.dangling_tests.length}tests: {report.dangling_tests.join(", ")}<br />{/if}{#if report.dangling_sources.length}sources: {report.dangling_sources.join(", ")}{/if}</p>
       </Section>
     {/if}
   {:else if route.tab === "requirements" && noReqs}
-    <p class="muted empty">No requirements found. <a href="/setup">Setup</a> says what spec17 looks for.</p>
+    <p class="muted empty">No requirements found. <a href="/setup">Setup</a> says what spec17 looks for; <a href="{docs}/specs/#requirement-styles" target="_blank" rel="noopener noreferrer">the docs</a> show the formats.</p>
   {:else if route.tab === "requirements"}
     <div class="page">
     {@render requirementToolbar()}
@@ -1001,7 +1005,7 @@ irm https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.ps1 | 
     </div>
   {:else if route.tab === "specs"}
     {#if specFiles === null}<p class="muted">Loading…</p>
-    {:else if !specFiles.length}<p class="muted empty">No spec files found. <a href="/setup">Setup</a> says what spec17 looks for.</p>
+    {:else if !specFiles.length}<p class="muted empty">No spec files found. <a href="/setup">Setup</a> says what spec17 looks for; <a href="{docs}/specs/#requirement-styles" target="_blank" rel="noopener noreferrer">the docs</a> show the formats.</p>
     {:else}
       <div class="page">
         {#if showChanged}<div class="bar"><Seg label="Changes" options={changedSeg(specFiles.filter((f) => fileOf.has(f)).length)} value={onlyChanged ? "changed" : "all"} onpick={pickChanged} /></div>{/if}
@@ -1136,7 +1140,7 @@ irm https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.ps1 | 
 
 <footer class="muted">
   Evidence, not truth: tags and citations do not prove a requirement is implemented or its test passes.
-  <div>Copyright &copy; 2026 Konstantin Pavlov, <a href="https://itstaff.ee">Staff OÜ</a>. All rights reserved. · <a href="https://spec17.dev" target="_blank" rel="noopener noreferrer">About</a> · <a href="https://github.com/kpavlov/spec17/issues" target="_blank" rel="noopener noreferrer">Feedback</a></div>
+  <div>Copyright &copy; 2026 Konstantin Pavlov, <a href="https://itstaff.ee">Staff OÜ</a>. All rights reserved. · <a href={docs} target="_blank" rel="noopener noreferrer">Documentation</a> · <a href="https://github.com/kpavlov/spec17/issues" target="_blank" rel="noopener noreferrer">Feedback</a></div>
 </footer>
 
 <style>
