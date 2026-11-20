@@ -1,11 +1,14 @@
-:root { color-scheme: light dark; --fg: #1d2023; --bg: #fff; --muted: #5d6670; --line: #d9dde2; --code: #f2f4f6; --link: #0b5fd4; }
-@media (prefers-color-scheme: dark) { :root { --fg: #e6e8ea; --bg: #14171a; --muted: #99a1a9; --line: #2b3137; --code: #1d2227; --link: #7db3ff; } }
+:root { color-scheme: light; --fg: #1d2023; --bg: #fff; --muted: #5d6670; --line: #d9dde2; --code: #f2f4f6; --link: #0b5fd4; }
 body { margin: 0; font: 16px/1.6 system-ui, sans-serif; color: var(--fg); background: var(--bg); }
 a { color: var(--link); }
 
 header { display: flex; flex-wrap: wrap; gap: .5rem 1rem; align-items: center; padding: .6rem 1rem; border-bottom: 1px solid var(--line); background: var(--bg); }
 header a { color: var(--muted); text-decoration: none; }
 header a:hover { color: var(--fg); }
+header .gh { display: inline-flex; align-items: center; gap: .65rem; }
+header .gh svg { fill: currentColor; }
+header button { font: inherit; color: var(--muted); background: none; border: 1px solid var(--line); border-radius: 6px; padding: .1rem .5rem; cursor: pointer; }
+header button:hover { color: var(--fg); }
 header .brand { color: var(--fg); font-weight: 700; }
 .search { position: relative; flex: 1 1 100%; order: 3; }
 .search input { box-sizing: border-box; width: 100%; font: inherit; padding: .4rem .6rem; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; }
