@@ -1,4 +1,4 @@
-//! Layout detection: where the specs, sources and tests of a repo are, when `spec11.json` does not say.
+//! Layout detection: where the specs, sources and tests of a repo are, when `spec17.json` does not say.
 //! Specs come from the folder conventions of spec-driven tools; sources and tests from the file list of the CodeGraph
 //! index (else a directory walk) classified by ecosystem. Symlinks are followed only into the repo root or `ALLOWED_PATHS`.
 use regex::Regex;
@@ -20,7 +20,7 @@ const SPEC_STEMS: [&str; 6] = ["SPEC", "SPECS", "SPECIFICATION", "SPECIFICATIONS
 const DECISION_DIRS: [&str; 9] = ["decisions", "adr", "adrs", "docs/adr", "docs/adrs", "docs/decisions", "doc/adr", "doc/decisions", "architecture/decisions"];
 /// Folders that never hold the project's own code.
 const SKIP: [&str; 12] = ["node_modules", "target", "build", "dist", "vendor", "venv", "site-packages", "__pycache__", "Pods", "DerivedData", "obj", "coverage"];
-/// Matches nothing: the regex of an ecosystem spec11 knows nothing about.
+/// Matches nothing: the regex of an ecosystem spec17 knows nothing about.
 pub const NEVER: &str = r"[^\s\S]";
 
 /// One ecosystem: how its files, comments, declarations and tests look. Loaded from `resources/profiles.toml`.
@@ -110,7 +110,7 @@ fn inside(p: &Path, allow: &[PathBuf]) -> bool {
     p.canonicalize().is_ok_and(|c| allow.iter().any(|a| c.starts_with(a)))
 }
 
-/// Whether a path from `spec11.json` stays in the repo (or `ALLOWED_PATHS`). One that does not exist yet only has to be a plain
+/// Whether a path from `spec17.json` stays in the repo (or `ALLOWED_PATHS`). One that does not exist yet only has to be a plain
 /// relative path, so `doctor` can still say "not found".
 pub fn confined(root: &Path, rel: &str, allow: &[PathBuf]) -> bool {
     let at = root.join(rel);
@@ -120,9 +120,9 @@ pub fn confined(root: &Path, rel: &str, allow: &[PathBuf]) -> bool {
     Path::new(rel).components().all(|c| matches!(c, std::path::Component::Normal(_) | std::path::Component::CurDir))
 }
 
-/// Files with gitignore syntax that hide paths from spec11, read from the repo root: `.aiignore` (shared with other agent
-/// tools) and `.spec11ignore` (this tool only). `.agents` (installed skills) is always hidden.
-const IGNORE_FILES: [&str; 2] = [".aiignore", ".spec11ignore"];
+/// Files with gitignore syntax that hide paths from spec17, read from the repo root: `.aiignore` (shared with other agent
+/// tools) and `.spec17ignore` (this tool only). `.agents` (installed skills) is always hidden.
+const IGNORE_FILES: [&str; 2] = [".aiignore", ".spec17ignore"];
 
 pub struct Ignore(ignore::gitignore::Gitignore);
 
@@ -138,21 +138,21 @@ impl Ignore {
         Ignore(b.build().unwrap_or_else(|_| ignore::gitignore::Gitignore::empty()))
     }
 
-    /// Modules hidden by an anchored folder line (`/server/`, what `spec_module` writes) in `.spec11ignore`.
+    /// Modules hidden by an anchored folder line (`/server/`, what `spec_module` writes) in `.spec17ignore`.
     pub fn hidden_modules(root: &Path) -> Vec<String> {
-        let text = std::fs::read_to_string(root.join(".spec11ignore")).unwrap_or_default();
+        let text = std::fs::read_to_string(root.join(".spec17ignore")).unwrap_or_default();
         let set: std::collections::BTreeSet<&str> = text.lines().filter_map(|l| l.trim().strip_prefix('/')?.strip_suffix('/')).filter(|m| !m.is_empty() && !m.contains(['*', '?', '[', '\\', '!', '#'])).collect();
         set.into_iter().map(str::to_owned).collect()
     }
 
     // (API-11, API-12)
-    /// Hide (`hidden`) or show a module folder: add or remove its anchored line in `.spec11ignore`, keeping every other line. To hide, `listed`
+    /// Hide (`hidden`) or show a module folder: add or remove its anchored line in `.spec17ignore`, keeping every other line. To hide, `listed`
     /// says the scanner lists the module; the root and anything glob-like are never hidden, so the line is that folder and nothing else.
     /// Returns what the file says now.
     pub fn set_module_hidden(root: &Path, module: &str, hidden: bool, listed: impl FnOnce() -> bool) -> Result<String, String> {
         let want = module.trim_matches('/');
         let line = format!("/{want}/");
-        let file = root.join(".spec11ignore");
+        let file = root.join(".spec17ignore");
         let mut text = std::fs::read_to_string(&file).unwrap_or_default();
         let is_hidden = Self::hidden_modules(root).iter().any(|m| m == want);
         if hidden {
@@ -171,8 +171,8 @@ impl Ignore {
             }
             text = text.lines().filter(|l| l.trim() != line).map(|l| format!("{l}\n")).collect();
         }
-        std::fs::write(&file, text).map_err(|e| format!(".spec11ignore: {e}"))?;
-        Ok(format!("{line} is {}in .spec11ignore\n", if hidden { "" } else { "not " }))
+        std::fs::write(&file, text).map_err(|e| format!(".spec17ignore: {e}"))?;
+        Ok(format!("{line} is {}in .spec17ignore\n", if hidden { "" } else { "not " }))
     }
 
     /// Whether a repo-relative path, or any folder above it, is hidden.
@@ -192,7 +192,7 @@ fn wanted(e: &DirEntry, allow: &[PathBuf]) -> bool {
 
 // (SCAN-10, SCAN-15)
 /// Files under `dir`, sorted. Symlinks are followed only when they resolve inside `allow` (its first entry is the repo root);
-/// junk folders and what `ignore` (the root's `.aiignore` / `.spec11ignore`) hides are skipped.
+/// junk folders and what `ignore` (the root's `.aiignore` / `.spec17ignore`) hides are skipped.
 pub fn walk(dir: &Path, allow: &[PathBuf], ignore: &Ignore) -> Vec<PathBuf> {
     let base = allow.first().and_then(|root| dir.canonicalize().ok()?.strip_prefix(root).ok().map(Path::to_path_buf));
     let hides = |e: &DirEntry| {

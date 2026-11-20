@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 
 /// How often a subscription looks for a change.
 const POLL: std::time::Duration = std::time::Duration::from_secs(1);
-const UI_URI: &str = "ui://spec11/dashboard";
+const UI_URI: &str = "ui://spec17/dashboard";
 use ops::{JSON_MIME, SCHEMA_MIME, TEXT_MIME};
 const UI_MIME: &str = "text/html;profile=mcp-app";
 
@@ -19,7 +19,10 @@ struct Mcp(AppState);
 
 impl ServerHandler for Mcp {
     fn get_info(&self) -> ServerConfig {
-        ServerConfig::new(ServerCapabilities::builder().enable_tools().enable_resources().enable_resources_subscribe().build()).with_instructions(format!("Deterministic spec-driven-development evidence for one repo. {}", ops::NOTE))
+        // (API-24)
+        ServerConfig::new(ServerCapabilities::builder().enable_tools().enable_resources().enable_resources_subscribe().build())
+            .with_server_info(Implementation::new(env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION")).with_website_url(env!("CARGO_PKG_HOMEPAGE")))
+            .with_instructions(format!("Deterministic spec-driven-development evidence for one repo. {}", ops::NOTE))
     }
 
     async fn list_tools(&self, _: Option<PaginatedRequestParams>, _: RequestContext<RoleServer>) -> Result<ListToolsResult, ErrorData> {
@@ -73,17 +76,17 @@ impl ServerHandler for Mcp {
             }
             r
         };
-        let mut all = vec![Resource::new(UI_URI, "spec11 dashboard").with_description("Spec-driven status dashboard (MCP Apps)").with_mime_type(UI_MIME)];
+        let mut all = vec![Resource::new(UI_URI, "spec17 dashboard").with_description("Spec-driven status dashboard (MCP Apps)").with_mime_type(UI_MIME)];
         for tool in ops::VIEW_TOOLS {
-            all.push(Resource::new(format!("spec11://{tool}"), format!("spec11 {tool}")).with_description(ops::tool_description(tool)).with_mime_type(TEXT_MIME));
+            all.push(Resource::new(format!("spec17://{tool}"), format!("spec17 {tool}")).with_description(ops::tool_description(tool)).with_mime_type(TEXT_MIME));
         }
         for tool in ops::VIEW_TOOLS {
-            all.push(json(format!("spec11://{tool}.json"), &format!("spec11 {tool} (JSON)"), ops::tool_description(tool)));
+            all.push(json(format!("spec17://{tool}.json"), &format!("spec17 {tool} (JSON)"), ops::tool_description(tool)));
         }
         all.extend(ops::RESOURCES.iter().map(|(uri, name, about, _)| json(uri.to_string(), name, about)));
         all.extend(ops::SCHEMAS.iter().map(|n| {
             let uri = format!("{}{n}", ops::SCHEMA_PREFIX);
-            Resource::new(uri, format!("spec11 {n} schema")).with_description(format!("JSON Schema of the `{n}` result: the JSON resource spec11://{n}(.json) and the structuredContent of its tool.")).with_mime_type(SCHEMA_MIME)
+            Resource::new(uri, format!("spec17 {n} schema")).with_description(format!("JSON Schema of the `{n}` result: the JSON resource spec17://{n}(.json) and the structuredContent of its tool.")).with_mime_type(SCHEMA_MIME)
         }));
         Ok(ListResourcesResult::with_all_items(all))
     }

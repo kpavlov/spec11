@@ -1,4 +1,4 @@
-//! spec11 core: deterministic spec-driven-development evidence. No CLI, HTTP or MCP here.
+//! spec17 core: deterministic spec-driven-development evidence. No CLI, HTTP or MCP here.
 pub mod changes;
 pub mod codegraph;
 pub mod config;

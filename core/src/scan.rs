@@ -200,7 +200,7 @@ pub struct Rx {
     assert: Regex,
     off: Regex,
     test: Option<Regex>,
-    /// `case` of `spec11.json`: replaces the built-in test-case markers.
+    /// `case` of `spec17.json`: replaces the built-in test-case markers.
     pub(crate) case: Option<Regex>,
 }
 
@@ -302,11 +302,11 @@ impl Project {
             Some(r) => r.canonicalize().map_err(|e| format!("{}: {e}", r.display()))?,
             None => std::env::current_dir().map_err(|e| e.to_string())?,
         };
-        // the config can move the specs folder, so look for spec11.json first
-        let base = start.ancestors().find(|d| d.join("spec11.json").exists()).unwrap_or(&start);
+        // the config can move the specs folder, so look for spec17.json first
+        let base = start.ancestors().find(|d| d.join("spec17.json").exists()).unwrap_or(&start);
         let first = Config::load(base)?;
-        // (SCAN-28) a repo with no specs still opens: only "no repo at all" is an error, so spec11 never walks `~` or `/` unasked
-        let root = if root.is_some() { start.clone() } else { find_root(&start, &first.specs).ok_or_else(|| format!("spec11: no repo here (no git work tree and no specs) in {} or above; run inside a repo or pass --root", start.display()))? };
+        // (SCAN-28) a repo with no specs still opens: only "no repo at all" is an error, so spec17 never walks `~` or `/` unasked
+        let root = if root.is_some() { start.clone() } else { find_root(&start, &first.specs).ok_or_else(|| format!("spec17: no repo here (no git work tree and no specs) in {} or above; run inside a repo or pass --root", start.display()))? };
         let mut cfg = if root == base { first } else { Config::load(&root)? };
         let allow = detect::allow_list(&root);
         let ignore = detect::Ignore::load(&root);
@@ -314,19 +314,19 @@ impl Project {
         // (SCAN-21)
         let named = [("specs", vec![cfg.specs.clone()]), ("src", cfg.src.clone()), ("tests", cfg.tests.clone()), ("codegraph", vec![cfg.codegraph.clone()])];
         if let Some((field, p)) = named.iter().find_map(|(f, ps)| ps.iter().find(|p| !p.is_empty() && !detect::confined(&root, p, &allow)).map(|p| (f, p))) {
-            return Err(format!("spec11: {field} {p} in spec11.json is outside the repo (see ALLOWED_PATHS)"));
+            return Err(format!("spec17: {field} {p} in spec17.json is outside the repo (see ALLOWED_PATHS)"));
         }
         // (SCAN-12) `specs` may name a folder or a file; left empty, the places come from the repo
         let spec_paths = if cfg.specs.is_empty() {
             let v = if read { detect::spec_paths(&root, &allow, &ignore) } else { detect::spec_places(&root, &allow, &ignore) };
-            cfg.specs = v.first().cloned().unwrap_or_default(); // the main one, as spec11.json would name it
+            cfg.specs = v.first().cloned().unwrap_or_default(); // the main one, as spec17.json would name it
             v
         } else if root.join(&cfg.specs).exists() {
             vec![cfg.specs.clone()]
         } else {
             vec![] // a configured path that is not there counts as no specs; `doctor` says so
         };
-        // (SCAN-09) what spec11.json leaves out comes from the CodeGraph file list, else from a walk of the repo
+        // (SCAN-09) what spec17.json leaves out comes from the CodeGraph file list, else from a walk of the repo
         let graph = Graph::open(&root.join(&cfg.codegraph));
         let indexed = graph.as_ref().ok().and_then(Option::as_ref).and_then(|g| g.file_paths().ok());
         let files: Vec<String> = indexed.map(|v| v.into_iter().filter(|f| !ignore.hides(f)).collect()).unwrap_or_else(|| detect::walk(&root, &allow, &ignore).iter().filter_map(|f| f.strip_prefix(&root).ok()).map(|f| f.to_string_lossy().replace('\\', "/")).collect());
@@ -340,7 +340,7 @@ impl Project {
         self.graph.take().unwrap_or_else(|| Graph::open(&self.root.join(&self.cfg.codegraph)))
     }
 
-    /// Whether `.aiignore`, `.spec11ignore` or the built-in `.agents` rule hides this repo-relative path.
+    /// Whether `.aiignore`, `.spec17ignore` or the built-in `.agents` rule hides this repo-relative path.
     pub fn ignored(&self, rel: &str) -> bool {
         self.ignore.hides(rel)
     }
@@ -715,7 +715,7 @@ impl Project {
         let r = Command::new("git").args(args).current_dir(&self.root).output().map_err(|e| format!("git: {e}"))?;
         if !r.status.success() {
             // the first line only: outside a work tree git follows its warning with a page of usage text
-            return Err(format!("spec11: git {} failed: {}", args.join(" "), String::from_utf8_lossy(&r.stderr).lines().next().unwrap_or("").trim()));
+            return Err(format!("spec17: git {} failed: {}", args.join(" "), String::from_utf8_lossy(&r.stderr).lines().next().unwrap_or("").trim()));
         }
         Ok(String::from_utf8_lossy(&r.stdout).into_owned())
     }

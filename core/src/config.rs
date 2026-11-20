@@ -1,4 +1,4 @@
-//! `spec11.json` at the repo root. Every field is optional: an empty one is detected from the repo (see `detect.rs`).
+//! `spec17.json` at the repo root. Every field is optional: an empty one is detected from the repo (see `detect.rs`).
 use crate::detect::{self, Layout};
 use serde::Deserialize;
 use std::path::Path;
@@ -18,7 +18,7 @@ pub struct Config {
     pub decl: String,
     /// A test body containing a match has a direct assertion.
     pub assert: String,
-    /// A line matching this opens a test case (default: the ecosystem's marker `#[test]`, `@Test`, `it(` …); read by the `spec11://tests` resource.
+    /// A line matching this opens a test case (default: the ecosystem's marker `#[test]`, `@Test`, `it(` …); read by the `spec17://tests` resource.
     pub case: String,
     /// A test head containing a match is switched off.
     pub off: String,
@@ -31,14 +31,14 @@ pub struct Config {
     pub infra_paths: Vec<String>,
 }
 
-/// The CodeGraph index when `spec11.json` names none.
+/// The CodeGraph index when `spec17.json` names none.
 pub const DEFAULT_DB: &str = ".codegraph/codegraph.db";
 
 impl Config {
     // (SCAN-06)
-    /// `spec11.json` of `root`, or the defaults; `codegraph` is never empty after this.
+    /// `spec17.json` of `root`, or the defaults; `codegraph` is never empty after this.
     pub fn load(root: &Path) -> Result<Config, String> {
-        let f = root.join("spec11.json");
+        let f = root.join("spec17.json");
         let mut cfg = if f.exists() {
             let text = std::fs::read_to_string(&f).map_err(|e| format!("{}: {e}", f.display()))?;
             serde_json::from_str(&text).map_err(|e| format!("{}: {e}", f.display()))?
@@ -73,7 +73,7 @@ impl Config {
         self.never();
     }
 
-    /// Regexes that are still empty match nothing (an ecosystem spec11 does not know).
+    /// Regexes that are still empty match nothing (an ecosystem spec17 does not know).
     fn never(&mut self) {
         for r in [&mut self.decl, &mut self.assert, &mut self.off] {
             if r.is_empty() {

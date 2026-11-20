@@ -1,13 +1,13 @@
-//! `spec11 install` / `uninstall`: the skill ships inside the binary and is written to `<base>/skills/spec11/SKILL.md`.
+//! `spec17 install` / `uninstall`: the skill ships inside the binary and is written to `<base>/skills/spec17/SKILL.md`.
 use serde::Serialize;
 use serde_json::{Map, Value, json};
 use std::path::{Path, PathBuf};
 
-const NAME: &str = "spec11";
-const STDIO_NAME: &str = "spec11-stdio";
+const NAME: &str = "spec17";
+const STDIO_NAME: &str = "spec17-stdio";
 const STDIO_FLAGS: [&str; 3] = ["--stdio-mcp", "--no-http-mcp", "--no-ui"];
 const CODEGRAPH: &str = "codegraph";
-const SKILL: &str = include_str!("../../skills/spec11/SKILL.md");
+const SKILL: &str = include_str!("../../skills/spec17/SKILL.md");
 
 /// `<repo>/.agents/skills` or `~/.agents/skills`.
 pub fn skills_dir(root: Option<&Path>, global: bool) -> Result<PathBuf, String> {
@@ -66,14 +66,14 @@ fn write_config(f: &Path, m: Map<String, Value>) -> Result<(), String> {
 }
 
 // (SETUP-01, SETUP-02)
-/// Adds `mcpServers.spec11` to `<base>/.mcp.json`, creating the file if needed. Other servers and keys are kept as they are.
+/// Adds `mcpServers.spec17` to `<base>/.mcp.json`, creating the file if needed. Other servers and keys are kept as they are.
 pub fn add_mcp(base: &Path, port: u16) -> Result<(PathBuf, McpChange), String> {
     add_server(base, NAME, json!({"type": "http", "url": format!("http://127.0.0.1:{port}/mcp")}), true)
 }
 
 // (SETUP-13)
 fn add_stdio_mcp(base: &Path, global: bool) -> Result<(PathBuf, McpChange), String> {
-    let command = std::env::current_exe().map_err(|e| format!("Locate the spec11 executable: {e}"))?;
+    let command = std::env::current_exe().map_err(|e| format!("Locate the spec17 executable: {e}"))?;
     let mut args = STDIO_FLAGS.map(Value::from).to_vec();
     if !global {
         args.extend([json!("--root"), serde_json::to_value(base).map_err(|e| e.to_string())?]);
@@ -108,7 +108,7 @@ fn add_server(base: &Path, name: &str, entry: Value, replace: bool) -> Result<(P
 }
 
 // (SETUP-03)
-/// Removes `mcpServers.spec11` and keeps the config file even if there are no servers left.
+/// Removes `mcpServers.spec17` and keeps the config file even if there are no servers left.
 pub fn remove_mcp(base: &Path) -> Result<(PathBuf, McpChange), String> {
     remove_server(base, NAME)
 }
@@ -131,7 +131,7 @@ fn remove_server(base: &Path, name: &str) -> Result<(PathBuf, McpChange), String
 
 /// The repo root for project installs (`--root`, else the nearest ancestor with specs or a git work tree; else the cwd).
 pub fn repo_root(root: Option<&Path>) -> Result<PathBuf, String> {
-    spec11_core::scan::Project::open(root).map(|p| p.root).or_else(|_| root.map(Path::to_path_buf).map_or_else(|| std::env::current_dir().map_err(|e| e.to_string()), Ok))
+    spec17_core::scan::Project::open(root).map(|p| p.root).or_else(|_| root.map(Path::to_path_buf).map_or_else(|| std::env::current_dir().map_err(|e| e.to_string()), Ok))
 }
 
 fn home() -> Result<PathBuf, String> {
@@ -146,7 +146,7 @@ pub enum SkillState {
     Missing,
 }
 
-/// `Ok`: an http entry for this port; `Other`: a spec11 entry that points elsewhere. For the `codegraph` entry only `Ok` and `Missing` apply.
+/// `Ok`: an http entry for this port; `Other`: a spec17 entry that points elsewhere. For the `codegraph` entry only `Ok` and `Missing` apply.
 #[derive(Clone, Copy, PartialEq, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum McpState {
@@ -272,23 +272,23 @@ pub fn status(root: Option<&Path>, port: u16) -> Result<InstallStatus, String> {
     })
 }
 
-/// One line per thing a person should do after `status`; empty when the agent can already use spec11 here.
+/// One line per thing a person should do after `status`; empty when the agent can already use spec17 here.
 pub fn suggestions(st: &InstallStatus) -> Vec<String> {
     use {McpState as M, SkillState as S};
     let (p, g) = (&st.project, &st.global);
     let mut out = vec![];
     if p.skill == S::Missing && g.skill == S::Missing {
-        out.push("skill not installed: `spec11 install` (this repo) or `spec11 install --global`".to_string());
+        out.push("skill not installed: `spec17 install` (this repo) or `spec17 install --global`".to_string());
     } else if p.skill == S::Outdated || (p.skill == S::Missing && g.skill == S::Outdated) {
-        out.push("installed skill is out of date: run `spec11 install`".to_string());
+        out.push("installed skill is out of date: run `spec17 install`".to_string());
     }
     if ![p.mcp, p.mcp_stdio, g.mcp, g.mcp_file, g.mcp_stdio].contains(&M::Ok) {
-        out.push(if p.mcp == M::Other { "the spec11 entry in .mcp.json differs from this server: `spec11 install --port N` updates it" } else { "MCP entry missing: `spec11 install`" }.to_string());
+        out.push(if p.mcp == M::Other { "the spec17 entry in .mcp.json differs from this server: `spec17 install --port N` updates it" } else { "MCP entry missing: `spec17 install`" }.to_string());
     }
     out
 }
 
-/// `install` (`add`) or `uninstall` with `server=codegraph` (SETUP-10): only the CodeGraph entry of the repo's `.mcp.json`; the skill and the spec11 entry are left alone.
+/// `install` (`add`) or `uninstall` with `server=codegraph` (SETUP-10): only the CodeGraph entry of the repo's `.mcp.json`; the skill and the spec17 entry are left alone.
 pub fn apply_codegraph(root: Option<&Path>, add: bool) -> Result<Vec<String>, String> {
     let base = repo_root(root)?;
     let (f, change) = if add { add_codegraph(&base)? } else { remove_codegraph(&base)? };
@@ -336,7 +336,7 @@ pub fn apply(root: Option<&Path>, global: bool, port: Option<u16>, only: Option<
         return Ok(out);
     }
     if global && only.is_none() && port.is_none() {
-        out.push("mcp    use `spec11 uninstall --global --only mcp` to remove the HTTP entry from ~/.mcp.json".into());
+        out.push("mcp    use `spec17 uninstall --global --only mcp` to remove the HTTP entry from ~/.mcp.json".into());
         return Ok(out);
     }
     let base = if global { home()? } else { repo_root(root)? };
@@ -366,12 +366,12 @@ mod tests {
     #[test]
     fn the_skill_lists_every_tool() {
         for t in crate::ops::tools().iter() {
-            assert!(SKILL.contains(&format!("`{}`", t.name)), "skills/spec11/SKILL.md does not list the `{}` tool", t.name);
+            assert!(SKILL.contains(&format!("`{}`", t.name)), "skills/spec17/SKILL.md does not list the `{}` tool", t.name);
         }
     }
 
     fn tmp(tag: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("spec11-skill-{tag}-{}", std::process::id()));
+        let d = std::env::temp_dir().join(format!("spec17-skill-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         d
@@ -379,8 +379,8 @@ mod tests {
 
     #[doc = "[SETUP-01]"]
     #[test]
-    fn embedded_skill_is_the_spec11_skill() {
-        assert!(SKILL.starts_with("---\nname: spec11\n"));
+    fn embedded_skill_is_the_spec17_skill() {
+        assert!(SKILL.starts_with("---\nname: spec17\n"));
         assert!(!SKILL.contains("python3") && !SKILL.contains(".py"), "no Python left in the skill");
     }
 
@@ -391,9 +391,9 @@ mod tests {
         let f = install(&dir).unwrap();
         assert_eq!(std::fs::read_to_string(&f).unwrap(), SKILL);
         install(&dir).unwrap();
-        std::fs::write(dir.join("spec11/notes.txt"), "mine").unwrap();
+        std::fs::write(dir.join("spec17/notes.txt"), "mine").unwrap();
         assert_eq!(uninstall(&dir).unwrap(), Some(f.clone()));
-        assert!(!f.exists() && dir.join("spec11/notes.txt").exists());
+        assert!(!f.exists() && dir.join("spec17/notes.txt").exists());
         assert_eq!(uninstall(&dir).unwrap(), None);
     }
 
@@ -403,7 +403,7 @@ mod tests {
         let dir = tmp("b");
         install(&dir).unwrap();
         uninstall(&dir).unwrap();
-        assert!(!dir.join("spec11").exists());
+        assert!(!dir.join("spec17").exists());
     }
 
     #[doc = "[SETUP-01]"]
@@ -417,13 +417,13 @@ mod tests {
         assert!(matches!(add_mcp(&d, 7411).unwrap().1, McpChange::Added));
         let v: Value = serde_json::from_str(&std::fs::read_to_string(&f).unwrap()).unwrap();
         assert_eq!(v["mcpServers"]["codegraph"]["command"], "codegraph");
-        assert_eq!(v["mcpServers"]["spec11"]["url"], "http://127.0.0.1:7411/mcp");
+        assert_eq!(v["mcpServers"]["spec17"]["url"], "http://127.0.0.1:7411/mcp");
         assert_eq!(v.as_object().unwrap().keys().next().unwrap(), "zeta", "key order kept");
         assert!(matches!(add_mcp(&d, 7411).unwrap().1, McpChange::Unchanged));
         assert!(matches!(add_mcp(&d, 7500).unwrap().1, McpChange::Updated));
         assert!(matches!(remove_mcp(&d).unwrap().1, McpChange::Removed));
         let v: Value = serde_json::from_str(&std::fs::read_to_string(&f).unwrap()).unwrap();
-        assert!(v["mcpServers"].get("spec11").is_none() && v["mcpServers"]["codegraph"].is_object() && v["zeta"] == 1);
+        assert!(v["mcpServers"].get("spec17").is_none() && v["mcpServers"]["codegraph"].is_object() && v["zeta"] == 1);
         assert!(matches!(remove_mcp(&d).unwrap().1, McpChange::Absent));
     }
 
@@ -455,7 +455,7 @@ mod tests {
         assert!(st.project.skill == SkillState::Current && st.project.mcp == McpState::Ok);
         assert!(suggestions(&st).is_empty(), "{:?}", suggestions(&st));
         assert!(status(Some(&repo), 7500).unwrap().project.mcp == McpState::Other);
-        std::fs::write(repo.join(".agents/skills/spec11/SKILL.md"), "old").unwrap();
+        std::fs::write(repo.join(".agents/skills/spec17/SKILL.md"), "old").unwrap();
         assert!(status(Some(&repo), 7411).unwrap().project.skill == SkillState::Outdated);
         apply(Some(&repo), false, None, None, McpTransport::Http).unwrap();
         assert!(status(Some(&repo), 7411).unwrap().project.skill == SkillState::Missing);
@@ -477,8 +477,8 @@ mod tests {
             assert_eq!(stdio.args, servers[STDIO_NAME]["args"].as_array().unwrap().iter().map(|v| v.as_str().unwrap()).collect::<Vec<_>>());
         }
         let custom = json!({
-            "spec11": {"url": "http://127.0.0.1:7423/mcp?token=secret"},
-            "spec11-stdio": {"type":"stdio", "command":"spec11", "args":["--token", "secret"], "env":{"TOKEN":"secret"}},
+            "spec17": {"url": "http://127.0.0.1:7423/mcp?token=secret"},
+            "spec17-stdio": {"type":"stdio", "command":"spec17", "args":["--token", "secret"], "env":{"TOKEN":"secret"}},
         });
         let details = mcp_details(custom.as_object().unwrap(), None);
         assert!(details.http_url.is_none() && details.stdio.is_none());
@@ -512,7 +512,7 @@ mod tests {
         assert!(matches!(add_codegraph(&d).unwrap().1, McpChange::Unchanged));
         let v: Value = serde_json::from_str(&std::fs::read_to_string(&f).unwrap()).unwrap();
         assert_eq!((v["mcpServers"]["codegraph"]["command"].as_str(), v["mcpServers"]["other"]["command"].as_str()), (Some("mine"), Some("x")));
-        // the spec11 entry is added by its own install, and does not touch codegraph
+        // the spec17 entry is added by its own install, and does not touch codegraph
         add_mcp(&d, 7411).unwrap();
         assert!(status(Some(&d), 7411).unwrap().project.mcp == McpState::Ok);
         let v: Value = serde_json::from_str(&std::fs::read_to_string(&f).unwrap()).unwrap();
@@ -530,7 +530,7 @@ mod tests {
         let d = tmp("h");
         let f = d.join(".mcp.json");
         assert!(matches!(remove_codegraph(&d).unwrap().1, McpChange::Absent)); // no file, nothing to do
-        std::fs::write(&f, r#"{"mcpServers": {"codegraph": {"command": "mine", "env": {"A": "1"}}, "spec11": {"type": "http", "url": "http://127.0.0.1:7411/mcp"}, "other": {"command": "x"}}, "keep": 1}"#).unwrap();
+        std::fs::write(&f, r#"{"mcpServers": {"codegraph": {"command": "mine", "env": {"A": "1"}}, "spec17": {"type": "http", "url": "http://127.0.0.1:7411/mcp"}, "other": {"command": "x"}}, "keep": 1}"#).unwrap();
         assert!(matches!(remove_codegraph(&d).unwrap().1, McpChange::Removed));
         let v: Value = serde_json::from_str(&std::fs::read_to_string(&f).unwrap()).unwrap();
         assert!(v["mcpServers"].get("codegraph").is_none() && v["mcpServers"]["other"]["command"] == "x" && v["keep"] == 1);

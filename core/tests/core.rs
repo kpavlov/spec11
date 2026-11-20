@@ -1,5 +1,5 @@
 use rusqlite::Connection;
-use spec11_core::{Analysis, StatusOpts, codegraph::{Graph, GraphError}, scan::Project};
+use spec17_core::{Analysis, StatusOpts, codegraph::{Graph, GraphError}, scan::Project};
 use std::{fs, path::{Path, PathBuf}};
 
 fn write(dir: &Path, rel: &str, text: &str) {
@@ -10,9 +10,9 @@ fn write(dir: &Path, rel: &str, text: &str) {
 
 /// A tiny repo that exercises every state and issue kind.
 fn fixture(name: &str) -> PathBuf {
-    let d = std::env::temp_dir().join(format!("spec11-{}-{name}", std::process::id()));
+    let d = std::env::temp_dir().join(format!("spec17-{}-{name}", std::process::id()));
     let _ = fs::remove_dir_all(&d);
-    write(&d, "spec11.json", r#"{"tests":["tests"],"src":["src"],"ext":["swift"]}"#);
+    write(&d, "spec17.json", r#"{"tests":["tests"],"src":["src"],"ext":["swift"]}"#);
     write(&d, "specs/01-demo.md", "\
 - **DEM-01** MUST — tested thing.
 - **DEM-02** MUST — only cited in src.
@@ -83,24 +83,24 @@ fn same_tree_same_text() {
 
 #[doc = "[SCAN-06]"]
 #[test]
-fn config_comes_from_spec11_json_or_defaults() {
+fn config_comes_from_spec17_json_or_defaults() {
     let a = Analysis::load(Some(&fixture("config"))).unwrap();
     assert_eq!((a.p.cfg.tests.clone(), a.p.cfg.src.clone(), a.p.cfg.ext.clone()), (vec!["tests".to_string()], vec!["src".to_string()], vec!["swift".to_string()]));
 
-    let bare = std::env::temp_dir().join(format!("spec11-{}-bare", std::process::id()));
+    let bare = std::env::temp_dir().join(format!("spec17-{}-bare", std::process::id()));
     let _ = fs::remove_dir_all(&bare);
     write(&bare, "specs/01-a.md", "- **AAA-01** MUST — one.\n");
     let a = Analysis::load(Some(&bare)).unwrap();
     assert_eq!(a.p.cfg.specs, "specs");
     assert!(a.p.cfg.ext.is_empty() && a.p.cfg.src.is_empty()); // nothing to detect from
 
-    write(&bare, "spec11.json", r#"{"case": "("}"#);
+    write(&bare, "spec17.json", r#"{"case": "("}"#);
     let err = Analysis::load(Some(&bare)).err().expect("a bad case regex is an error");
     assert!(err.contains("bad regex"), "{err}");
 
-    write(&bare, "spec11.json", "{not json");
-    let err = Analysis::load(Some(&bare)).err().expect("a broken spec11.json is an error");
-    assert!(err.contains("spec11.json"), "{err}");
+    write(&bare, "spec17.json", "{not json");
+    let err = Analysis::load(Some(&bare)).err().expect("a broken spec17.json is an error");
+    assert!(err.contains("spec17.json"), "{err}");
 }
 
 #[doc = "[GRAPH-03]"]
@@ -149,9 +149,9 @@ fn status_listing_and_trace() {
 #[doc = "[SCAN-29]"]
 #[test]
 fn a_citation_above_a_doc_comment_belongs_to_the_declaration_below() {
-    let d = std::env::temp_dir().join(format!("spec11-{}-enclosing", std::process::id()));
+    let d = std::env::temp_dir().join(format!("spec17-{}-enclosing", std::process::id()));
     let _ = fs::remove_dir_all(&d);
-    write(&d, "spec11.json", r#"{"tests":["tests"],"src":["src"],"ext":["rs"]}"#);
+    write(&d, "spec17.json", r#"{"tests":["tests"],"src":["src"],"ext":["rs"]}"#);
     write(&d, "specs/01-demo.md", "- **DEM-01** MUST — a.\n- **DEM-02** MUST — b.\n- **DEM-03** MUST — c.\n- **DEM-04** MUST — d.\n");
     write(&d, "src/lib.rs", "\
 fn before() {}
@@ -210,13 +210,13 @@ fn codegraph_links_tests_to_code() {
     assert_eq!(a.verdict("DEM-01"), "ok");
     // a tag on the line above the test function (Rust's `#[doc = "[ID]"]`) links too: `b` starts one line below DEM-05's tag
     // and code in a second src dir links too, shown repo-relative (the first src dir's prefix is dropped)
-    write(&d, "spec11.json", r#"{"tests":["tests"],"src":["src","lib"],"ext":["swift"]}"#);
+    write(&d, "spec17.json", r#"{"tests":["tests"],"src":["src","lib"],"ext":["swift"]}"#);
     Connection::open(d.join(".codegraph/codegraph.db")).unwrap().execute_batch("insert into nodes values ('t2','function','b','b','tests/DemoTests.swift',5,6,null), ('n3','function','c','c','lib/Other.swift',1,1,null); insert into edges(source,target,kind) values ('t2','n2','calls'), ('t2','n3','calls');").unwrap();
     let a = Analysis::load(Some(&d)).unwrap();
     assert_eq!(a.links.as_ref().unwrap()["DEM-05"].iter().collect::<Vec<_>>(), ["lib/Other.swift", "src/Demo.swift"]);
     assert_eq!(a.status(&StatusOpts { all: true, ..Default::default() }).unwrap().rows.iter().find(|r| r.id == "DEM-05").unwrap().graph, ["lib/Other.swift", "Demo.swift"]);
     // a dir that is both src and tests (Rust's inline tests): its file is linked and its calls are followed to `d` in src/Deep.swift
-    write(&d, "spec11.json", r#"{"tests":["tests","lib"],"src":["src","lib"],"ext":["swift"]}"#);
+    write(&d, "spec17.json", r#"{"tests":["tests","lib"],"src":["src","lib"],"ext":["swift"]}"#);
     Connection::open(d.join(".codegraph/codegraph.db")).unwrap().execute_batch("insert into nodes values ('n4','function','d','d','src/Deep.swift',1,1,null); insert into edges(source,target,kind) values ('n3','n4','calls');").unwrap();
     let a = Analysis::load(Some(&d)).unwrap();
     assert_eq!(a.links.as_ref().unwrap()["DEM-05"].iter().collect::<Vec<_>>(), ["lib/Other.swift", "src/Deep.swift", "src/Demo.swift"]);
@@ -238,14 +238,14 @@ fn codegraph_schema_drift_is_an_error_not_a_panic() {
 #[doc = "[SCAN-09]"]
 #[test]
 fn every_profile_compiles() {
-    for p in spec11_core::detect::PROFILES.iter() {
+    for p in spec17_core::detect::PROFILES.iter() {
         for rx in [&p.decl, &p.assert, &p.off, &p.test, &p.case] {
             regex::Regex::new(rx).unwrap_or_else(|e| panic!("{}: {rx}: {e}", p.name));
         }
         assert!(p.decl.contains('('), "{}: decl needs a name group", p.name);
     }
     // spec_format.toml: group 1 of a requirement line is the ID, so the patterns may not capture
-    let f = &*spec11_core::scan::FORMAT;
+    let f = &*spec17_core::scan::FORMAT;
     for rx in [&f.level, &f.block_level, &f.done, &f.removed, &f.unnamed].into_iter().chain(&f.id).chain(&f.line).chain(&f.block) {
         let r = regex::Regex::new(rx).unwrap_or_else(|e| panic!("spec_format.toml: {rx}: {e}"));
         assert_eq!(r.captures_len(), 1, "spec_format.toml: {rx} needs (?:...) groups");
@@ -254,9 +254,9 @@ fn every_profile_compiles() {
 
 #[doc = "[SCAN-09]"]
 #[test]
-fn layout_is_detected_when_spec11_json_is_missing() {
-    use spec11_core::detect::{layout, spec_dir};
-    let d = std::env::temp_dir().join(format!("spec11-{}-detect", std::process::id()));
+fn layout_is_detected_when_spec17_json_is_missing() {
+    use spec17_core::detect::{layout, spec_dir};
+    let d = std::env::temp_dir().join(format!("spec17-{}-detect", std::process::id()));
     let _ = fs::remove_dir_all(&d);
     write(&d, "docs/specs/01-a.md", "- **AAA-01** MUST — one.\n");
     write(&d, "docs/guide.md", "no requirements here\n");
@@ -269,8 +269,8 @@ fn layout_is_detected_when_spec11_json_is_missing() {
     assert!(a.c.contains_key("AAA-01"));
 
     // spec folders: a generic docs/ counts only with a requirement bullet; Ruby's spec/ holds tests, not specs
-    let allow = |p: &Path| spec11_core::detect::allow_list(p);
-    let e = std::env::temp_dir().join(format!("spec11-{}-detect2", std::process::id()));
+    let allow = |p: &Path| spec17_core::detect::allow_list(p);
+    let e = std::env::temp_dir().join(format!("spec17-{}-detect2", std::process::id()));
     let _ = fs::remove_dir_all(&e);
     write(&e, "docs/guide.md", "prose\n");
     write(&e, "spec/a_spec.rb", "describe 1\n");
@@ -293,7 +293,7 @@ fn layout_is_detected_when_spec11_json_is_missing() {
     assert_eq!(l(&["README.md"]), None);
 
     // colocated tests (Go, TS) are told apart from sources by name, so a citation in a test is not a source citation
-    let g = std::env::temp_dir().join(format!("spec11-{}-detect3", std::process::id()));
+    let g = std::env::temp_dir().join(format!("spec17-{}-detect3", std::process::id()));
     let _ = fs::remove_dir_all(&g);
     write(&g, "specs/01.md", "- **GOO-01** MUST — x.\n");
     write(&g, "internal/a.go", "package a\n// (GOO-01)\nfunc A() {}\n");
@@ -307,7 +307,7 @@ fn layout_is_detected_when_spec11_json_is_missing() {
 #[doc = "[SCAN-11]"]
 #[test]
 fn lenient_spec_formats() {
-    let d = std::env::temp_dir().join(format!("spec11-{}-lenient", std::process::id()));
+    let d = std::env::temp_dir().join(format!("spec17-{}-lenient", std::process::id()));
     let _ = fs::remove_dir_all(&d);
     write(&d, "specs/a.md", "\
 - LEN-01 MUST — plain.
@@ -357,9 +357,9 @@ fn every_requirement_style_of_the_test_data_parses() {
     assert!(!a.t.contains_key("UTF-8"));
     let r = a.report();
     assert!(r.invalid_tests.values().all(Vec::is_empty), "{:?}", r.invalid_tests);
-    assert_eq!(spec11_core::scan::sorted_ids(a.s.keys().filter(|i| i.starts_with("PAR"))), ["PAR-1.1", "PAR-1.2", "PAR-1.10"]);
-    assert_eq!(spec11_core::scan::ranges(["FR-001", "FR-002", "REQ_001", "REQ_002", "SEC-4"]), "FR-001..002,REQ_001..002,SEC-04");
-    assert_eq!(spec11_core::scan::ranges(["PAR-1.1", "PAR-1.2", "HDG-1"]), "PAR-1.1..2,HDG-01");
+    assert_eq!(spec17_core::scan::sorted_ids(a.s.keys().filter(|i| i.starts_with("PAR"))), ["PAR-1.1", "PAR-1.2", "PAR-1.10"]);
+    assert_eq!(spec17_core::scan::ranges(["FR-001", "FR-002", "REQ_001", "REQ_002", "SEC-4"]), "FR-001..002,REQ_001..002,SEC-04");
+    assert_eq!(spec17_core::scan::ranges(["PAR-1.1", "PAR-1.2", "HDG-1"]), "PAR-1.1..2,HDG-01");
     assert_eq!((a.s["HDG-1"].line, a.s["HDG-1"].end), (3, 6)); // a heading runs to the next heading, trailing blank lines left out
     // a heading with an ID but no level is reported, not counted
     let d = scratch("blocks");
@@ -419,7 +419,7 @@ fn openspec_superpowers_kiro_and_fallback_layouts() {
 }
 
 fn scratch(name: &str) -> PathBuf {
-    let d = std::env::temp_dir().join(format!("spec11-{}-{name}", std::process::id()));
+    let d = std::env::temp_dir().join(format!("spec17-{}-{name}", std::process::id()));
     let _ = fs::remove_dir_all(&d);
     d
 }
@@ -434,7 +434,7 @@ fn specs_in_a_single_file_or_anywhere() {
     assert_eq!(a.s["REQ-0001"].file, "SPEC.md");
 
     let named = scratch("namedfile");
-    write(&named, "spec11.json", r#"{"specs":"design/all.md"}"#);
+    write(&named, "spec17.json", r#"{"specs":"design/all.md"}"#);
     write(&named, "design/all.md", "1. NAM-01 SHALL do it.\n");
     assert_eq!(Analysis::load(Some(&named)).unwrap().s["NAM-01"].file, "design/all.md");
 
@@ -448,7 +448,7 @@ fn specs_in_a_single_file_or_anywhere() {
 #[test]
 fn linked_docs_and_adrs_are_reference_docs() {
     let d = scratch("adr");
-    write(&d, "spec11.json", r#"{"src":["src"],"tests":["tests"],"ext":["kt"],"comment":["//"]}"#);
+    write(&d, "spec17.json", r#"{"src":["src"],"tests":["tests"],"ext":["kt"],"comment":["//"]}"#);
     write(&d, "docs/arch/drivers.md", "\
 The fold ([state-machine.md](state-machine.md)) decides nothing; see
 [ADR\x2D0003](../../decisions/0003-patterns.md) \u{a7}5 and [ADR\x2D0009](../../decisions/0009-gone.md).
@@ -474,7 +474,7 @@ Also [site](https://example.com/ADR\x2D0004.md).
 #[test]
 fn modules_and_test_cases() {
     let d = scratch("modules");
-    write(&d, "spec11.json", r#"{"specs":"SPEC.md","src":["a/src","b/src","web/src"],"tests":["a/tests","b/src"],"ext":["rs","ts"],"comment":["//"],"test_files":"\\.test\\.ts$"}"#);
+    write(&d, "spec17.json", r#"{"specs":"SPEC.md","src":["a/src","b/src","web/src"],"tests":["a/tests","b/src"],"ext":["rs","ts"],"comment":["//"],"test_files":"\\.test\\.ts$"}"#);
     write(&d, "SPEC.md", "- MOD-01 MUST — x.\n");
     for m in ["a", "b"] {
         write(&d, &format!("{m}/Cargo.toml"), "[package]\n");
@@ -522,9 +522,9 @@ fn modules_and_test_cases() {
 #[doc = "[SCAN-10]"]
 #[test]
 fn symlinks_are_followed_only_inside_root_or_allowed_paths() {
-    let d = std::env::temp_dir().join(format!("spec11-{}-links", std::process::id()));
-    let out = std::env::temp_dir().join(format!("spec11-{}-links-out", std::process::id()));
-    let ok = std::env::temp_dir().join(format!("spec11-{}-links-ok", std::process::id()));
+    let d = std::env::temp_dir().join(format!("spec17-{}-links", std::process::id()));
+    let out = std::env::temp_dir().join(format!("spec17-{}-links-out", std::process::id()));
+    let ok = std::env::temp_dir().join(format!("spec17-{}-links-ok", std::process::id()));
     for x in [&d, &out, &ok] {
         let _ = fs::remove_dir_all(x);
     }
@@ -533,7 +533,7 @@ fn symlinks_are_followed_only_inside_root_or_allowed_paths() {
     write(&d, "real/b.py", "# (LNK-01)\n");
     write(&out, "c.py", "# (LNK-01)\n");
     write(&ok, "e.py", "# (LNK-01)\n");
-    write(&d, "spec11.json", r#"{"src":["src"],"tests":["tests"],"ext":["py"]}"#);
+    write(&d, "spec17.json", r#"{"src":["src"],"tests":["tests"],"ext":["py"]}"#);
     let (inside, outside, allowed) = (d.join("src/inside"), d.join("src/outside"), d.join("src/allowed"));
     std::os::unix::fs::symlink(d.join("real"), &inside).unwrap();
     std::os::unix::fs::symlink(&out, &outside).unwrap();
@@ -551,16 +551,16 @@ fn symlinks_are_followed_only_inside_root_or_allowed_paths() {
 #[test]
 fn ignore_files_and_agents_are_left_out() {
     let d = scratch("ignored");
-    write(&d, "spec11.json", r#"{"src":["src"],"tests":["tests"],"ext":["kt"],"comment":["//"]}"#);
+    write(&d, "spec17.json", r#"{"src":["src"],"tests":["tests"],"ext":["kt"],"comment":["//"]}"#);
     write(&d, "specs/a.md", "- AAA-01 MUST — one.\n");
     write(&d, ".aiignore", "# generated\nsrc/gen/\n");
-    write(&d, ".spec11ignore", "src/skip.kt\n*.tmp.kt\n!src/keep.tmp.kt\n");
+    write(&d, ".spec17ignore", "src/skip.kt\n*.tmp.kt\n!src/keep.tmp.kt\n");
     for f in ["src/a.kt", "src/skip.kt", "src/x.tmp.kt", "src/keep.tmp.kt", "src/gen/g.kt", "src/.agents/s.kt"] {
         write(&d, f, "class X\n");
     }
-    let p = spec11_core::scan::Project::open(Some(&d)).unwrap();
+    let p = spec17_core::scan::Project::open(Some(&d)).unwrap();
     assert_eq!(p.src_files(), ["src/a.kt", "src/keep.tmp.kt"]);
-    for hidden in ["src/skip.kt", "src/gen/g.kt", ".agents/skills/spec11/SKILL.md", "src/.agents"] {
+    for hidden in ["src/skip.kt", "src/gen/g.kt", ".agents/skills/spec17/SKILL.md", "src/.agents"] {
         assert!(p.ignored(hidden), "{hidden}");
     }
     assert!(!p.ignored("src/a.kt") && !p.ignored("src/keep.tmp.kt"));
@@ -569,7 +569,7 @@ fn ignore_files_and_agents_are_left_out() {
 #[doc = "[SCAN-16]"]
 #[test]
 fn hunks_map_to_changed_lines() {
-    let h = spec11_core::changes::parse_hunks("--- a/specs/a.md\n+++ b/specs/a.md\n@@ -1,0 +2,3 @@\n+x\n+y\n+z\n@@ -9 +11 @@\n-old\n+new\n--- a/gone.rs\n+++ /dev/null\n@@ -5,2 +4,0 @@\n-a\n-b\n");
+    let h = spec17_core::changes::parse_hunks("--- a/specs/a.md\n+++ b/specs/a.md\n@@ -1,0 +2,3 @@\n+x\n+y\n+z\n@@ -9 +11 @@\n-old\n+new\n--- a/gone.rs\n+++ /dev/null\n@@ -5,2 +4,0 @@\n-a\n-b\n");
     let a = &h["specs/a.md"];
     assert_eq!((a[0].new_start, a[0].new_len, a[0].added.len()), (2, 3, 3));
     assert_eq!((a[1].new_start, a[1].removed.as_slice(), a[1].added.as_slice()), (11, ["old".to_string()].as_slice(), ["new".to_string()].as_slice()));
@@ -580,37 +580,37 @@ fn hunks_map_to_changed_lines() {
 #[doc = "[SCAN-21]"]
 #[test]
 fn config_paths_cannot_leave_the_repo() {
-    let d = std::env::temp_dir().join(format!("spec11-{}-confined", std::process::id()));
+    let d = std::env::temp_dir().join(format!("spec17-{}-confined", std::process::id()));
     let _ = fs::remove_dir_all(&d);
     write(&d, "specs/01-a.md", "- **AAA-01** MUST — one.\n");
     for (field, value) in [("src", r#"["../outside"]"#), ("tests", r#"["/etc"]"#), ("codegraph", r#""../x.db""#), ("specs", r#""../specs""#)] {
-        write(&d, "spec11.json", &format!(r#"{{"{field}": {value}}}"#));
+        write(&d, "spec17.json", &format!(r#"{{"{field}": {value}}}"#));
         let err = Analysis::load(Some(&d)).err().unwrap_or_else(|| panic!("{field} outside the repo must be refused"));
         assert!(err.contains(field) && err.contains("outside the repo"), "{err}");
     }
-    write(&d, "spec11.json", r#"{"src": ["src"], "tests": ["missing/tests"]}"#); // inside, even if absent: doctor says "not found"
+    write(&d, "spec17.json", r#"{"src": ["src"], "tests": ["missing/tests"]}"#); // inside, even if absent: doctor says "not found"
     assert!(Analysis::load(Some(&d)).is_ok());
 }
 
 #[doc = "[SCAN-17]"]
 #[test]
 fn consecutive_ids_print_as_a_range() {
-    assert_eq!(spec11_core::scan::ranges(["DOC-01", "DOC-02", "DOC-03", "DOC-07", "SEC-4"]), "DOC-01..03,DOC-07,SEC-04");
+    assert_eq!(spec17_core::scan::ranges(["DOC-01", "DOC-02", "DOC-03", "DOC-07", "SEC-4"]), "DOC-01..03,DOC-07,SEC-04");
 }
 
 #[doc = "[SCAN-08]"]
 #[test]
 fn a_tests_body_stops_at_its_closing_brace() {
     let ls: Vec<String> = ["@Test(\"[A-1]\")", "func f() {", "  x()", "}", "other"].iter().map(|s| s.to_string()).collect();
-    assert_eq!(spec11_core::scan::body(&ls, 1, 200).len(), 4);
+    assert_eq!(spec17_core::scan::body(&ls, 1, 200).len(), 4);
 }
 
 #[doc = "[SCAN-18, SCAN-19]"]
 #[test]
 fn changes_split_staged_unstaged_and_untracked() {
-    use spec11_core::ChangeOpts;
+    use spec17_core::ChangeOpts;
     let d = scratch("changes");
-    write(&d, "spec11.json", r#"{"src":["src"],"tests":["tests"],"ext":["kt"],"comment":["//"]}"#);
+    write(&d, "spec17.json", r#"{"src":["src"],"tests":["tests"],"ext":["kt"],"comment":["//"]}"#);
     write(&d, "specs/a.md", "- **AAA-01** MUST — one.\n- **AAA-02** MUST — two.\n");
     write(&d, "src/a.kt", "// (AAA-01)\nclass A\n");
     write(&d, "src/b.kt", "// (AAA-02)\nclass B\n");
@@ -623,7 +623,7 @@ fn changes_split_staged_unstaged_and_untracked() {
     write(&d, "specs/a.md", "- **AAA-01** MUST — one.\n- **AAA-02** MUST — two, edited.\n"); // unstaged
     write(&d, "src/c.kt", "// (AAA-01)\nclass C\n"); // untracked
     let changes = |o: ChangeOpts| Analysis::load(Some(&d)).unwrap().changes(&o).unwrap();
-    let states = |c: &spec11_core::Changes| c.files.iter().map(|f| format!("{}:{}:{}:{}", f.path, f.change, f.stage, f.kind)).collect::<Vec<_>>();
+    let states = |c: &spec17_core::Changes| c.files.iter().map(|f| format!("{}:{}:{}:{}", f.path, f.change, f.stage, f.kind)).collect::<Vec<_>>();
     let all = changes(ChangeOpts::default());
     assert_eq!(states(&all), ["specs/a.md:modified:unstaged:spec", "src/a.kt:modified:staged:src", "src/c.kt:added:untracked:src"]);
     assert_eq!(all.requirements.iter().map(|r| (r.id.as_str(), r.changed.join(","))).collect::<Vec<_>>(), [("AAA-01", "src".to_string()), ("AAA-02", "spec".to_string())]);
@@ -648,7 +648,7 @@ fn changes_split_staged_unstaged_and_untracked() {
 #[doc = "[SCAN-22]"]
 #[test]
 fn changes_list_requirements_whose_tests_reach_a_changed_file() {
-    use spec11_core::ChangeOpts;
+    use spec17_core::ChangeOpts;
     let d = fixture("reach");
     index(&d, true);
     let git = |a: &[&str]| assert!(std::process::Command::new("git").args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(a).current_dir(&d).output().unwrap().status.success(), "{a:?}");
@@ -669,10 +669,10 @@ fn changes_list_requirements_whose_tests_reach_a_changed_file() {
 #[doc = "[SCAN-18, SCAN-19, SCAN-20]"]
 #[test]
 fn changes_by_ref_commit_rename_delete_whitespace_and_history() {
-    use spec11_core::ChangeOpts;
+    use spec17_core::ChangeOpts;
     let d = scratch("changes2");
-    write(&d, "spec11.json", r#"{"src":["src"],"tests":["tests"],"ext":["kt"],"comment":["//"]}"#);
-    write(&d, ".spec11ignore", "hidden/\n");
+    write(&d, "spec17.json", r#"{"src":["src"],"tests":["tests"],"ext":["kt"],"comment":["//"]}"#);
+    write(&d, ".spec17ignore", "hidden/\n");
     write(&d, "specs/a.md", "- **AAA-01** MUST — one.\n- **AAA-02** MUST — two.\n- **AAA-03** MUST — three.\n");
     write(&d, "tests/AT.kt", "// [AAA\x2D01]\nfun t1() {\n    check(1)\n}\n\n// [AAA\x2D02]\nfun t2() {\n    check(2)\n}\n");
     write(&d, "src/old.kt", "// (AAA-01)\nfun f() {\n    1\n}\n");
@@ -699,8 +699,8 @@ fn changes_by_ref_commit_rename_delete_whitespace_and_history() {
     // working tree: whitespace-only edit
     write(&d, "src/new.kt", "// (AAA-01)\nfun f() {\n      1\n}\n");
     let a = Analysis::load(Some(&d)).unwrap();
-    let ids = |c: &spec11_core::Changes| c.requirements.iter().map(|r| format!("{}:{}", r.id, r.changed.join("+"))).collect::<Vec<_>>();
-    let paths = |c: &spec11_core::Changes| c.files.iter().map(|f| format!("{}:{}:{}", f.path, f.change, f.stage)).collect::<Vec<_>>();
+    let ids = |c: &spec17_core::Changes| c.requirements.iter().map(|r| format!("{}:{}", r.id, r.changed.join("+"))).collect::<Vec<_>>();
+    let paths = |c: &spec17_core::Changes| c.files.iter().map(|f| format!("{}:{}:{}", f.path, f.change, f.stage)).collect::<Vec<_>>();
 
     // against HEAD: only the whitespace edit; ignoring whitespace leaves nothing
     let head = a.changes(&ChangeOpts::default()).unwrap();
@@ -752,9 +752,9 @@ fn changes_by_ref_commit_rename_delete_whitespace_and_history() {
 #[doc = "[SCAN-20]"]
 #[test]
 fn history_leaves_out_commits_the_filters_hide() {
-    use spec11_core::ChangeOpts;
+    use spec17_core::ChangeOpts;
     let d = scratch("history_filters");
-    write(&d, "spec11.json", r#"{"src":["src"],"tests":["tests"],"ext":["kt"],"comment":["//"]}"#);
+    write(&d, "spec17.json", r#"{"src":["src"],"tests":["tests"],"ext":["kt"],"comment":["//"]}"#);
     write(&d, "specs/a.md", "- **AAA-01** MUST — one.\n");
     write(&d, "notes.txt", "n\n");
     let git = |a: &[&str]| {
@@ -778,9 +778,9 @@ fn history_leaves_out_commits_the_filters_hide() {
 #[doc = "[SCAN-18]"]
 #[test]
 fn braces_in_strings_do_not_stretch_a_unit() {
-    use spec11_core::ChangeOpts;
+    use spec17_core::ChangeOpts;
     let d = scratch("braces");
-    write(&d, "spec11.json", r#"{"src":["src"],"tests":["tests"],"ext":["kt"],"comment":["//"]}"#);
+    write(&d, "spec17.json", r#"{"src":["src"],"tests":["tests"],"ext":["kt"],"comment":["//"]}"#);
     write(&d, "specs/a.md", "- **AAA-01** MUST — one.\n- **AAA-02** MUST — two.\n");
     // the first test opens a brace inside a string and never closes it in code
     let t = |b: &str| format!("// [AAA\\x2D01]\nfun t1() {{\n    check(\"{{\")  // {{\n}}\n\n// [AAA\\x2D02]\nfun t2() {{\n    check({b})\n}}\n").replace("\\x2D", "-");
@@ -816,9 +816,9 @@ fn a_repo_with_no_specs_still_opens_and_lists_its_sources_and_tests() {
 #[doc = "[SCAN-28]"]
 #[test]
 fn a_configured_specs_path_that_is_missing_counts_as_no_specs() {
-    let d = std::env::temp_dir().join(format!("spec11-{}-nospec-cfg", std::process::id()));
+    let d = std::env::temp_dir().join(format!("spec17-{}-nospec-cfg", std::process::id()));
     let _ = fs::remove_dir_all(&d);
-    write(&d, "spec11.json", r#"{"specs":"nothing-here"}"#);
+    write(&d, "spec17.json", r#"{"specs":"nothing-here"}"#);
     write(&d, "src/a.py", "def a():\n    pass\n");
     assert_eq!(Analysis::load(Some(&d)).unwrap().report().requirements, 0);
 }
@@ -849,9 +849,9 @@ fn a_requirement_names_the_newest_commit_that_touched_it() {
 #[doc = "[SCAN-32]"]
 #[test]
 fn a_requirement_changes_only_when_its_text_differs_from_the_base() {
-    use spec11_core::ChangeOpts;
+    use spec17_core::ChangeOpts;
     let d = scratch("realchange");
-    write(&d, "spec11.json", r#"{"src":["src"],"tests":["tests"],"ext":["kt"],"comment":["//"]}"#);
+    write(&d, "spec17.json", r#"{"src":["src"],"tests":["tests"],"ext":["kt"],"comment":["//"]}"#);
     write(&d, "specs/a.md", "- **REA-01** MUST — one long\n  wrapped bullet.\n- **REA-02** MUST — two.\n- **REA-03** MUST — three.\n");
     write(&d, "src/a.kt", "// (REA-03)\nfun f() {\n    1\n}\n");
     let git = |a: &[&str]| assert!(std::process::Command::new("git").args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(a).current_dir(&d).output().unwrap().status.success(), "{a:?}");

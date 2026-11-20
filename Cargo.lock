@@ -1472,7 +1472,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "spec11"
+name = "spec17"
 version = "0.1.0"
 dependencies = [
  "axum",
@@ -1485,7 +1485,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
- "spec11-core",
+ "spec17-core",
  "tokio",
  "tokio-util",
  "tower",
@@ -1493,7 +1493,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "spec11-core"
+name = "spec17-core"
 version = "0.1.0"
 dependencies = [
  "ignore",

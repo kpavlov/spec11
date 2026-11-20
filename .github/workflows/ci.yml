@@ -32,5 +32,5 @@ jobs:
       - run: make dist
       - uses: actions/upload-artifact@v7
         with:
-          name: spec11-${{ matrix.os }}
+          name: spec17-${{ matrix.os }}
           path: dist/*.tar.gz

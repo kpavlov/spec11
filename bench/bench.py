@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Time spec11 on a generated repo, at several git revisions: a before/after baseline.
+"""Time spec17 on a generated repo, at several git revisions: a before/after baseline.
 
     python3 bench/bench.py                      # main vs HEAD
     python3 bench/bench.py e7d83fd HEAD .       # any revs; `.` is the working tree, uncommitted changes included
@@ -28,7 +28,7 @@ def generate(scale: int) -> Path:
     n_specs, per_spec, n_src, n_tests, n_docs = 40 * scale, 50, 400 * scale, 100 * scale, 100 * scale
     w = lambda rel, text: ((repo / rel).parent.mkdir(parents=True, exist_ok=True), (repo / rel).write_text(text, encoding="utf-8"))
     w("Cargo.toml", '[package]\nname = "gen"\nversion = "0.1.0"\nedition = "2021"\n')
-    w("README.md", "# gen\n\nA generated repo for timing spec11.\n")
+    w("README.md", "# gen\n\nA generated repo for timing spec17.\n")
     ids = [f"GEN-{i:04d}" for i in range(1, n_specs * per_spec + 1)]
     for s in range(n_specs):
         lines = [f"# Spec {s}", "", "Требования — 要件 — exigences.", ""]
@@ -68,25 +68,25 @@ def build(rev: str) -> Path:
     out.mkdir(parents=True, exist_ok=True)
     if rev == ".":
         # the repo's own target/: its files are older than the exported revs' builds, so the shared dir would look fresh
-        subprocess.run(["cargo", "build", "-q", "--release", "-p", "spec11"], cwd=ROOT, env={**os.environ, "SKIP_WEB_BUILD": "1"}, check=True)
-        shutil.copy2(ROOT / "target" / "release" / "spec11", out / "spec11-worktree")
-        return out / "spec11-worktree"
+        subprocess.run(["cargo", "build", "-q", "--release", "-p", "spec17"], cwd=ROOT, env={**os.environ, "SKIP_WEB_BUILD": "1"}, check=True)
+        shutil.copy2(ROOT / "target" / "release" / "spec17", out / "spec17-worktree")
+        return out / "spec17-worktree"
     else:
-        dst = out / f"spec11-{sha(rev)}"
+        dst = out / f"spec17-{sha(rev)}"
         if dst.exists():
             return dst
         # an exported tree, not a worktree: nothing is written to .git. `-m` dates the files now: the shared target dir must
-        # see them as newer than the last rev's build, or cargo reuses its spec11-core
+        # see them as newer than the last rev's build, or cargo reuses its spec17-core
         src = BENCH / f"src-{sha(rev)}"
         shutil.rmtree(src, ignore_errors=True)
         src.mkdir(parents=True)
         archive = subprocess.run(["git", "archive", rev], cwd=ROOT, check=True, capture_output=True).stdout
         subprocess.run(["tar", "-xm", "--exclude", ".mcp.json", "--exclude", ".claude", "-C", str(src)], input=archive, check=True)
         try:
-            subprocess.run(["cargo", "build", "-q", "--release", "-p", "spec11"], cwd=src, env=env, check=True)
+            subprocess.run(["cargo", "build", "-q", "--release", "-p", "spec17"], cwd=src, env=env, check=True)
         finally:
             shutil.rmtree(src, ignore_errors=True)
-    shutil.copy2(BENCH / "target" / "release" / "spec11", dst)
+    shutil.copy2(BENCH / "target" / "release" / "spec17", dst)
     return dst
 
 

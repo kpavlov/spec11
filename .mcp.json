@@ -12,7 +12,7 @@
       },
       "alwaysLoad": true
     },
-    "spec11": {
+    "spec17": {
       "type": "http",
       "url": "http://127.0.0.1:7411/mcp"
     }

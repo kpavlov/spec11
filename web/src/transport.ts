@@ -38,7 +38,7 @@ function initBridge() {
       pending.delete(m.id);
       m.error ? p.fail(new Error(m.error.message ?? "host error")) : p.ok(m.result);
     });
-    return rpc("ui/initialize", { protocolVersion: "2025-11-21", appInfo: { name: "spec11", version: "0.1.0" }, appCapabilities: {} }).then(() =>
+    return rpc("ui/initialize", { protocolVersion: "2025-11-21", appInfo: { name: "spec17", version: "0.1.0" }, appCapabilities: {} }).then(() =>
       window.parent.postMessage({ jsonrpc: "2.0", method: "ui/notifications/initialized", params: {} }, "*"),
     );
   })();
@@ -64,7 +64,7 @@ export async function call<T = any>(tool: string, args: Record<string, unknown> 
 let mcp: Promise<Client> | undefined;
 const connect = () =>
   (mcp ??= (async () => {
-    const c = new Client({ name: "spec11-web", version: "0.1.0" }, { versionNegotiation: { mode: { pin: "2026-07-28" } } });
+    const c = new Client({ name: "spec17-web", version: "0.1.0" }, { versionNegotiation: { mode: { pin: "2026-07-28" } } });
     await c.connect(new StreamableHTTPClientTransport(new URL("/mcp", location.href)));
     return c;
   })().catch((e) => ((mcp = undefined), Promise.reject(e))));

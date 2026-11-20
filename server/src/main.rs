@@ -41,15 +41,15 @@ const STYLES: clap::builder::Styles = clap::builder::Styles::styled()
     .literal(clap::builder::styling::AnsiColor::Green.on_default().bold())
     .placeholder(clap::builder::styling::AnsiColor::Cyan.on_default());
 
-const LONG_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "\nCopyright (c) 2026 Konstantin Pavlov, IT Staff OÜ. All rights reserved.\n", env!("CARGO_PKG_REPOSITORY"));
+const LONG_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "\nCopyright (c) 2026 Konstantin Pavlov, IT Staff OÜ. All rights reserved.\n", env!("CARGO_PKG_HOMEPAGE"), "\n", env!("CARGO_PKG_REPOSITORY"));
 
 #[derive(Parser)]
 #[command(
-    name = "spec11",
+    name = "spec17",
     version,
     about = "Deterministic spec-driven-development evidence: evidence, not truth.",
     long_version = LONG_VERSION,
-    after_help = concat!("Copyright (c) 2026 Konstantin Pavlov, IT Staff OÜ. All rights reserved. · About: ", env!("CARGO_PKG_REPOSITORY")),
+    after_help = concat!("Copyright (c) 2026 Konstantin Pavlov, IT Staff OÜ. All rights reserved. · About: ", env!("CARGO_PKG_HOMEPAGE")),
     styles = STYLES
 )]
 struct Cli {
@@ -118,15 +118,15 @@ enum Cmd {
         #[command(flatten)]
         c: ChangeArgs,
     },
-    /// Install the spec11 skill into <repo>/.agents/skills and add the spec11 MCP server to <repo>/.mcp.json.
+    /// Install the spec17 skill into <repo>/.agents/skills and add the spec17 MCP server to <repo>/.mcp.json.
     Install {
         /// Install into ~/.agents/skills and ~/.mcp.json instead of the repo.
         #[arg(long)]
         global: bool,
-        /// Port of `spec11 serve` that the MCP entry points at.
+        /// Port of `spec17 serve` that the MCP entry points at.
         #[arg(long, default_value_t = DEFAULT_PORT)]
         port: u16,
-        /// Only add the CodeGraph MCP server to <repo>/.mcp.json (an existing entry is kept); the skill and the spec11 entry are left alone.
+        /// Only add the CodeGraph MCP server to <repo>/.mcp.json (an existing entry is kept); the skill and the spec17 entry are left alone.
         #[arg(long, conflicts_with = "global")]
         codegraph: bool,
     },
@@ -135,10 +135,10 @@ enum Cmd {
         /// Use the home directory instead of the repo. Without --only, remove the global skill.
         #[arg(long)]
         global: bool,
-        /// Remove only the spec11 skill or only its entry in .mcp.json.
+        /// Remove only the spec17 skill or only its entry in .mcp.json.
         #[arg(long, value_enum, conflicts_with = "codegraph")]
         only: Option<skill::InstallPart>,
-        /// Only remove the CodeGraph MCP server from <repo>/.mcp.json, whatever it holds; the skill and the spec11 entry are left alone.
+        /// Only remove the CodeGraph MCP server from <repo>/.mcp.json, whatever it holds; the skill and the spec17 entry are left alone.
         #[arg(long, conflicts_with = "global")]
         codegraph: bool,
     },
@@ -147,7 +147,7 @@ enum Cmd {
         /// Also build or refresh the CodeGraph index when the checks call for it (runs `codegraph init` / `sync`). Without this flag doctor only reads.
         #[arg(long)]
         fix: bool,
-        /// Port of `spec11 serve` that the MCP entry should point at.
+        /// Port of `spec17 serve` that the MCP entry should point at.
         #[arg(long, default_value_t = DEFAULT_PORT)]
         port: u16,
     },
@@ -196,10 +196,10 @@ struct ChangeArgs {
     /// Leave out changes that only touch whitespace.
     #[arg(long)]
     ignore_whitespace: bool,
-    /// Also files .aiignore, .spec11ignore and .agents hide.
+    /// Also files .aiignore, .spec17ignore and .agents hide.
     #[arg(long)]
     show_ignored: bool,
-    /// Also files spec11 does not scan (kind other).
+    /// Also files spec17 does not scan (kind other).
     #[arg(long)]
     show_all: bool,
 }
@@ -324,7 +324,7 @@ fn serve(root: Option<PathBuf>, port: u16, ui_port: Option<u16>, no_open: bool, 
         return Err("Enable --stdio-mcp when both --no-ui and --no-http-mcp are set.".into());
     }
     // the workspace is fixed once, here: the repo that holds the current directory (or --root)
-    let root = spec11_core::scan::Project::open(root.as_deref())?.root;
+    let root = spec17_core::scan::Project::open(root.as_deref())?.root;
     let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().map_err(|e| e.to_string())?;
     let result = rt.block_on(async move {
         let bind = |p: u16| async move { tokio::net::TcpListener::bind(("127.0.0.1", p)).await.map_err(|e| format!("127.0.0.1:{p}: {e}")) };
@@ -342,7 +342,7 @@ fn serve(root: Option<PathBuf>, port: u16, ui_port: Option<u16>, no_open: bool, 
         }
         // (API-21) (API-23)
         if !stdio_mcp {
-            eprintln!("spec11 {LONG_VERSION}\n\n  workspace {}", root.display());
+            eprintln!("spec17 {LONG_VERSION}\n\n  workspace {}", root.display());
             if !no_ui {
                 eprintln!("  dashboard {}", state.dashboard);
             }
@@ -404,7 +404,7 @@ fn serve(root: Option<PathBuf>, port: u16, ui_port: Option<u16>, no_open: bool, 
 fn install(root: Option<&std::path::Path>, global: bool, port: Option<u16>, only: Option<skill::InstallPart>) -> Result<u8, String> {
     skill::apply(root, global, port, only, skill::McpTransport::Http)?.iter().for_each(|l| println!("{l}"));
     if port.is_some() {
-        println!("next   spec11   # starts the MCP server and dashboard the skill talks to");
+        println!("next   spec17   # starts the MCP server and dashboard the skill talks to");
     }
     Ok(0)
 }
@@ -460,7 +460,7 @@ fn run(cli: Cli) -> Result<u8, String> {
     let data = if name == "overlap" { data["rows"].clone() } else { data };
     if cli.json { println!("{}", serde_json::to_string_pretty(&data).unwrap()) } else { print!("{text}") }
     if let Cmd::Trace { codegraph: true, .. } = cmd && let Some(q) = data["query"].as_str().filter(|q| !q.is_empty()) {
-        let root = spec11_core::scan::Project::open(cli.root.as_deref())?.root;
+        let root = spec17_core::scan::Project::open(cli.root.as_deref())?.root;
         let _ = std::process::Command::new("codegraph").args(["explore", q]).current_dir(root).status();
     }
     Ok(0)
@@ -488,7 +488,7 @@ mod tests {
     use tower::ServiceExt;
 
     fn repo() -> PathBuf {
-        let d = std::env::temp_dir().join(format!("spec11-srv-{}", std::process::id()));
+        let d = std::env::temp_dir().join(format!("spec17-srv-{}", std::process::id()));
         std::fs::create_dir_all(d.join("specs")).unwrap();
         std::fs::write(d.join("specs/01-a.md"), "- **AAA-01** MUST — one.\n- **AAA-02** MUST — two.\n").unwrap();
         std::fs::create_dir_all(d.join("RunSolo/RunSolo")).unwrap();
@@ -535,7 +535,7 @@ mod tests {
     #[doc = "[SETUP-13]"]
     #[tokio::test]
     async fn setup_tools_manage_transports_independently() {
-        let root = std::env::temp_dir().join(format!("spec11-setup-transports-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("spec17-setup-transports-{}", std::process::id()));
         std::fs::create_dir_all(root.join("specs")).unwrap();
         let config = root.join(".mcp.json");
         std::fs::write(&config, r#"{"mcpServers":{"another":{"command":"another"}},"custom":true}"#).unwrap();
@@ -549,14 +549,14 @@ mod tests {
         }
         let read = || serde_json::from_slice::<serde_json::Value>(&std::fs::read(&config).unwrap()).unwrap();
         let settings = read();
-        let args = settings["mcpServers"]["spec11-stdio"]["args"].as_array().unwrap();
+        let args = settings["mcpServers"]["spec17-stdio"]["args"].as_array().unwrap();
         assert_eq!(args, &vec![json!("--stdio-mcp"), json!("--no-http-mcp"), json!("--no-ui"), json!("--root"), json!(root.canonicalize().unwrap())]);
-        assert_eq!(settings["mcpServers"]["spec11"]["url"], "http://127.0.0.1:7411/mcp");
+        assert_eq!(settings["mcpServers"]["spec17"]["url"], "http://127.0.0.1:7411/mcp");
         assert!(!root.join(".agents").exists());
 
         let (_, body) = send(&app, action("uninstall", http)).await;
         assert!(body.contains(r#""mcp_stdio":"ok""#), "{body}");
-        assert!(read()["mcpServers"].get("spec11").is_none());
+        assert!(read()["mcpServers"].get("spec17").is_none());
         send(&app, action("uninstall", stdio)).await;
         assert_eq!(read(), json!({"mcpServers":{"another":{"command":"another"}},"custom":true}));
         std::fs::remove_dir_all(root).unwrap();
@@ -566,7 +566,7 @@ mod tests {
     #[test]
     fn cli_commands_run_the_tools() {
         // its own repo: it runs git and edits a spec, which the shared `repo()` fixture must not see
-        let d = std::env::temp_dir().join(format!("spec11-cli-{}", std::process::id()));
+        let d = std::env::temp_dir().join(format!("spec17-cli-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(d.join("specs")).unwrap();
         std::fs::write(d.join("specs/01-a.md"), "- **AAA-01** MUST — one.\n- **AAA-02** MUST — two.\n").unwrap();
@@ -575,7 +575,7 @@ mod tests {
         git(&["add", "."]);
         git(&["commit", "-q", "-m", "one"]);
         std::fs::write(d.join("specs/01-a.md"), "- **AAA-01** MUST — one.\n- **AAA-02** MUST — two, edited.\n").unwrap();
-        let go = |args: &[&str]| run(Cli::parse_from(["spec11", "--root", d.to_str().unwrap()].into_iter().chain(args.iter().copied())));
+        let go = |args: &[&str]| run(Cli::parse_from(["spec17", "--root", d.to_str().unwrap()].into_iter().chain(args.iter().copied())));
         for ok in [&["report"][..], &["status", "--all"], &["trace", "AAA-01"], &["changes", "--no-untracked", "--ref", "HEAD"], &["diff", "specs/01-a.md"], &["history", "--limit", "5"]] {
             assert_eq!(go(ok), Ok(0), "{ok:?}");
         }
@@ -596,7 +596,7 @@ mod tests {
             r.headers_mut().insert("mcp-name", uri.parse().unwrap());
             r
         };
-        let (st, body) = send(&app, read("spec11://tests")).await;
+        let (st, body) = send(&app, read("spec17://tests")).await;
         assert!(st == StatusCode::OK && body.contains("total"), "{st} {body}");
         let mut d = post("/mcp", "127.0.0.1:7411", r#"{"jsonrpc":"2.0","id":2,"method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientInfo":{"name":"t","version":"1"},"io.modelcontextprotocol/clientCapabilities":{}}}}"#);
         d.headers_mut().insert("mcp-protocol-version", "2026-07-28".parse().unwrap());
@@ -610,14 +610,14 @@ mod tests {
     async fn subscription_notifies_when_the_repo_changes() {
         use http_body_util::BodyExt;
         use std::time::Duration;
-        let d = std::env::temp_dir().join(format!("spec11-sub-{}", std::process::id()));
+        let d = std::env::temp_dir().join(format!("spec17-sub-{}", std::process::id()));
         std::fs::create_dir_all(d.join("specs")).unwrap();
         std::fs::write(d.join("specs/01-a.md"), "- **AAA-01** MUST — one.\n").unwrap();
         let state = app_state(Some(d.clone()), &[7411]);
         let stop = state.shutdown.clone();
         let (app, _) = routers(state);
         let meta = r#""_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientInfo":{"name":"t","version":"1"},"io.modelcontextprotocol/clientCapabilities":{}}"#;
-        let body = format!(r#"{{"jsonrpc":"2.0","id":1,"method":"subscriptions/listen","params":{{{meta},"notifications":{{"resourceSubscriptions":["spec11://report","spec11://nope"]}}}}}}"#);
+        let body = format!(r#"{{"jsonrpc":"2.0","id":1,"method":"subscriptions/listen","params":{{{meta},"notifications":{{"resourceSubscriptions":["spec17://report","spec17://nope"]}}}}}}"#);
         let mut req = post("/mcp", "127.0.0.1:7411", &body);
         req.headers_mut().insert("mcp-protocol-version", "2026-07-28".parse().unwrap());
         req.headers_mut().insert("mcp-method", "subscriptions/listen".parse().unwrap());
@@ -638,17 +638,17 @@ mod tests {
             assert!(seen.contains(want), "{want} not in {seen}");
         };
         until("acknowledged", &mut seen).await;
-        assert!(seen.contains("spec11://report") && !seen.contains("spec11://nope"), "{seen}");
+        assert!(seen.contains("spec17://report") && !seen.contains("spec17://nope"), "{seen}");
         seen.clear();
         tokio::time::sleep(Duration::from_millis(500)).await; // the listener takes its first stamp after the ack
         std::fs::write(d.join("specs/01-a.md"), "- **AAA-01** MUST — one.\n- **AAA-02** MUST — two.\n").unwrap();
         until("notifications/resources/updated", &mut seen).await;
-        assert!(seen.contains("spec11://report"), "{seen}");
+        assert!(seen.contains("spec17://report"), "{seen}");
         seen.clear();
         stop.cancel(); // shutdown ends the stream with the graceful result
         until("complete", &mut seen).await;
         // (API-08) the view is readable too, beside its tool
-        let (_, body) = send(&app, post("/mcp", "127.0.0.1:7411", r#"{"jsonrpc":"2.0","id":3,"method":"resources/read","params":{"uri":"spec11://report"}}"#)).await;
+        let (_, body) = send(&app, post("/mcp", "127.0.0.1:7411", r#"{"jsonrpc":"2.0","id":3,"method":"resources/read","params":{"uri":"spec17://report"}}"#)).await;
         assert!(body.contains("text/plain") && body.contains("SDD STATUS"), "{body}");
     }
 
@@ -685,7 +685,7 @@ mod tests {
     #[doc = "[API-13, API-15, API-16, SCAN-19]"]
     #[tokio::test]
     async fn changes_lists_files_and_requirements_and_needs_git() {
-        let d = std::env::temp_dir().join(format!("spec11-chg-{}", std::process::id()));
+        let d = std::env::temp_dir().join(format!("spec17-chg-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(d.join("specs")).unwrap();
         std::fs::write(d.join("specs/01-a.md"), "- **AAA-01** MUST — one.\n").unwrap();
@@ -703,7 +703,7 @@ mod tests {
         std::fs::write(d.join("specs/01-a.md"), "- **AAA-01** MUST — one, edited.\n").unwrap();
         std::fs::write(d.join("new.txt"), "x\n").unwrap();
         let (_, body) = send(&app, tool("changes", "{}", "127.0.0.1:7411")).await;
-        assert!(!body.contains("new.txt") && body.contains("AAA-01") && body.contains("modified"), "files spec11 does not scan stay hidden: {body}");
+        assert!(!body.contains("new.txt") && body.contains("AAA-01") && body.contains("modified"), "files spec17 does not scan stay hidden: {body}");
         let (_, body) = send(&app, tool("changes", r#"{"show_all":true}"#, "127.0.0.1:7411")).await;
         assert!(body.contains("untracked") && body.contains("added") && body.contains("new.txt"), "{body}");
         let (_, body) = send(&app, tool("changes", r#"{"show_all":true,"include_untracked":false}"#, "127.0.0.1:7411")).await;
@@ -721,7 +721,7 @@ mod tests {
         let (_, body) = send(&app, tool("commits", "{}", "127.0.0.1:7411")).await;
         assert!(body.contains(r#"commits"#) && !body.contains("AAA-01 "), "AAA-01 is edited, not committed: {body}");
         let rpc = |id: u32, method: &str, params: &str| post("/mcp", "127.0.0.1:7411", &format!(r#"{{"jsonrpc":"2.0","id":{id},"method":"{method}","params":{params}}}"#));
-        let (_, body) = send(&app, rpc(5, "resources/read", r#"{"uri":"spec11://changes.json"}"#)).await;
+        let (_, body) = send(&app, rpc(5, "resources/read", r#"{"uri":"spec17://changes.json"}"#)).await;
         assert!(body.contains("AAA-01"), "{body}");
     }
 
@@ -734,12 +734,12 @@ mod tests {
         send(&app, rpc(1, "initialize", init)).await;
         let (_, list) = send(&app, rpc(2, "resources/list", "{}")).await;
         for n in ["report", "status", "uncovered", "overlap", "modules", "tests"] {
-            assert!(list.contains(&format!("spec11://schemas/{n}")), "{n}: {list}");
+            assert!(list.contains(&format!("spec17://schemas/{n}")), "{n}: {list}");
         }
-        assert!(list.contains(r#""schema":"spec11://schemas/report""#) && list.contains("spec11://report.json"), "{list}");
-        let (_, body) = send(&app, rpc(3, "resources/read", r#"{"uri":"spec11://report.json"}"#)).await;
+        assert!(list.contains(r#""schema":"spec17://schemas/report""#) && list.contains("spec17://report.json"), "{list}");
+        let (_, body) = send(&app, rpc(3, "resources/read", r#"{"uri":"spec17://report.json"}"#)).await;
         assert!(body.contains("application/json") && body.contains("requirements"), "{body}");
-        let (_, body) = send(&app, rpc(4, "resources/read", r#"{"uri":"spec11://schemas/modules"}"#)).await;
+        let (_, body) = send(&app, rpc(4, "resources/read", r#"{"uri":"spec17://schemas/modules"}"#)).await;
         assert!(body.contains("application/schema+json") && body.contains("properties"), "{body}");
         let (_, tools) = send(&app, rpc(5, "tools/list", "{}")).await;
         assert!(tools.contains("outputSchema"), "{tools}");
@@ -781,31 +781,31 @@ mod tests {
     #[test]
     fn module_tool_hides_and_shows_a_module_folder_and_refuses_the_rest() {
         // its own copy: the shared fixture must keep every file listed for the other tests
-        let d = std::env::temp_dir().join(format!("spec11-ign-{}", std::process::id()));
+        let d = std::env::temp_dir().join(format!("spec17-ign-{}", std::process::id()));
         std::fs::create_dir_all(d.join("specs")).unwrap();
         std::fs::write(d.join("specs/01-a.md"), "- **AAA-01** MUST — one.\n").unwrap();
         std::fs::create_dir_all(d.join("RunSolo/RunSolo")).unwrap();
         std::fs::write(d.join("RunSolo/RunSolo/A.swift"), "struct A {}\n").unwrap();
-        let (_, mods) = ops::read_resource(Some(&d), "spec11://modules").unwrap().unwrap();
+        let (_, mods) = ops::read_resource(Some(&d), "spec17://modules").unwrap().unwrap();
         let mods: serde_json::Value = serde_json::from_str(&mods).unwrap();
         let m = mods["modules"].as_array().unwrap().iter().map(|m| m["path"].as_str().unwrap()).find(|p| *p != ".").expect("a module").to_string();
-        std::fs::write(d.join(".spec11ignore"), "*.tmp").unwrap(); // no trailing newline
+        std::fs::write(d.join(".spec17ignore"), "*.tmp").unwrap(); // no trailing newline
         let (text, _) = ops::call(Some(&d), "module", &json!({"path": m, "hidden": true}), "", 0).unwrap();
-        assert!(text.contains(".spec11ignore"), "{text}");
-        assert_eq!(std::fs::read_to_string(d.join(".spec11ignore")).unwrap(), format!("*.tmp\n/{m}/\n"));
+        assert!(text.contains(".spec17ignore"), "{text}");
+        assert_eq!(std::fs::read_to_string(d.join(".spec17ignore")).unwrap(), format!("*.tmp\n/{m}/\n"));
         let refused = |path: &str, hidden: bool| ops::call(Some(&d), "module", &json!({"path": path, "hidden": hidden}), "", 0).is_err();
         for (bad, hidden) in [(".", true), ("*", true), ("nope", true)] {
             assert!(refused(bad, hidden), "{bad}");
         }
         // (API-12) the module is listed as hidden, and unignore removes just its line
-        let (_, mods) = ops::read_resource(Some(&d), "spec11://modules").unwrap().unwrap();
+        let (_, mods) = ops::read_resource(Some(&d), "spec17://modules").unwrap().unwrap();
         assert_eq!(serde_json::from_str::<serde_json::Value>(&mods).unwrap()["hidden"], json!([m]));
         for bad in ["*.tmp", "nope", "."] {
             assert!(refused(bad, false), "{bad}");
         }
         let (text, _) = ops::call(Some(&d), "module", &json!({"path": m, "hidden": false}), "", 0).unwrap();
-        assert!(text.contains(".spec11ignore"), "{text}");
-        assert_eq!(std::fs::read_to_string(d.join(".spec11ignore")).unwrap(), "*.tmp\n");
+        assert!(text.contains(".spec17ignore"), "{text}");
+        assert_eq!(std::fs::read_to_string(d.join(".spec17ignore")).unwrap(), "*.tmp\n");
         std::fs::remove_dir_all(&d).ok();
     }
 
@@ -816,14 +816,14 @@ mod tests {
         let (app, _) = routers(app_state(Some(repo.clone()), &[7411]));
         let call = |n: &str, a: &str| tool(n, a, "127.0.0.1:7411");
         let (_, body) = send(&app, call("install_status", "{}")).await;
-        assert!(body.contains(r#""skill":"missing""#) && body.contains("spec11 install"), "{body}");
+        assert!(body.contains(r#""skill":"missing""#) && body.contains("spec17 install"), "{body}");
         std::fs::write(repo.join(".mcp.json"), r#"{"mcpServers":{"other":{"command":"x"}}}"#).unwrap();
         let (st, body) = send(&app, call("install", "{}")).await;
         assert_eq!(st, StatusCode::OK, "{body}");
         assert!(body.contains(r#""skill":"current""#) && body.contains(r#""mcp":"ok""#), "{body}");
         let mcp = std::fs::read_to_string(repo.join(".mcp.json")).unwrap();
         assert!(mcp.contains("\"other\"") && mcp.contains("127.0.0.1:7411/mcp"), "{mcp}");
-        let skill = repo.join(".agents/skills/spec11/SKILL.md");
+        let skill = repo.join(".agents/skills/spec17/SKILL.md");
         for invalid in [
             r#"{"only":"unknown"}"#,
             r#"{"only":"mcp","global":"true"}"#,
@@ -842,17 +842,17 @@ mod tests {
         let (_, body) = send(&app, call("uninstall", r#"{"only":"mcp"}"#)).await;
         assert!(body.contains(r#""mcp":"missing""#) && skill.exists(), "{body}");
         let mcp = std::fs::read_to_string(repo.join(".mcp.json")).unwrap();
-        assert!(mcp.contains("\"other\"") && !mcp.contains("\"spec11\""), "{mcp}");
+        assert!(mcp.contains("\"other\"") && !mcp.contains("\"spec17\""), "{mcp}");
         let (_, body) = send(&app, call("uninstall", "{}")).await;
         assert!(body.contains(r#""skill":"missing""#), "{body}");
-        assert!(!repo.join(".agents/skills/spec11/SKILL.md").exists());
+        assert!(!repo.join(".agents/skills/spec17/SKILL.md").exists());
         assert!(std::fs::read_to_string(repo.join(".mcp.json")).unwrap().contains("\"other\""));
     }
 
     #[doc = "[SCAN-28, SETUP-06, SETUP-10]"]
     #[tokio::test]
     async fn a_repo_with_no_specs_serves_every_tool_and_installs_codegraph() {
-        let d = std::env::temp_dir().join(format!("spec11-srv-nospecs-{}", std::process::id()));
+        let d = std::env::temp_dir().join(format!("spec17-srv-nospecs-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(d.join("src")).unwrap();
         std::fs::write(d.join("src/a.py"), "def a():\n    pass\n").unwrap();
@@ -867,7 +867,7 @@ mod tests {
         let (_, body) = send(&app, call("install", r#"{"server":"codegraph"}"#)).await;
         assert!(body.contains(r#""codegraph_mcp":"ok""#) && !body.contains(r#""isError":true"#), "{body}");
         let mcp = std::fs::read_to_string(d.join(".mcp.json")).unwrap();
-        assert!(mcp.contains("\"codegraph\"") && !mcp.contains("spec11"), "{mcp}");
+        assert!(mcp.contains("\"codegraph\"") && !mcp.contains("spec17"), "{mcp}");
         assert!(!d.join(".agents").exists(), "server=codegraph must not install the skill");
         let (_, body) = send(&app, call("uninstall", r#"{"server":"codegraph"}"#)).await;
         assert!(body.contains(r#""codegraph_mcp":"missing""#) && !body.contains(r#""isError":true"#), "{body}");
@@ -878,7 +878,7 @@ mod tests {
         assert!(body.contains("nothing to refresh"), "{body}");
     }
 
-    #[doc = "[API-01, API-04, API-07, API-18, API-19]"]
+    #[doc = "[API-01, API-04, API-07, API-18, API-19, API-24]"]
     #[tokio::test]
     async fn mcp_tools_and_ui_resource() {
         let (app, _) = routers(app_state(Some(repo()), &[7411]));
@@ -886,8 +886,12 @@ mod tests {
         let init = r#"{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"t","version":"1"}}"#;
         let (st, body) = send(&app, rpc(1, "initialize", init)).await;
         assert_eq!(st, StatusCode::OK, "{body}");
+        // (API-24)
+        let info: serde_json::Value = serde_json::from_str(&body).unwrap();
+        let server = &info["result"]["serverInfo"];
+        assert_eq!((server["name"].as_str(), server["version"].as_str(), server["websiteUrl"].as_str()), (Some("spec17"), Some(env!("CARGO_PKG_VERSION")), Some("https://spec17.dev")), "{body}");
         let (_, body) = send(&app, rpc(2, "tools/list", "{}")).await;
-        assert!(body.contains("report") && body.contains("ui://spec11/dashboard"), "{body}");
+        assert!(body.contains("report") && body.contains("ui://spec17/dashboard"), "{body}");
         // (API-18)
         let listed: serde_json::Value = serde_json::from_str(&body).unwrap();
         for tool in listed["result"]["tools"].as_array().unwrap() {
@@ -897,23 +901,23 @@ mod tests {
                 assert_eq!(tool["inputSchema"]["properties"]["requirement_id"]["type"], "string");
             }
         }
-        assert_eq!(body.matches("ui://spec11/dashboard").count(), 1, "only `dashboard` opens the app: {body}");
+        assert_eq!(body.matches("ui://spec17/dashboard").count(), 1, "only `dashboard` opens the app: {body}");
         let (_, body) = send(&app, rpc(5, "tools/call", r#"{"name":"dashboard","arguments":{"view":"/modules?module=core"}}"#)).await;
         assert!(body.contains("127.0.0.1:7411/modules?module=core"), "{body}");
         let (_, body) = send(&app, rpc(3, "tools/call", r#"{"name":"status","arguments":{"missing":true}}"#)).await;
         assert!(body.contains("AAA-02"), "{body}");
-        let (_, body) = send(&app, rpc(4, "resources/read", r#"{"uri":"ui://spec11/dashboard"}"#)).await;
+        let (_, body) = send(&app, rpc(4, "resources/read", r#"{"uri":"ui://spec17/dashboard"}"#)).await;
         assert!(body.contains("text/html;profile=mcp-app"), "{body}");
         // (API-07)
         let (_, body) = send(&app, rpc(6, "resources/list", "{}")).await;
-        assert!(body.contains("spec11://modules") && body.contains("spec11://tests"), "{body}");
-        let (_, body) = send(&app, rpc(7, "resources/read", r#"{"uri":"spec11://modules"}"#)).await;
+        assert!(body.contains("spec17://modules") && body.contains("spec17://tests"), "{body}");
+        let (_, body) = send(&app, rpc(7, "resources/read", r#"{"uri":"spec17://modules"}"#)).await;
         assert!(body.contains("application/json") && body.contains("modules"), "{body}");
-        let (_, body) = send(&app, rpc(8, "resources/read", r#"{"uri":"spec11://tests"}"#)).await;
+        let (_, body) = send(&app, rpc(8, "resources/read", r#"{"uri":"spec17://tests"}"#)).await;
         assert!(body.contains("not run") && body.contains("total"), "{body}");
         let (_, body) = send(&app, rpc(10, "tools/call", r#"{"name":"search_tests","arguments":{"state":"untagged","query":"no such test"}}"#)).await;
         assert!(body.contains("not run") && body.contains("total") && body.contains('0'), "{body}");
-        let (_, body) = send(&app, rpc(9, "resources/read", r#"{"uri":"spec11://nope"}"#)).await;
+        let (_, body) = send(&app, rpc(9, "resources/read", r#"{"uri":"spec17://nope"}"#)).await;
         assert!(body.contains("unknown resource"), "{body}");
         let mut bad = rpc(5, "tools/list", "{}");
         bad.headers_mut().insert("host", "evil.test".parse().unwrap());
@@ -923,7 +927,7 @@ mod tests {
     #[doc = "[API-20]"]
     #[tokio::test]
     async fn search_requirements_by_test_file_and_line() {
-        let d = std::env::temp_dir().join(format!("spec11-requirement-search-{}", std::process::id()));
+        let d = std::env::temp_dir().join(format!("spec17-requirement-search-{}", std::process::id()));
         std::fs::create_dir_all(d.join("specs")).unwrap();
         std::fs::create_dir_all(d.join("tests")).unwrap();
         let specs = (1..=4).map(|i| format!("- **AAA-{i:02}** MUST — example {i}.\n")).collect::<String>();
@@ -969,7 +973,7 @@ mod tests {
     #[doc = "[API-07, API-19]"]
     #[test]
     fn search_detected_tests() {
-        let d = std::env::temp_dir().join(format!("spec11-search-{}", std::process::id()));
+        let d = std::env::temp_dir().join(format!("spec17-search-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         for dir in ["alpha/nested/src", "alpha/nested/tests", "beta/tests"] {
             std::fs::create_dir_all(d.join(dir)).unwrap();

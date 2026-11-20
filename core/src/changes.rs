@@ -24,9 +24,9 @@ pub struct ChangeOpts {
     pub no_untracked: bool,
     /// Leave out changes that only touch whitespace.
     pub ignore_whitespace: bool,
-    /// Also files `.aiignore`, `.spec11ignore` and `.agents` hide. Files git ignores are never listed.
+    /// Also files `.aiignore`, `.spec17ignore` and `.agents` hide. Files git ignores are never listed.
     pub show_ignored: bool,
-    /// Also files spec11 does not scan (kind `other`: lockfiles, UI code, …).
+    /// Also files spec17 does not scan (kind `other`: lockfiles, UI code, …).
     pub show_all: bool,
 }
 
@@ -294,7 +294,7 @@ pub struct ChangedFile {
     pub change: String,
     /// Where: staged | unstaged | both (staged, then edited again) | untracked | committed (in the compared commits, nothing more in the working tree)
     pub stage: String,
-    /// spec | test | src | other (a file spec11 does not scan)
+    /// spec | test | src | other (a file spec17 does not scan)
     pub kind: String,
 }
 

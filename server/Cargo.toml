@@ -1,16 +1,17 @@
 [package]
-name = "spec11"
+name = "spec17"
 version.workspace = true
 edition.workspace = true
 description = "CLI, MCP server and web dashboard for spec-driven-development evidence."
 authors.workspace = true
 repository.workspace = true
+homepage.workspace = true
 readme = "../README.md"
 keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-spec11-core = { path = "../core" }
+spec17-core = { path = "../core" }
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
