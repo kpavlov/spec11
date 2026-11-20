@@ -1,4 +1,5 @@
 .agents
+docs/
 core/test-data/
 /Formula/
 /bench/

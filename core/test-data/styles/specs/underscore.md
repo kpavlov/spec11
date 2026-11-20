@@ -1,2 +1,4 @@
 - REQ_001 MUST — underscore IDs work.
 - REQ_002 SHOULD — and sort.
+- REQ_003.1 MUST — underscore IDs take dotted parts.
+- REQ_003.2 MAY — and sort by them.
