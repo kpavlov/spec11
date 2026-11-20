@@ -185,6 +185,35 @@ impl std::fmt::Display for Issue {
 
 pub type Refs = HashMap<String, Vec<Ref>>;
 
+/// How the files of one ecosystem read: line-comment markers, the declaration, assertion and switched-off regexes, which paths
+/// are tests and which line opens a test case.
+// (SCAN-33)
+pub struct Lang {
+    pub comment: Vec<String>,
+    pub decl: Regex,
+    assert: Regex,
+    off: Regex,
+    /// None when `spec17.json` lists both `src` and `tests` and does not set this profile's `test`: the folders say it all.
+    test: Option<Regex>,
+    pub(crate) case: Regex,
+}
+
+impl Lang {
+    fn new(p: &detect::Profile, test: bool) -> Result<Lang, String> {
+        let r = |s: &str| Regex::new(s).map_err(|e| format!("profile {}: bad regex {s}: {e}", p.name));
+        Ok(Lang { comment: p.comment.clone(), decl: r(&p.decl)?, assert: r(&p.assert)?, off: r(&p.off)?, test: if test { Some(r(&p.test)?) } else { None }, case: r(&p.case)? })
+    }
+
+    /// The text after the first line-comment marker of `line`.
+    pub(crate) fn comment_of<'a>(&self, line: &'a str) -> Option<&'a str> {
+        self.comment.iter().filter_map(|c| line.find(c.as_str()).map(|p| (p, c.len()))).min().map(|(p, l)| &line[p + l..])
+    }
+
+    pub fn is_comment(&self, text: &str) -> bool {
+        self.comment.iter().any(|c| text.starts_with(c.as_str()))
+    }
+}
+
 pub struct Rx {
     link: Regex,
     adr: Regex,
@@ -196,16 +225,10 @@ pub struct Rx {
     struck: Regex,
     later_inside: Regex,
     retired: Regex,
-    pub decl: Regex,
-    assert: Regex,
-    off: Regex,
-    test: Option<Regex>,
-    /// `case` of `spec17.json`: replaces the built-in test-case markers.
-    pub(crate) case: Option<Regex>,
 }
 
 impl Rx {
-    fn new(cfg: &Config) -> Result<Rx, String> {
+    fn new() -> Result<Rx, String> {
         let r = |s: String| Regex::new(&s).map_err(|e| format!("bad regex {s}: {e}"));
         let (f, id) = (&*FORMAT, &FORMAT.id());
         Ok(Rx {
@@ -219,11 +242,6 @@ impl Rx {
             struck: r(r"~~.*?~~".into())?,
             later_inside: r(r"\((?:later|deferred|manual)\)".into())?,
             retired: r(format!(r"^\s*(?:[-*+]|\d+[.)])\s+~~[*_`]*({id})"))?,
-            decl: r(cfg.decl.clone())?,
-            assert: r(cfg.assert.clone())?,
-            off: r(cfg.off.clone())?,
-            test: if cfg.test_files.is_empty() { None } else { Some(r(cfg.test_files.clone())?) },
-            case: if cfg.case.is_empty() { None } else { Some(r(cfg.case.clone())?) },
         })
     }
 }
@@ -239,6 +257,16 @@ pub struct Project {
     pub root: PathBuf,
     pub cfg: Config,
     pub rx: Rx,
+    /// The built-in profiles and those of `spec17.json` (`detect::profiles`).
+    pub profiles: Vec<detect::Profile>,
+    /// The dominant one: it reads the files no profile knows by extension.
+    main: Option<usize>,
+    /// One per profile, built on first use.
+    langs: Vec<OnceCell<Lang>>,
+    /// No comment markers, no declarations: a file of an ecosystem nothing describes.
+    none: Lang,
+    /// Per profile: whether its `test` regex makes a file a test (`Lang::test`).
+    tests_by_path: Vec<bool>,
     /// Where a symlink may point: the root and `ALLOWED_PATHS`.
     allow: Vec<PathBuf>,
     /// Folders and files (repo-relative) that hold requirement lines, and decision-record folders.
@@ -330,9 +358,19 @@ impl Project {
         let graph = Graph::open(&root.join(&cfg.codegraph));
         let indexed = graph.as_ref().ok().and_then(Option::as_ref).and_then(|g| g.file_paths().ok());
         let files: Vec<String> = indexed.map(|v| v.into_iter().filter(|f| !ignore.hides(f)).collect()).unwrap_or_else(|| detect::walk(&root, &allow, &ignore).iter().filter_map(|f| f.strip_prefix(&root).ok()).map(|f| f.to_string_lossy().replace('\\', "/")).collect());
-        cfg.detect(&files);
-        let rx = Rx::new(&cfg)?;
-        Ok(Project { root, cfg, rx, allow, spec_paths, doc_dirs, files, ignore, cache: RefCell::default(), walked: RefCell::default(), graph: Some(graph), tests: OnceCell::new(), srcs: OnceCell::new(), specs: OnceCell::new(), gone: OnceCell::new() })
+        let profiles = detect::profiles(&cfg.profiles)?;
+        // a hand-written src/tests list keeps the user's meaning: no profile's test-path regex, unless spec17.json sets it
+        let own = |p: &detect::Profile| cfg.profiles.iter().find(|e| e.get("name").and_then(|n| n.as_str()) == Some(&p.name));
+        let tests_by_path: Vec<bool> = profiles.iter().map(|p| cfg.src.is_empty() || cfg.tests.is_empty() || own(p).is_some_and(|e| e.contains_key("test"))).collect();
+        // (SCAN-34) a bad regex in spec17.json is an error here, not a panic on first use
+        for (p, &t) in profiles.iter().zip(&tests_by_path).filter(|(p, _)| own(p).is_some()) {
+            Lang::new(p, t)?;
+        }
+        let main = cfg.detect(&profiles, &files);
+        let rx = Rx::new()?;
+        let langs = profiles.iter().map(|_| OnceCell::new()).collect();
+        let none = Lang::new(&detect::Profile::unknown(""), false)?;
+        Ok(Project { root, cfg, rx, profiles, main, langs, none, tests_by_path, allow, spec_paths, doc_dirs, files, ignore, cache: RefCell::default(), walked: RefCell::default(), graph: Some(graph), tests: OnceCell::new(), srcs: OnceCell::new(), specs: OnceCell::new(), gone: OnceCell::new() })
     }
 
     /// The CodeGraph index `open` already looked at (opened again if it was taken before).
@@ -377,10 +415,10 @@ impl Project {
     }
 
     fn is_test(&self, rel: &str) -> bool {
-        self.rx.test.as_ref().is_some_and(|r| r.is_match(rel))
+        self.lang(rel).test.as_ref().is_some_and(|r| r.is_match(rel))
     }
 
-    /// A file in a tests folder, or one that `test_files` says is a test.
+    /// A file in a tests folder, or one that its profile's `test` says is a test.
     pub fn is_test_path(&self, rel: &str) -> bool {
         self.is_test(rel) || self.cfg.tests.iter().any(|d| d == "." || rel.starts_with(&format!("{d}/")))
     }
@@ -574,13 +612,11 @@ impl Project {
         found
     }
 
-    /// The text after the first line-comment marker of `line`.
-    pub(crate) fn comment_of<'a>(&self, line: &'a str) -> Option<&'a str> {
-        self.cfg.comment.iter().filter_map(|c| line.find(c.as_str()).map(|p| (p, c.len()))).min().map(|(p, l)| &line[p + l..])
-    }
-
-    pub fn is_comment(&self, text: &str) -> bool {
-        self.cfg.comment.iter().any(|c| text.starts_with(c.as_str()))
+    // (SCAN-33)
+    /// How a repo-relative file reads: the profile of its extension, else the dominant one.
+    pub fn lang(&self, rel: &str) -> &Lang {
+        let Some(i) = detect::profile_of(&self.profiles, rel).or(self.main) else { return &self.none };
+        self.langs[i].get_or_init(|| Lang::new(&self.profiles[i], self.tests_by_path[i]).expect("profiles.toml, or checked in open"))
     }
 
     // (SCAN-03)
@@ -588,8 +624,9 @@ impl Project {
     pub fn sources(&self) -> Refs {
         let mut found = Refs::new();
         for rel in self.src_files() {
+            let lang = self.lang(rel);
             for (i, line) in self.lines(rel).iter().enumerate() {
-                if let Some(c) = self.comment_of(line) {
+                if let Some(c) = lang.comment_of(line) {
                     for m in self.rx.mention.captures_iter(c).filter(|m| is_id(&m[1])) {
                         found.entry(m[1].to_string()).or_default().push(Ref { file: rel.clone(), line: i + 1, text: line.trim().to_string() });
                     }
@@ -681,31 +718,32 @@ impl Project {
     }
 
     fn flag(&self, r: &Ref, kind: &str) -> bool {
-        let ls = self.lines(&r.file);
+        let (ls, lang) = (self.lines(&r.file), self.lang(&r.file));
         match kind {
-            "comment-only" => self.is_comment(&r.text),
+            "comment-only" => lang.is_comment(&r.text),
             "disabled" => {
                 // the attribute: the tag line up to the declaration line
                 let mut head = vec![];
                 for x in ls.iter().skip(r.line - 1).take(4) {
                     head.push(x);
-                    if self.rx.decl.is_match(x) {
+                    if lang.decl.is_match(x) {
                         break;
                     }
                 }
-                !self.is_comment(&r.text) && head.iter().any(|x| self.rx.off.is_match(x))
+                !lang.is_comment(&r.text) && head.iter().any(|x| lang.off.is_match(x))
             }
-            _ => !self.is_comment(&r.text) && !body(&ls, r.line, 200).iter().any(|x| self.rx.assert.is_match(x)),
+            _ => !lang.is_comment(&r.text) && !body(&ls, r.line, 200).iter().any(|x| lang.assert.is_match(x)),
         }
     }
 
     // (SCAN-29)
-    /// Name of the declaration a comment at 1-based line `n` belongs to: the next one for a comment line that leads into a declaration
-    /// (only comment, doc and attribute lines between), else the nearest above.
-    pub fn enclosing(&self, ls: &[String], n: usize) -> String {
-        let decl = |l: &String| self.rx.decl.captures(l).map(|m| m[1].to_string());
-        let lead = |l: &&String| { let l = l.trim_start(); self.is_comment(l) || l.starts_with("#[") || l.starts_with('@') };
-        if self.is_comment(ls[n - 1].trim_start()) && let Some(d) = ls[n..].iter().skip_while(lead).next().and_then(decl) {
+    /// Name of the declaration a comment at 1-based line `n` of file `rel` belongs to: the next one for a comment line that leads into a
+    /// declaration (only comment, doc and attribute lines between), else the nearest above.
+    pub fn enclosing(&self, rel: &str, n: usize) -> String {
+        let (ls, lang) = (self.lines(rel), self.lang(rel));
+        let decl = |l: &String| lang.decl.captures(l).map(|m| m[1].to_string());
+        let lead = |l: &&String| { let l = l.trim_start(); lang.is_comment(l) || l.starts_with("#[") || l.starts_with('@') };
+        if lang.is_comment(ls[n - 1].trim_start()) && let Some(d) = ls[n..].iter().skip_while(lead).next().and_then(decl) {
             return d;
         }
         ls[..n].iter().rev().find_map(decl).unwrap_or_default()

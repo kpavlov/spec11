@@ -152,8 +152,26 @@ A requirement with a check mark also gets a verdict: `NO-TEST` (no tagged test),
 
 ## Configuration
 
-Most repos need none. To override a detected field, put `spec17.json` at the repo root. `spec17.example.json` shows the common fields (`specs`, `tests`, `src`, `ext`, `comment`, `case`, `test_files`, `retired_prefixes`, `codegraph`); `decl`, `assert`, `off` and `infra_paths` exist too. A field you set replaces its detected value.
+Most repos need none. To override a detected field, put `spec17.json` at the repo root. `spec17.example.json` shows the common fields (`specs`, `tests`, `src`, `ext`, `profiles`, `retired_prefixes`, `codegraph`); `infra_paths` exists too. A field you set replaces its detected value:
 
-The requirement-line patterns (`core/resources/spec_format.toml`) and the language profiles (`core/resources/profiles.toml`) are compiled into the binary. To support another language, add a `[[profile]]` and rebuild.
+```json spec17.example.json
+{
+  "specs": "docs/specs",
+  "tests": ["Tests"],
+  "src": ["Sources"],
+  "ext": ["swift"],
+  "profiles": [{
+    "name": "swift",
+    "case": "^\\s*@Test\\b|^\\s*func\\s+test",
+    "test": "(^|/)[^/]*Tests?(/|\\.swift$)"
+  }],
+  "retired_prefixes": [],
+  "codegraph": ".codegraph/codegraph.db"
+}
+```
+
+Each file is read with the profile of its language: comment markers, `decl`, `assert`, `off`, `test` (which paths are tests) and `case` (the line that opens a test case). `profiles` holds entries shaped like a `[[profile]]` of `core/resources/profiles.toml`: `{"name": "rust", "assert": "assert!|panic!"}` changes only that field of the built-in Rust profile, and a new `name` with `ext` and `comment` adds a language. A field a profile does not have is an error, and so are the old top-level `comment`, `decl`, `assert`, `off`, `case` and `test_files`.
+
+The requirement-line patterns (`core/resources/spec_format.toml`) and the language profiles (`core/resources/profiles.toml`) are compiled into the binary. To support another language, add a `[[profile]]` and rebuild, or put the same entry in `profiles`.
 
 Paths in `.aiignore` or `.spec17ignore` (gitignore syntax) are left out of every scan. Symlinks are followed only inside the repo root or a path in the `ALLOWED_PATHS` environment variable, a `:`-separated list.

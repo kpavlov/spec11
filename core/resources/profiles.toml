@@ -1,5 +1,7 @@
 # Ecosystem profiles: how the files, comments, declarations and tests of a language look.
 # To support a new language, append a [[profile]] table; nothing else needs to change.
+# A repo can do the same without a rebuild: `profiles` in spec17.json takes entries of this shape (JSON), and one named
+# like a profile here changes only the fields it sets.
 # Regexes are TOML literal strings ('...'): write them as-is, no escaping (use \x27 for a single quote).
 #
 #   name     ecosystem name (shown in the UI)
@@ -199,3 +201,13 @@ assert = 'Check\w*\(|Assert\w*\('
 off = '\[Ignore'
 test = '(^|/)tests?/|Tests?\.(pas|dpr)$'
 case = '(?i)^\s*\[Test\b|^\s*procedure\s+(?:\w+\.)?Test\w*'
+
+[[profile]]
+name = "sql"
+ext = ["sql"]
+comment = ["--"]
+decl = '(?i)^\s*create\s+(?:or\s+replace\s+)?(?:function|procedure|proc|view|table|trigger)\s+(?:if\s+not\s+exists\s+)?([\w."\[\]]+)'
+assert = '(?i)\b(?:ok|is|isnt|matches|results_eq|set_eq|bag_eq|throws_ok|lives_ok|has_\w+|col_\w+)\s*\(|tSQLt\.(?:Assert\w+|Fail)\b'
+off = '(?i)\b(?:skip|todo)\s*\('
+test = '(^|/)(tests?|spec)/[^/]*\.sql$|_test\.sql$'
+case = '(?i)^\s*create\s+(?:or\s+replace\s+)?(?:function|procedure|proc)\s+[\w."\[]*test'

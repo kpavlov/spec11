@@ -1,5 +1,6 @@
 //! `spec17.json` at the repo root. Every field is optional: an empty one is detected from the repo (see `detect.rs`).
-use crate::detect::{self, Layout};
+use crate::detect::{self, Layout, Profile};
+use serde_json::{Map, Value};
 use serde::Deserialize;
 use std::path::Path;
 
@@ -12,18 +13,9 @@ pub struct Config {
     pub src: Vec<String>,
     /// File extensions scanned in `tests` and `src`.
     pub ext: Vec<String>,
-    /// Line-comment markers; a source citation is an ID after one of them.
-    pub comment: Vec<String>,
-    /// Declaration regex, group 1 = name (used to name the code a citation sits in).
-    pub decl: String,
-    /// A test body containing a match has a direct assertion.
-    pub assert: String,
-    /// A line matching this opens a test case (default: the ecosystem's marker `#[test]`, `@Test`, `it(` …); read by the `spec17://tests` resource.
-    pub case: String,
-    /// A test head containing a match is switched off.
-    pub off: String,
-    /// A file whose repo-relative path matches is a test, also inside a `src` folder (`a_test.go`, `a.test.ts`).
-    pub test_files: String,
+    /// Ecosystem profiles shaped like a `[[profile]]` of `resources/profiles.toml`: one named like a built-in one changes the fields it
+    /// sets, any other adds an ecosystem (its comment markers, declaration, assertion and switched-off regexes).
+    pub profiles: Vec<Map<String, Value>>,
     pub retired_prefixes: Vec<String>,
     /// CodeGraph index; empty = `DEFAULT_DB`.
     pub codegraph: String,
@@ -41,7 +33,11 @@ impl Config {
         let f = root.join("spec17.json");
         let mut cfg = if f.exists() {
             let text = std::fs::read_to_string(&f).map_err(|e| format!("{}: {e}", f.display()))?;
-            serde_json::from_str(&text).map_err(|e| format!("{}: {e}", f.display()))?
+            let v: Value = serde_json::from_str(&text).map_err(|e| format!("{}: {e}", f.display()))?;
+            if let Some(k) = ["comment", "decl", "assert", "off", "case", "test_files"].into_iter().find(|k| v.get(k).is_some()) {
+                return Err(format!("{}: `{k}` moved into `profiles`: an entry like a [[profile]] of profiles.toml, e.g. {{\"name\": \"rust\", \"{}\": …}}", f.display(), if k == "test_files" { "test" } else { k }));
+            }
+            serde_json::from_value(v).map_err(|e| format!("{}: {e}", f.display()))?
         } else {
             Config::default()
         };
@@ -52,33 +48,15 @@ impl Config {
     }
 
     /// Fill what the file left empty from the repo's file list (CodeGraph's, else a walk); what it set stays as it is.
+    /// Returns the index in `profiles` of the dominant ecosystem.
     /// (SCAN-09)
-    pub fn detect(&mut self, files: &[String]) {
-        let Some(Layout { profile: p, src, tests }) = detect::layout(files) else { return self.never() };
-        let (explicit_src, explicit_tests) = (!self.src.is_empty(), !self.tests.is_empty());
-        for (field, auto) in [(&mut self.src, src), (&mut self.tests, tests), (&mut self.ext, p.ext.clone()), (&mut self.comment, p.comment.clone())] {
+    pub fn detect(&mut self, profiles: &[Profile], files: &[String]) -> Option<usize> {
+        let Layout { profile: p, src, tests } = detect::layout(profiles, files)?;
+        for (field, auto) in [(&mut self.src, src), (&mut self.tests, tests), (&mut self.ext, p.ext.clone())] {
             if field.is_empty() {
                 *field = auto;
             }
         }
-        // a profile's test regex describes its own layout; a hand-written src/tests list keeps the user's meaning
-        for (field, auto) in [(&mut self.decl, &p.decl), (&mut self.assert, &p.assert), (&mut self.off, &p.off)] {
-            if field.is_empty() {
-                *field = auto.into();
-            }
-        }
-        if self.test_files.is_empty() && !(explicit_src && explicit_tests) {
-            self.test_files = p.test.clone();
-        }
-        self.never();
-    }
-
-    /// Regexes that are still empty match nothing (an ecosystem spec17 does not know).
-    fn never(&mut self) {
-        for r in [&mut self.decl, &mut self.assert, &mut self.off] {
-            if r.is_empty() {
-                *r = detect::NEVER.into();
-            }
-        }
+        profiles.iter().position(|x| std::ptr::eq(x, p))
     }
 }

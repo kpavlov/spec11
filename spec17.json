@@ -3,10 +3,12 @@
   "tests": ["core/tests", "server/src", "server/tests"],
   "src": ["core/src", "server/src"],
   "ext": ["rs"],
-  "comment": ["//"],
-  "decl": "^\\s*(?:pub(?:\\([^)]*\\))?\\s+)?(?:async\\s+)?(?:fn|struct|enum|trait|impl|type|mod)\\s+([A-Za-z_]\\w*)",
-  "assert": "assert!|assert_eq!|assert_ne!|panic!",
-  "off": "#\\[ignore",
+  "profiles": [{
+    "name": "rust",
+    "decl": "^\\s*(?:pub(?:\\([^)]*\\))?\\s+)?(?:async\\s+)?(?:fn|struct|enum|trait|impl|type|mod)\\s+([A-Za-z_]\\w*)",
+    "assert": "assert!|assert_eq!|assert_ne!|panic!",
+    "off": "#\\[ignore"
+  }],
   "retired_prefixes": [],
   "infra_paths": []
 }
