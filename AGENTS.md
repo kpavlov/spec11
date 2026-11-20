@@ -8,6 +8,7 @@ spec17: Rust workspace (`core`, `server`) + Svelte dashboard (`web`) + the agent
 - `make parity` (optional) compares with the old Python scripts if they are vendored in `ROOT/.agents/skills/spec-driven`; the scripts are no longer in this repo.
 - `cd web && pnpm run build && pnpm run check`
 - `make dev` / `make run`; override `ROOT`, `PORT`, `OPEN=0`
+- `make docs` builds the Hugo site (`docs/`, no theme, `layouts/all.html`) into `docs/public`; `.github/workflows/pages.yml` deploys it. Doc pages follow the same rules: evidence, not truth.
 
 ## Rules
 

@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+{{- $cur := . }}
+{{- $all := slice site.Home }}
+{{- range site.RegularPages.ByWeight }}{{ $all = $all | append . }}{{ end }}
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ if .IsHome }}{{ site.Title }}: spec-driven-development evidence{{ else }}{{ .Title }} · {{ site.Title }}{{ end }}</title>
+  <meta name="description" content="{{ .Description | default site.Params.description }}">
+  <link rel="stylesheet" href="{{ "style.css" | relURL }}">
+  <link rel="stylesheet" href="{{ "syntax.css" | relURL }}">
+  <script src="{{ "search.js" | relURL }}" defer></script>
+</head>
+<body>
+  <header>
+    <a class="brand" href="{{ site.Home.RelPermalink }}">spec17</a>
+    <div class="search">
+      <input id="q" type="search" placeholder="Search docs (press /)" aria-label="Search docs" autocomplete="off" data-index="{{ "index.json" | relURL }}" hidden>
+      <ul id="results" hidden></ul>
+    </div>
+    <a href="https://github.com/kpavlov/spec17">GitHub</a>
+  </header>
+  <div class="wrap">
+    <nav aria-label="Pages">
+      <ul>
+        {{ range $all }}
+          <li>
+            <a href="{{ .RelPermalink }}"{{ if eq . $cur }} aria-current="page"{{ end }}>{{ if .IsHome }}Overview{{ else }}{{ .LinkTitle }}{{ end }}</a>
+            {{ if eq . $cur }}{{ .TableOfContents }}{{ end }}
+          </li>
+        {{ end }}
+      </ul>
+    </nav>
+    <main>
+      {{ if not .IsHome }}<h1>{{ .Title }}</h1>{{ end }}
+      {{ .Content }}
+      {{ $i := 0 }}{{ range $k, $p := $all }}{{ if eq $p $cur }}{{ $i = $k }}{{ end }}{{ end }}
+      <div class="pager">
+        {{ if gt $i 0 }}{{ with index $all (sub $i 1) }}<a rel="prev" href="{{ .RelPermalink }}">← {{ if .IsHome }}Overview{{ else }}{{ .LinkTitle }}{{ end }}</a>{{ end }}{{ end }}
+        {{ if lt (add $i 1) (len $all) }}{{ with index $all (add $i 1) }}<a rel="next" href="{{ .RelPermalink }}">{{ .LinkTitle }} →</a>{{ end }}{{ end }}
+      </div>
+    </main>
+  </div>
+</body>
+</html>

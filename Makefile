@@ -16,7 +16,7 @@ TAG ?= v$(VERSION)
 SIGN_IDENTITY ?= -
 archive = dist/spec17-$(1)-$(OS)-$(ARCH).tar.gz
 
-.PHONY: help dev serve web build release-build run install uninstall dist sign check-tag upload release-dev upload-edge report test parity bench upgrade clean mcp-inspector
+.PHONY: help dev serve web build release-build run install uninstall dist sign check-tag upload release-dev upload-edge report test parity bench docs site upgrade clean mcp-inspector
 
 help:
 	@echo "make dev      Vite (HMR, :5173) + Rust server on :$(PORT) proxying to it, scanning $(ROOT)"
@@ -31,6 +31,7 @@ help:
 	@echo "make report   print the text report for $(ROOT)"
 	@echo "make test     cargo tests; make parity compares with the old Python scripts if vendored in $(ROOT)"
 	@echo "make bench    time spec17 on a generated repo at REVS (default: main HEAD; . = working tree), SCALE=1 RUNS=10 JSON=1"
+	@echo "make docs    build the Hugo site in docs/ into docs/public (needs Hugo >= 0.146); make site serves it with live reload on :1313"
 	@echo "make upgrade   bump web (pnpm, to latest) and Rust (cargo update; cargo upgrade --incompatible if cargo-edit is installed) dependencies"
 	@echo "override: make dev ROOT=/path/to/repo PORT=7500 OPEN=0   (OPEN=0: don't open the browser)"
 
@@ -145,6 +146,13 @@ release-dev:
 report:
 	cargo run -q -p spec17 -- --root "$(ROOT)" report
 
+# (NFR-15) The same build as .github/workflows/pages.yml; --baseURL is only for the published subpath.
+docs:
+	hugo --source docs --gc --minify --panicOnWarning
+
+site:
+	hugo server --source docs
+
 test:
 	cargo test --workspace
 
@@ -169,7 +177,7 @@ upgrade:
 
 clean:
 	cargo clean
-	rm -rf web/dist web/node_modules
+	rm -rf web/dist web/node_modules docs/public docs/resources
 
 mcp-inspector: ## Launch MCP Inspector UI
 	@echo "🧐 MCP Inspector"
