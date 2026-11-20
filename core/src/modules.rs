@@ -68,7 +68,7 @@ pub struct ModulesView {
     pub index: bool,
     pub note: Option<String>,
     pub modules: Vec<ModuleInfo>,
-    /// Modules hidden by `.spec11ignore` (API-12): not scanned, so only their paths are known.
+    /// Modules hidden by `.spec17ignore` (API-12): not scanned, so only their paths are known.
     pub hidden: Vec<String>,
 }
 
@@ -109,7 +109,7 @@ impl Analysis {
     }
 
     // (SCAN-14)
-    /// The test cases of the test files, grouped by module and file (`case` in `spec11.json` replaces the built-in markers).
+    /// The test cases of the test files, grouped by module and file (`case` in `spec17.json` replaces the built-in markers).
     pub fn tests_view(&self) -> TestsView {
         let (mut markers, mut seen) = (HashMap::new(), HashMap::new());
         let mut by: BTreeMap<String, Vec<TestFile>> = BTreeMap::new();

@@ -8,7 +8,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 async fn independent_stdio_sessions_use_the_same_tools_and_exit_on_eof() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../core/test-data/nospecs");
     let session = |serve: bool| {
-        let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_spec11"));
+        let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_spec17"));
         command.arg("--root").arg(&root);
         if serve {
             command.arg("serve");
@@ -45,11 +45,11 @@ async fn independent_stdio_sessions_use_the_same_tools_and_exit_on_eof() {
 #[doc = "[SETUP-13]"]
 #[test]
 fn cli_install_defaults_to_http_in_both_scopes() {
-    let home = std::env::temp_dir().join(format!("spec11-install-home-{}", std::process::id()));
+    let home = std::env::temp_dir().join(format!("spec17-install-home-{}", std::process::id()));
     let root = home.join("repo");
     std::fs::create_dir_all(root.join("specs")).unwrap();
     let run = |args: &[&str]| {
-        let output = Command::new(env!("CARGO_BIN_EXE_spec11")).env("HOME", &home)
+        let output = Command::new(env!("CARGO_BIN_EXE_spec17")).env("HOME", &home)
             .arg("--root").arg(&root).arg("install").args(args).output().unwrap();
         assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
     };
@@ -57,8 +57,8 @@ fn cli_install_defaults_to_http_in_both_scopes() {
     run(&["--global", "--port", "7422"]);
     for (scope, port) in [(&root, 7421), (&home, 7422)] {
         let config: Value = serde_json::from_slice(&std::fs::read(scope.join(".mcp.json")).unwrap()).unwrap();
-        assert_eq!(config["mcpServers"]["spec11"], json!({"type":"http", "url":format!("http://127.0.0.1:{port}/mcp")}));
-        assert!(scope.join(".agents/skills/spec11/SKILL.md").is_file());
+        assert_eq!(config["mcpServers"]["spec17"], json!({"type":"http", "url":format!("http://127.0.0.1:{port}/mcp")}));
+        assert!(scope.join(".agents/skills/spec17/SKILL.md").is_file());
     }
     std::fs::remove_dir_all(home).unwrap();
 }
@@ -66,8 +66,8 @@ fn cli_install_defaults_to_http_in_both_scopes() {
 #[doc = "[API-23]"]
 #[test]
 fn stdio_failure_is_silent() {
-    let missing = std::env::temp_dir().join(format!("spec11-no-repo-{}", std::process::id()));
-    let out = Command::new(env!("CARGO_BIN_EXE_spec11")).arg("--root").arg(&missing).args(["--stdio-mcp", "--no-http-mcp", "--no-ui"]).stdin(Stdio::null()).output().unwrap();
+    let missing = std::env::temp_dir().join(format!("spec17-no-repo-{}", std::process::id()));
+    let out = Command::new(env!("CARGO_BIN_EXE_spec17")).arg("--root").arg(&missing).args(["--stdio-mcp", "--no-http-mcp", "--no-ui"]).stdin(Stdio::null()).output().unwrap();
     assert!(!out.status.success());
     assert!(out.stdout.is_empty() && out.stderr.is_empty(), "{}", String::from_utf8_lossy(&out.stderr));
 }

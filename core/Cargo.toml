@@ -1,5 +1,5 @@
 [package]
-name = "spec11-core"
+name = "spec17-core"
 version.workspace = true
 edition.workspace = true
 description = "Deterministic spec-driven-development evidence: requirement IDs vs tests and code citations. Evidence, not truth."

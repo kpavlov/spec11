@@ -23,7 +23,7 @@ pub enum GraphError {
 impl fmt::Display for GraphError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            GraphError::SchemaDrift(m) => write!(f, "CodeGraph index schema not supported ({m}); update spec11 or re-run `codegraph init`"),
+            GraphError::SchemaDrift(m) => write!(f, "CodeGraph index schema not supported ({m}); update spec17 or re-run `codegraph init`"),
             GraphError::Sql(m) => write!(f, "CodeGraph index unreadable: {m}"),
         }
     }

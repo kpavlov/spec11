@@ -4,7 +4,7 @@ export const reviewed = $state<Record<string, string>>({});
 let repo = "";
 const run = <T>(mode: IDBTransactionMode, f: (s: IDBObjectStore) => IDBRequest<T>) =>
   new Promise<T>((ok, no) => {
-    const q = indexedDB.open("spec11", 1);
+    const q = indexedDB.open("spec17", 1);
     q.onupgradeneeded = () => q.result.createObjectStore("reviewed");
     q.onerror = () => no(q.error);
     q.onsuccess = () => {

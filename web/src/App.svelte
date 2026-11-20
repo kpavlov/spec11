@@ -55,13 +55,13 @@
   });
 
   $effect(() => {
-    document.title = ["spec11", route.tab, route.id ?? route.file ?? route.path].filter(Boolean).join(" · ");
+    document.title = ["spec17", route.tab, route.id ?? route.file ?? route.path].filter(Boolean).join(" · ");
   });
 
   // setup banner: hidden per browser until its message changes
   const stored = (k: string) => { try { return localStorage.getItem(k) ?? ""; } catch { return ""; } };
-  let dismissed = $state(stored("spec11.banner"));
-  const dismiss = (m: string) => { dismissed = m; try { localStorage.setItem("spec11.banner", m); } catch { /* storage blocked */ } };
+  let dismissed = $state(stored("spec17.banner"));
+  const dismiss = (m: string) => { dismissed = m; try { localStorage.setItem("spec17.banner", m); } catch { /* storage blocked */ } };
   // nav emoji; below 1350px only these show (the label is hidden, the title keeps the name)
   const EMOJI: Record<string, string> = { dashboard: "📊", changes: "📝", requirements: "📋", modules: "📦", tests: "🧪", specs: "📄", overlap: "🔀", uncovered: "🚫" };
   const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
@@ -72,12 +72,12 @@
   const themes: { v: Theme; icon: string; name: string }[] = [{ v: "auto", icon: "◐", name: "system" }, { v: "light", icon: "☀", name: "light" }, { v: "dark", icon: "☾", name: "dark" }];
   const curTheme = $derived(themes.find((t) => t.v === theme)!);
   const nextTheme = $derived(themes[(themes.indexOf(curTheme) + 1) % themes.length]);
-  const saved = (): Theme => { try { const t = localStorage.getItem("spec11.theme"); return t === "light" || t === "dark" ? t : "auto"; } catch { return "auto"; } };
+  const saved = (): Theme => { try { const t = localStorage.getItem("spec17.theme"); return t === "light" || t === "dark" ? t : "auto"; } catch { return "auto"; } };
   let theme = $state<Theme>(saved());
   $effect(() => {
     const el = document.documentElement;
     if (theme === "auto") delete el.dataset.theme; else el.dataset.theme = theme;
-    try { theme === "auto" ? localStorage.removeItem("spec11.theme") : localStorage.setItem("spec11.theme", theme); } catch { /* storage blocked */ }
+    try { theme === "auto" ? localStorage.removeItem("spec17.theme") : localStorage.setItem("spec17.theme", theme); } catch { /* storage blocked */ }
   });
 
   // keyboard: `/` focuses the filter (opening the requirements list first), filter shortcuts, Esc closes the trace panel (↑/↓ on the lists: DataTable)
@@ -150,16 +150,16 @@
     rows = s.data.rows;
     up = true;
     // the modules views are optional: a failed resource read leaves them empty instead of failing the load
-    read("spec11://modules").then((m) => (modules = m)).catch(() => (modules = null));
+    read("spec17://modules").then((m) => (modules = m)).catch(() => (modules = null));
     call("changes").then((c) => (changes = c.data)).catch(() => (changes = null));
     call("commits").then((c) => (commits = c.data.commits)).catch(() => (commits = {}));
     gen++;
     if (!root) fetch("/api/info").then((x) => x.json()).then((i) => (root = i.root ?? "")).catch(() => {}).finally(() => loadReviewed(root));
   }
 
-  // (WEB-10, WEB-11) hide a module (after a confirm) or show it again via .spec11ignore, then rescan
+  // (WEB-10, WEB-11) hide a module (after a confirm) or show it again via .spec17ignore, then rescan
   async function setHidden(path: string, hidden: boolean) {
-    if (hidden && !confirm(`Add /${path}/ to .spec11ignore? spec11 will leave the module out of every scan.`)) return;
+    if (hidden && !confirm(`Add /${path}/ to .spec17ignore? spec17 will leave the module out of every scan.`)) return;
     try {
       await guard(call("module", { path, hidden }));
       await load();
@@ -250,7 +250,7 @@
   };
   $effect(() => {
     if (route.tab === "overlap") fetchOnce("overlap", () => call("overlap").then((r) => void (overlap = r.data.rows)));
-    if (route.tab === "tests" || route.tab === "requirements" || route.tab === "changes" || (route.tab === "modules" && route.module)) fetchOnce("tests", () => read("spec11://tests").then((r) => void (tests = r)));
+    if (route.tab === "tests" || route.tab === "requirements" || route.tab === "changes" || (route.tab === "modules" && route.module)) fetchOnce("tests", () => read("spec17://tests").then((r) => void (tests = r)));
     if (route.tab === "uncovered") fetchOnce("uncovered", () => call("uncovered").then((r) => void (uncovered = r.data)));
   });
 
@@ -286,7 +286,7 @@
   let reloadTimer: ReturnType<typeof setTimeout> | undefined;
   // throttled: the first push reloads at once, a burst after it collapses into one trailing reload at most every 2 s
   let lastLoad = 0;
-  $effect(() => watch(["spec11://report", "spec11://status", "spec11://changes"], () => {
+  $effect(() => watch(["spec17://report", "spec17://status", "spec17://changes"], () => {
     clearTimeout(reloadTimer);
     reloadTimer = setTimeout(() => { lastLoad = Date.now(); load().catch(() => {}); }, Math.max(0, lastLoad + 2000 - Date.now()));
   }, (s) => (up = s)));
@@ -445,12 +445,12 @@
     TextMate: (f, l) => `txmt://open?url=${encodeURIComponent("file://" + f)}&line=${l}`,
     Xcode: (f, l) => `xcode://open?file=${encodeURIComponent(f)}&line=${l}`,
   };
-  const savedEditor = stored("spec11.editor");
+  const savedEditor = stored("spec17.editor");
   let editor = $state(savedEditor in EDITORS ? savedEditor : "IntelliJ");
-  let wrap = $state(stored("spec11.wrap") === "1");
+  let wrap = $state(stored("spec17.wrap") === "1");
   let copied = $state(false);
-  let showHidden = $state(stored("spec11.hidden") === "1");
-  let modView = $state(stored("spec11.modules") === "graph" ? "graph" : "list");
+  let showHidden = $state(stored("spec17.hidden") === "1");
+  let modView = $state(stored("spec17.modules") === "graph" ? "graph" : "list");
   const save = (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* storage blocked */ } };
   const copyPath = (path: string) => navigator.clipboard.writeText(path).then(() => { copied = true; setTimeout(() => (copied = false), 1200); }).catch(() => {});
 </script>
@@ -572,7 +572,7 @@
 {/snippet}
 
 <header>
-  <h1><a href="/">spec11</a></h1>
+  <h1><a href="/">spec17</a></h1>
   <span class="dot" data-tone={up === true ? "ok" : up === false ? "bad" : undefined} role="status" title={up === null ? "server: connecting" : up ? "server: connected" : "server: disconnected, retrying"}></span>
   <a class="root mono muted" href="/">{root}</a>
   <nav aria-label="views">
@@ -590,7 +590,7 @@
 {#if error}<p class="error">{error}</p>{/if}
 {#if setup && setup.suggestions.length && route.tab !== "setup" && dismissed !== setup.suggestions[0]}
   <p class="banner">
-    <span>spec11 is not fully set up for this repo: {setup.suggestions[0]}</span>
+    <span>spec17 is not fully set up for this repo: {setup.suggestions[0]}</span>
     <span class="grow"></span>
     <a class="tab" href="/setup">Open Setup</a>
     <button aria-label="dismiss" title="Hide until the message changes" onclick={() => dismiss(setup!.suggestions[0])}>✕</button>
@@ -622,7 +622,7 @@
           <p class="setup-actions">
             <Pill tone={where.skill === "current" ? "ok" : where.skill === "outdated" ? "warn" : "bad"}>skill {where.skill}</Pill>
             <button disabled={busy || where.skill === "current"} onclick={() => runSetup("install", global, { only: "skill" })}>{where.skill === "outdated" ? "Update skill" : "Install skill"}</button>
-            <button disabled={busy || where.skill === "missing"} onclick={() => confirm(`Remove the spec11 skill at ${where.skill_path}?`) && runSetup("uninstall", global, { only: "skill" })}>Remove skill</button>
+            <button disabled={busy || where.skill === "missing"} onclick={() => confirm(`Remove the spec17 skill at ${where.skill_path}?`) && runSetup("uninstall", global, { only: "skill" })}>Remove skill</button>
           </p>
           <p class="setup-value muted"><code>{where.skill_path}</code></p>
           {#if where.mcp_stdio !== undefined}
@@ -631,7 +631,7 @@
             {@render mcpControls("stdio", where.mcp_stdio, where.mcp_path, global, launchCommand(where.mcp_details?.stdio))}
             {@render mcpControls("http", global ? where.mcp_file : where.mcp, where.mcp_path, global, where.mcp_details?.http_url)}
           {:else}
-            <p class="muted">Update spec11 and restart the server to manage MCP transports.</p>
+            <p class="muted">Update spec17 and restart the server to manage MCP transports.</p>
           {/if}
           {#if global && where.mcp !== "missing"}
             <p class="muted">Claude user MCP entry {where.mcp === "ok" ? "installed" : "customised"} · <code>~/.claude.json</code> (read-only)</p>
@@ -641,12 +641,12 @@
       {#if noReqs}
         <section class="card block">
           <h3>No specs yet</h3>
-          <p>spec11 found no requirements in this repo and works without them: Modules and Tests still list its sources and tests. {setup.suggestions.length ? "Install the skill below, then ask" : "Ask"} your agent to draft <code>specs/01-name.md</code> with you (lines like <code>- **ABC-12** MUST — text</code>).</p>
+          <p>spec17 found no requirements in this repo and works without them: Modules and Tests still list its sources and tests. {setup.suggestions.length ? "Install the skill below, then ask" : "Ask"} your agent to draft <code>specs/01-name.md</code> with you (lines like <code>- **ABC-12** MUST — text</code>).</p>
         </section>
       {/if}
       {@render row("This repo", setup.status.project, false)}
       {@render row("Global", setup.status.global, true)}
-      <p class="muted">Stdio MCP starts a spec11 process for each session. HTTP MCP connects to a running <code>spec11</code> server.</p>
+      <p class="muted">Stdio MCP starts a spec17 process for each session. HTTP MCP connects to a running <code>spec17</code> server.</p>
       {@const cgBin = checks.find((k) => k.name === "codegraph binary")}
       {@const cgIdx = checks.find((k) => k.name === "codegraph index")}
       {@const cgMcp = setup.status.project.codegraph_mcp === "ok" ? "this repo" : setup.status.global.codegraph_mcp === "ok" ? "global" : ""}
@@ -657,12 +657,12 @@
           <pre class="log">curl -fsSL https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.sh | sh
 npm i -g @colbymchenry/codegraph
 irm https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.ps1 | iex   # Windows PowerShell</pre>
-          <p class="muted">Pick one, then press ↻ below. <a href="https://colbymchenry.github.io/codegraph/getting-started/installation/" target="_blank" rel="noreferrer">Installation docs</a>. spec11 never installs it for you.</p>
+          <p class="muted">Pick one, then press ↻ below. <a href="https://colbymchenry.github.io/codegraph/getting-started/installation/" target="_blank" rel="noreferrer">Installation docs</a>. spec17 never installs it for you.</p>
         {/if}
         <p>
           <b>2. Connect the agent</b> <Pill tone={cgMcp ? "ok" : "warn"}>{cgMcp ? `codegraph server set (${cgMcp})` : "codegraph server missing"}</Pill>
           <button disabled={busy || setup.status.project.codegraph_mcp === "ok"} onclick={() => runSetup("install", false, { server: "codegraph" })} title="Adds the codegraph MCP server to .mcp.json (created if missing; an entry that is there is kept)">Add CodeGraph to .mcp.json</button>
-          <button disabled={busy || setup.status.project.codegraph_mcp !== "ok"} onclick={() => confirm("Remove the codegraph server from .mcp.json? Your agent loses CodeGraph until it is added again, and a customised entry is not restored.") && runSetup("uninstall", false, { server: "codegraph" })} title="Removes only the codegraph entry from .mcp.json; the skill and the spec11 entry stay">Remove</button>
+          <button disabled={busy || setup.status.project.codegraph_mcp !== "ok"} onclick={() => confirm("Remove the codegraph server from .mcp.json? Your agent loses CodeGraph until it is added again, and a customised entry is not restored.") && runSetup("uninstall", false, { server: "codegraph" })} title="Removes only the codegraph entry from .mcp.json; the skill and the spec17 entry stay">Remove</button>
         </p>
         <p><b>3. Index</b> {#if cgIdx}<Pill tone={levelTone(cgIdx.level)}>{cgIdx.level}</Pill> <span class="muted">{cgIdx.detail}</span>{/if}</p>
         {#if cgBin?.level === "ok"}
@@ -694,7 +694,7 @@ irm https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.ps1 | 
     {#if noReqs}
       <section class="hero card">
         <h2>No requirements yet</h2>
-        <p>spec11 found none. Write them as <code>- **ABC-12** MUST — text</code> in <code>specs/01-name.md</code> or <code>SPEC.md</code>, tag tests <code>[ABC-12]</code> and cite <code>// (ABC-12)</code> in code. <a href="/setup">Setup</a> installs the skill so your agent drafts them with you.</p>
+        <p>spec17 found none. Write them as <code>- **ABC-12** MUST — text</code> in <code>specs/01-name.md</code> or <code>SPEC.md</code>, tag tests <code>[ABC-12]</code> and cite <code>// (ABC-12)</code> in code. <a href="/setup">Setup</a> installs the skill so your agent drafts them with you.</p>
         {#if modules}<p class="facts muted"><a href={u({ tab: "modules" })}>{plural(sum("src_files"), "source file")}</a> · {plural(sum("test_files"), "test file")} · <a href={u({ tab: "tests" })}>{plural(sum("tests"), "test")} detected</a></p>{/if}
       </section>
     {:else}
@@ -777,7 +777,7 @@ irm https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.ps1 | 
       </Section>
     {/if}
   {:else if route.tab === "requirements" && noReqs}
-    <p class="muted empty">No requirements found. <a href="/setup">Setup</a> says what spec11 looks for.</p>
+    <p class="muted empty">No requirements found. <a href="/setup">Setup</a> says what spec17 looks for.</p>
   {:else if route.tab === "requirements"}
     <div class="page">
     <div class="bar">
@@ -791,7 +791,7 @@ irm https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.ps1 | 
     </div>
     <Split>
       {#snippet list()}
-        <DataTable rows={shown} columns={reqCols} cell={reqCell} rowKey={(r) => r.id} selected={route.id} onselect={(k, how) => navigate({ ...route, id: k }, how === "key")} value={reqVal} groupOf={(r) => prefixOf(r.id)} tone={(r) => edgeTone(r.state)} pale={(r) => isReviewed(r.id)} storageKey="spec11.collapsed">
+        <DataTable rows={shown} columns={reqCols} cell={reqCell} rowKey={(r) => r.id} selected={route.id} onselect={(k, how) => navigate({ ...route, id: k }, how === "key")} value={reqVal} groupOf={(r) => prefixOf(r.id)} tone={(r) => edgeTone(r.state)} pale={(r) => isReviewed(r.id)} storageKey="spec17.collapsed">
           {#snippet empty()}<p class="muted empty">No requirement matches. <a href={u({ tab: "requirements" })}>Clear filters</a></p>{/snippet}
         </DataTable>
       {/snippet}
@@ -806,8 +806,8 @@ irm https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.ps1 | 
         <span class="nowrap"><a href="/requirements">requirements</a> / {code.path}{route.line ? `:${route.line}` : ""}</span>
         <button class="small" title="Copy the file path" onclick={() => copyPath(code!.path)}>{copied ? "Copied" : "Copy path"}</button>
         {#if root}<a class="btn small" title="Open in {editor}" href={EDITORS[editor](`${root}/${code.path}`, route.line ?? 1)}>Open in</a>{/if}
-        <select class="small" bind:value={editor} onchange={() => save("spec11.editor", editor)} aria-label="Editor">{#each Object.keys(EDITORS) as e}<option>{e}</option>{/each}</select>
-        <button class="small" class:on={wrap} aria-pressed={wrap} onclick={() => { wrap = !wrap; save("spec11.wrap", wrap ? "1" : "0"); }}>Wrap</button>
+        <select class="small" bind:value={editor} onchange={() => save("spec17.editor", editor)} aria-label="Editor">{#each Object.keys(EDITORS) as e}<option>{e}</option>{/each}</select>
+        <button class="small" class:on={wrap} aria-pressed={wrap} onclick={() => { wrap = !wrap; save("spec17.wrap", wrap ? "1" : "0"); }}>Wrap</button>
         {#if fileOf.has(code.path)}<ViewSwitch />{/if}
       </p>
       {#if diffOn(fileOf.has(code.path))}<DiffView paths={[code.path]} {gen} />
@@ -854,9 +854,9 @@ irm https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.ps1 | 
       {#if showChanged}<Seg label="Changes" options={changedSeg(changedMods.size)} value={onlyChanged ? "changed" : "all"} onpick={pickChanged} />{/if}
       <span class="muted">{modules?.modules.length ?? 0} modules</span>
       {#if modView === "list" && modules?.hidden?.length}
-        <label class="muted nowrap"><input type="checkbox" checked={showHidden} onchange={(e) => save("spec11.hidden", (showHidden = e.currentTarget.checked) ? "1" : "0")} /> show hidden ({modules.hidden.length})</label>
+        <label class="muted nowrap"><input type="checkbox" checked={showHidden} onchange={(e) => save("spec17.hidden", (showHidden = e.currentTarget.checked) ? "1" : "0")} /> show hidden ({modules.hidden.length})</label>
       {/if}
-      <Seg label="View" options={VIEWS} value={modView} onpick={(k) => save("spec11.modules", (modView = k))} />
+      <Seg label="View" options={VIEWS} value={modView} onpick={(k) => save("spec17.modules", (modView = k))} />
     </div>
     {#if modules && !modules.index}<p class="note-line muted">{modules.note}</p>{/if}
     {#if modView === "graph"}
@@ -878,15 +878,15 @@ irm https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.ps1 | 
               <td class="num"><a href={u({ tab: "tests", module: m.path })}>{m.tests}</a></td>
               <td class="num">{symbolsOf(m)}</td>
               <td class="num">{m.depends_on.length}</td>
-              <td>{#if m.path !== "."}<button type="button" class="ignore" title="Add /{m.path}/ to .spec11ignore" onclick={() => setHidden(m.path, true)}>ignore</button>{/if}</td>
+              <td>{#if m.path !== "."}<button type="button" class="ignore" title="Add /{m.path}/ to .spec17ignore" onclick={() => setHidden(m.path, true)}>ignore</button>{/if}</td>
             </tr>
           {/each}
           {#if showHidden}
             {#each hiddenMods as path (path)}
               <tr class="hidden-row">
                 <td class="mono nowrap">{path}</td>
-                <td class="muted" colspan="7">hidden by .spec11ignore</td>
-                <td><button type="button" class="ignore" title="Remove /{path}/ from .spec11ignore" onclick={() => setHidden(path, false)}>unhide</button></td>
+                <td class="muted" colspan="7">hidden by .spec17ignore</td>
+                <td><button type="button" class="ignore" title="Remove /{path}/ from .spec17ignore" onclick={() => setHidden(path, false)}>unhide</button></td>
               </tr>
             {/each}
           {/if}
@@ -913,7 +913,7 @@ irm https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.ps1 | 
       <p class="muted found">{tests.total} tests detected in {tests.modules.length} modules, {taggedN} tagged with a requirement. {tests.note}</p>
       <Split>
         {#snippet list()}
-          <DataTable rows={testRows} columns={testCols} rowKey={(c) => c.key} selected={selTest} onselect={(k, how) => { const c = testRows.find((x) => x.key === k); navigate({ ...route, path: c?.file, line: c?.t.line }, how === "key"); }} value={testVal} groupOf={(c) => c.module} storageKey="spec11.collapsed.tests">
+          <DataTable rows={testRows} columns={testCols} rowKey={(c) => c.key} selected={selTest} onselect={(k, how) => { const c = testRows.find((x) => x.key === k); navigate({ ...route, path: c?.file, line: c?.t.line }, how === "key"); }} value={testVal} groupOf={(c) => c.module} storageKey="spec17.collapsed.tests">
             {#snippet cell(c, k)}
               {#if k === "name"}<span class="mono" title={c.t.qualified}>{c.t.name}</span>{#if changeMark(c.file)}{" "}<Pill tone={changeTone(changeMark(c.file))} title="its file is {changeMark(c.file)} in the working tree">✎ {changeMark(c.file)}</Pill>{/if}
               {:else if k === "file"}<a href={u({ tab: "code", path: c.file, line: c.t.line })}>{c.file}:{c.t.line}</a>
@@ -928,7 +928,7 @@ irm https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.ps1 | 
     </div>
   {:else if route.tab === "specs"}
     {#if specFiles === null}<p class="muted">Loading…</p>
-    {:else if !specFiles.length}<p class="muted empty">No spec files found. <a href="/setup">Setup</a> says what spec11 looks for.</p>
+    {:else if !specFiles.length}<p class="muted empty">No spec files found. <a href="/setup">Setup</a> says what spec17 looks for.</p>
     {:else}
       <div class="page">
         {#if showChanged}<div class="bar"><Seg label="Changes" options={changedSeg(specFiles.filter((f) => fileOf.has(f)).length)} value={onlyChanged ? "changed" : "all"} onpick={pickChanged} /></div>{/if}
@@ -956,8 +956,8 @@ irm https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.ps1 | 
         <label class="muted nowrap"><input type="checkbox" checked={scope.include_untracked && !scope.staged} disabled={scope.staged} onchange={(e) => filter({ untracked: e.currentTarget.checked ? undefined : "0" })} /> untracked files</label>
       {/if}
       <label class="muted nowrap"><input type="checkbox" checked={scope.ignore_whitespace} onchange={(e) => filter({ ws: e.currentTarget.checked ? "1" : undefined })} /> ignore whitespace</label>
-      <label class="muted nowrap" title="Files .aiignore, .spec11ignore and .agents hide"><input type="checkbox" checked={scope.show_ignored} onchange={(e) => filter({ ignored: e.currentTarget.checked ? "1" : undefined })} /> ignored files</label>
-      <label class="muted nowrap" title="Files spec11 does not scan"><input type="checkbox" checked={scope.show_all} onchange={(e) => filter({ all: e.currentTarget.checked ? "1" : undefined })} /> unscanned files</label>
+      <label class="muted nowrap" title="Files .aiignore, .spec17ignore and .agents hide"><input type="checkbox" checked={scope.show_ignored} onchange={(e) => filter({ ignored: e.currentTarget.checked ? "1" : undefined })} /> ignored files</label>
+      <label class="muted nowrap" title="Files spec17 does not scan"><input type="checkbox" checked={scope.show_all} onchange={(e) => filter({ all: e.currentTarget.checked ? "1" : undefined })} /> unscanned files</label>
     </div>
     {#if history?.commits.length}
       <Section id="changes-commits" title={history.on_base ? "Recent commits" : `Commits not on ${history.base}`} count={history.commits.length} tone={history.on_base ? undefined : "accent"}>
@@ -1060,7 +1060,7 @@ irm https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.ps1 | 
 
 <footer class="muted">
   Evidence, not truth: tags and citations do not prove a requirement is implemented or its test passes.
-  <div>Copyright &copy; 2026 Konstantin Pavlov, <a href="https://itstaff.ee">Staff OÜ</a>. All rights reserved. · <a href="https://github.com/kpavlov/spec11" target="_blank" rel="noopener noreferrer">About</a> · <a href="https://github.com/kpavlov/spec11/issues" target="_blank" rel="noopener noreferrer">Feedback</a></div>
+  <div>Copyright &copy; 2026 Konstantin Pavlov, <a href="https://itstaff.ee">Staff OÜ</a>. All rights reserved. · <a href="https://spec17.dev" target="_blank" rel="noopener noreferrer">About</a> · <a href="https://github.com/kpavlov/spec17/issues" target="_blank" rel="noopener noreferrer">Feedback</a></div>
 </footer>
 
 <style>

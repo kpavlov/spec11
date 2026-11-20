@@ -124,7 +124,7 @@ impl Analysis {
             o += &format!("  … {} more (give a PATH to narrow)\n", found.len() - limit);
         }
         if !found.is_empty() {
-            o += "next: spec11 trace <ID> for each spec's text; decide conflicting / complementary / duplicate / incidental per SKILL.md\n";
+            o += "next: spec17 trace <ID> for each spec's text; decide conflicting / complementary / duplicate / incidental per SKILL.md\n";
         }
         o
     }

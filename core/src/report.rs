@@ -261,7 +261,7 @@ impl Report {
         o.push_str(&format!("problems: {} | total {}\n", probs.join(" | "), self.total_problems));
         // (SCAN-28)
         if self.requirements + self.refs == 0 {
-            o.push_str("note: no specs found, so there is nothing to measure yet: draft requirements with the user first (`spec11 doctor` says where spec11 looks and what a requirement line is)\n");
+            o.push_str("note: no specs found, so there is nothing to measure yet: draft requirements with the user first (`spec17 doctor` says where spec17 looks and what a requirement line is)\n");
         }
         if !self.index {
             o.push_str("note: no CodeGraph index, so test-to-code links and uncovered code are not checked\n");
@@ -269,12 +269,12 @@ impl Report {
                 o.push_str(&format!("note: {n}\n"));
             }
         }
-        section(&mut o, "unimplemented: due, no test and no code", self.unimplemented.len(), a.per_spec(&self.unimplemented), "spec11 status --missing");
-        section(&mut o, "untested: due, cited in code but no test", self.untested.len(), a.per_spec(&self.untested), "write the [ID] tests; spec11 status --missing");
+        section(&mut o, "unimplemented: due, no test and no code", self.unimplemented.len(), a.per_spec(&self.unimplemented), "spec17 status --missing");
+        section(&mut o, "untested: due, cited in code but no test", self.untested.len(), a.per_spec(&self.untested), "write the [ID] tests; spec17 status --missing");
         section(&mut o, "check-marked done without proof", self.unproven.len(),
             self.unproven.iter().map(|u| format!("  {} {} {}:{}  {}", u.id, u.verdict, u.file, u.line, chars(&u.text, 70))).collect(),
-            "NO-TEST = not done unless proven; NO-LINK = verify; spec11 status --unproven --effort high");
-        section(&mut o, "marked later but already has tests or code", self.built.len(), a.per_spec(&self.built), "assess: spec11 status --built, SKILL.md effort modes");
+            "NO-TEST = not done unless proven; NO-LINK = verify; spec17 status --unproven --effort high");
+        section(&mut o, "marked later but already has tests or code", self.built.len(), a.per_spec(&self.built), "assess: spec17 status --built, SKILL.md effort modes");
         let bt: Vec<String> = self.invalid_tests.iter().filter(|(_, v)| !v.is_empty()).map(|(k, v)| {
             let head: Vec<String> = v.iter().take(6).map(|p| format!("{} ({}:{})", p.id, p.file, p.line)).collect();
             format!("  {k}: {}{}", head.join(", "), if v.len() > 6 { format!(", … {} more", v.len() - 6) } else { String::new() })
@@ -284,7 +284,7 @@ impl Report {
         let app = a.app();
         section(&mut o, "specs to compare: code covered by 2+ requirements that do not cite each other", self.overlaps.len(),
             self.overlaps.iter().map(|r| format!("  {}:{} {}  [{}]", r.file.strip_prefix(&app).unwrap_or(&r.file), r.line, r.name, r.ids.join(", "))).collect(),
-            "spec11 status --overlap; conflicting or complementary? see SKILL.md");
+            "spec17 status --overlap; conflicting or complementary? see SKILL.md");
         section(&mut o, "spec issues", self.spec_issues.len(), self.spec_issues.iter().map(|x| format!("  {x}")).collect(), "fix the spec bullet");
         let dl: Vec<String> = [("tests", &self.dangling_tests), ("sources", &self.dangling_sources)].into_iter().filter(|(_, v)| !v.is_empty()).map(|(k, v)| format!("  {k}: {}", ranges(v))).collect();
         section(&mut o, "dangling citations (ID in no spec)", self.dangling_sources.len() + self.dangling_tests.len(), dl, "repoint to a live ID or remove");
@@ -300,7 +300,7 @@ impl Report {
             }
             None => o.push_str("\n[code with no requirement] not checked (no CodeGraph index)\n"),
         }
-        o.push_str("  -> spec11 status --uncovered [PATH]; triage per SKILL.md before writing requirements\n");
+        o.push_str("  -> spec17 status --uncovered [PATH]; triage per SKILL.md before writing requirements\n");
         o
     }
 }
@@ -378,7 +378,7 @@ impl Analysis {
     pub fn status(&self, o: &StatusOpts) -> Result<Status, String> {
         let mut ids: Vec<String> = self.s.iter().filter(|(i, s)| !(o.spec.as_ref().is_some_and(|x| !s.file.contains(x.as_str())) || o.prefix.as_ref().is_some_and(|x| !i.starts_with(&format!("{x}-"))))).map(|(i, _)| i.clone()).collect();
         if ids.is_empty() && (o.spec.is_some() || o.prefix.is_some()) {
-            return Err("spec11: no requirement matches --spec/--prefix".into());
+            return Err("spec17: no requirement matches --spec/--prefix".into());
         }
         ids.sort_by_key(|i| id_key(i));
         let listing = o.all || o.missing || o.issues || o.reference().is_some() || o.built || o.done || o.unproven;
@@ -503,7 +503,7 @@ impl Status {
                 if self.issues.len() > 10 { out += &format!("  … {} more (--issues)\n", self.issues.len() - 10); }
             }
             if self.src_only > 0 || self.none > 0 {
-                out += "next: --missing lists them; spec11 trace <ID> shows tests, citations and related code\n";
+                out += "next: --missing lists them; spec17 trace <ID> shows tests, citations and related code\n";
             }
         }
         for (label, d) in [("tests", &self.dangling_tests), ("sources", &self.dangling_sources)] {

@@ -1,4 +1,6 @@
-# spec11
+# spec17
+
+https://spec17.dev
 
 Deterministic spec-driven-development evidence for a repo: which requirement IDs in `specs/*.md` have tests, code citations, spec problems, or overlap with other requirements. No LLM in the core.
 
@@ -8,10 +10,10 @@ One Rust binary, three interfaces over the same core:
 
 | Interface | How |
 |---|---|
-| CLI | `spec11 report`, `spec11 status [flags]` (`--changed [REF] [--staged] [--no-untracked] [--ignore-whitespace]`), `spec11 trace ID`, `spec11 changes|diff|history`, `spec11 overlap|uncovered`, `spec11 doctor`, `spec11 install|uninstall`; every command takes `--json` and `--root DIR` |
-| MCP (streamable HTTP) | `spec11` / `spec11 serve` → `http://127.0.0.1:7411/mcp` |
-| MCP (stdio) | `spec11 --stdio-mcp --no-http-mcp --no-ui` |
-| Web dashboard | `spec11` / `spec11 serve` → `http://127.0.0.1:7411/` (same or separate port) |
+| CLI | `spec17 report`, `spec17 status [flags]` (`--changed [REF] [--staged] [--no-untracked] [--ignore-whitespace]`), `spec17 trace ID`, `spec17 changes|diff|history`, `spec17 overlap|uncovered`, `spec17 doctor`, `spec17 install|uninstall`; every command takes `--json` and `--root DIR` |
+| MCP (streamable HTTP) | `spec17` / `spec17 serve` → `http://127.0.0.1:7411/mcp` |
+| MCP (stdio) | `spec17 --stdio-mcp --no-http-mcp --no-ui` |
+| Web dashboard | `spec17` / `spec17 serve` → `http://127.0.0.1:7411/` (same or separate port) |
 
 It replaces the earlier Python scripts (output is identical; `make parity` can diff against a vendored copy of them).
 
@@ -21,9 +23,9 @@ It replaces the earlier Python scripts (output is identical; `make parity` can d
 - Test tags: `[ABC-12]` in test titles; source citations `(ABC-12)` in `//` comments
 - States: `tested`, `src-only`, `none`, `manual`, `later`; check-marked requirements get a verdict `ok`, `NO-TEST`, `NO-LINK`
 - Optional [CodeGraph](https://github.com/colbymchenry/codegraph) index (`.codegraph/codegraph.db`, opened read-only) adds test→code links, overlap and uncovered-code analysis. Without it those are "not checked", never an error.
-- No config needed: every specs folder with markdown (`specs/`, `spec/`, `docs/specs/`, `openspec/specs/` and in-flight `openspec/changes/*/specs/`, `.kiro/specs/`, `docs/superpowers/specs/`, a `docs/` with requirement lines ...) and the source and test folders, extensions and regexes (Swift, Rust, TypeScript/JavaScript, Python, Go, Java/Kotlin/Scala, C#, Ruby, PHP, C/C++) are detected, from the CodeGraph file list when `.codegraph/` exists, else from the repo's files. Mixed repos use the dominant language; override any field in `spec11.json` at the repo root (see `spec11.example.json`).
+- No config needed: every specs folder with markdown (`specs/`, `spec/`, `docs/specs/`, `openspec/specs/` and in-flight `openspec/changes/*/specs/`, `.kiro/specs/`, `docs/superpowers/specs/`, a `docs/` with requirement lines ...) and the source and test folders, extensions and regexes (Swift, Rust, TypeScript/JavaScript, Python, Go, Java/Kotlin/Scala, C#, Ruby, PHP, C/C++) are detected, from the CodeGraph file list when `.codegraph/` exists, else from the repo's files. Mixed repos use the dominant language; override any field in `spec17.json` at the repo root (see `spec17.example.json`).
 - Symlinks are followed only when they resolve inside the repo root or a path in the `ALLOWED_PATHS` environment variable (path list, `:`-separated).
-- Paths listed in `.aiignore` or `.spec11ignore` (gitignore syntax, repo root; the second is for spec11 only) are left out of every scan, test list, module and spec search, and so are `.agents` and everything the CodeGraph index lists there.
+- Paths listed in `.aiignore` or `.spec17ignore` (gitignore syntax, repo root; the second is for spec17 only) are left out of every scan, test list, module and spec search, and so are `.agents` and everything the CodeGraph index lists there.
 
 ## Run
 
@@ -40,41 +42,41 @@ make dev ROOT=/path/to/repo PORT=7500 OPEN=0
 Without `make`, build once (`cargo build --release`; `SKIP_WEB_BUILD=1` skips the UI build when `web/dist` exists) and call the binary:
 
 ```sh
-spec11 report                          # whole-project status: coverage, problems, where to look next
-spec11 status --missing                # due requirements with no test (also --issues, --done, --unproven, --built, --all)
-spec11 status --changed HEAD           # requirements the working tree touches (--staged, --no-untracked, --ignore-whitespace)
-spec11 trace SCAN-01                   # one requirement: spec text, tests, citations, related code
-spec11 changes --ref main              # files and requirements changed against a ref (or one commit)
-spec11 report --json --root ../other   # JSON, for another repo
+spec17 report                          # whole-project status: coverage, problems, where to look next
+spec17 status --missing                # due requirements with no test (also --issues, --done, --unproven, --built, --all)
+spec17 status --changed HEAD           # requirements the working tree touches (--staged, --no-untracked, --ignore-whitespace)
+spec17 trace SCAN-01                   # one requirement: spec text, tests, citations, related code
+spec17 changes --ref main              # files and requirements changed against a ref (or one commit)
+spec17 report --json --root ../other   # JSON, for another repo
 ```
 
-`ROOT` defaults to this repo (spec11 scans itself: see `specs/` and `spec11.json`); point it at another repo with `ROOT=...`. Needs Rust, Node and pnpm; the release binary needs neither at runtime.
+`ROOT` defaults to this repo (spec17 scans itself: see `specs/` and `spec17.json`); point it at another repo with `ROOT=...`. Needs Rust, Node and pnpm; the release binary needs neither at runtime.
 
-`spec11` starts the server for the nearest repo with specs or Git work tree. Use `--root DIR` to choose a workspace. Repos without specs still show their sources and tests. The dashboard opens in the browser by default. Use `spec11 serve --no-open` to skip opening it.
+`spec17` starts the server for the nearest repo with specs or Git work tree. Use `--root DIR` to choose a workspace. Repos without specs still show their sources and tests. The dashboard opens in the browser by default. Use `spec17 serve --no-open` to skip opening it.
 
 ### Streamable HTTP
 
-By default, `spec11 serve` serves the dashboard and `/mcp` together on `127.0.0.1:7411`. Use `--port N` to change the port. With `--ui-port N`, both ports serve `/mcp` and only the UI port serves the dashboard and `/api/info`. HTTP listeners bind to `127.0.0.1` and reject unknown `Host` and `Origin` values.
+By default, `spec17 serve` serves the dashboard and `/mcp` together on `127.0.0.1:7411`. Use `--port N` to change the port. With `--ui-port N`, both ports serve `/mcp` and only the UI port serves the dashboard and `/api/info`. HTTP listeners bind to `127.0.0.1` and reject unknown `Host` and `Origin` values.
 
 ```json
-{"mcpServers": {"spec11": {"type": "http", "url": "http://127.0.0.1:7411/mcp"}}}
+{"mcpServers": {"spec17": {"type": "http", "url": "http://127.0.0.1:7411/mcp"}}}
 ```
 
 ### Stdio
 
-Use stdio to let each agent session launch its own spec11 process without binding a TCP port. The process exits when the client closes stdin.
+Use stdio to let each agent session launch its own spec17 process without binding a TCP port. The process exits when the client closes stdin.
 
 ```sh
-spec11 --stdio-mcp --no-http-mcp --no-ui
+spec17 --stdio-mcp --no-http-mcp --no-ui
 ```
 
 ```json
-{"mcpServers": {"spec11-stdio": {"type": "stdio", "command": "spec11", "args": ["--stdio-mcp", "--no-http-mcp", "--no-ui"]}}}
+{"mcpServers": {"spec17-stdio": {"type": "stdio", "command": "spec17", "args": ["--stdio-mcp", "--no-http-mcp", "--no-ui"]}}}
 ```
 
-Add `"--root", "/path/to/repo"` to `args` if the MCP client launches spec11 outside the intended workspace. `--stdio-mcp` enables stdin and stdout for MCP. `--no-ui` disables the browser dashboard and `/api/info`. `--no-http-mcp` disables `/mcp` on every listener. The browser dashboard needs HTTP MCP to load its data.
+Add `"--root", "/path/to/repo"` to `args` if the MCP client launches spec17 outside the intended workspace. `--stdio-mcp` enables stdin and stdout for MCP. `--no-ui` disables the browser dashboard and `/api/info`. `--no-http-mcp` disables `/mcp` on every listener. The browser dashboard needs HTTP MCP to load its data.
 
-Tools: `report`, `status`, `changes` (what changed against a ref or in one commit: files, renames, deleted files and requirements, and the requirements the changed lines touch; also `spec11://changes`), `diff` (one changed file, with the requirements each hunk touches), `history` (commits not on the base branch), `commits` (the newest commit that touched each requirement, with its author, date and subject, by git blame: who last changed the specification; the dashboard's "reviewed" flag is kept against it), `blame` (`path`, `lines`: who last changed those lines of a scanned file, e.g. a test), `trace`, `overlap`, `uncovered`, `file`, `source`, `dashboard`, `module` (hide or show a module: adds it to or removes it from `.spec11ignore`), and `install_status` / `install` / `uninstall` (`server=codegraph` adds or removes only the CodeGraph MCP entry) / `codegraph` (`action=init|sync|refresh`; `refresh` syncs whenever an index exists, also beside a running codegraph); the last three write files. Plain-text resources with the same output as `report`, `status`, `uncovered` and `overlap`: `spec11://report`, `spec11://status`, `spec11://uncovered`, `spec11://overlap`; prefer them where the client reads resources (a client on 2026-07-28 can also `subscriptions/listen` to them and is notified when the repo changes). The tools stay for clients without resource support and for arguments. The same four as JSON (`spec11://report.json`, `status.json`, `uncovered.json`, `overlap.json`), typed by JSON Schemas readable at `spec11://schemas/<name>`; the tools declare them as `outputSchema`. Read-only JSON resources: `spec11://modules` (modules by build manifest, with CodeGraph symbols and the modules each depends on) and `spec11://tests` (test cases detected by marker, grouped by module, with the requirement IDs tagged on each; detected, not run). The dashboard is also an MCP Apps resource (`ui://spec11/dashboard`) for hosts that render it: only the `dashboard` tool opens it, and its optional `view` (e.g. `modules`, `requirements/DOC-25?state=none`) picks the page; elsewhere use the URL from `dashboard`.
+Tools: `report`, `status`, `changes` (what changed against a ref or in one commit: files, renames, deleted files and requirements, and the requirements the changed lines touch; also `spec17://changes`), `diff` (one changed file, with the requirements each hunk touches), `history` (commits not on the base branch), `commits` (the newest commit that touched each requirement, with its author, date and subject, by git blame: who last changed the specification; the dashboard's "reviewed" flag is kept against it), `blame` (`path`, `lines`: who last changed those lines of a scanned file, e.g. a test), `trace`, `overlap`, `uncovered`, `file`, `source`, `dashboard`, `module` (hide or show a module: adds it to or removes it from `.spec17ignore`), and `install_status` / `install` / `uninstall` (`server=codegraph` adds or removes only the CodeGraph MCP entry) / `codegraph` (`action=init|sync|refresh`; `refresh` syncs whenever an index exists, also beside a running codegraph); the last three write files. Plain-text resources with the same output as `report`, `status`, `uncovered` and `overlap`: `spec17://report`, `spec17://status`, `spec17://uncovered`, `spec17://overlap`; prefer them where the client reads resources (a client on 2026-07-28 can also `subscriptions/listen` to them and is notified when the repo changes). The tools stay for clients without resource support and for arguments. The same four as JSON (`spec17://report.json`, `status.json`, `uncovered.json`, `overlap.json`), typed by JSON Schemas readable at `spec17://schemas/<name>`; the tools declare them as `outputSchema`. Read-only JSON resources: `spec17://modules` (modules by build manifest, with CodeGraph symbols and the modules each depends on) and `spec17://tests` (test cases detected by marker, grouped by module, with the requirement IDs tagged on each; detected, not run). The dashboard is also an MCP Apps resource (`ui://spec17/dashboard`) for hosts that render it: only the `dashboard` tool opens it, and its optional `view` (e.g. `modules`, `requirements/DOC-25?state=none`) picks the page; elsewhere use the URL from `dashboard`.
 
 ## Benchmark
 
@@ -108,39 +110,39 @@ The URL is the view, so back/forward, reload and shared links work: `/` (the das
 
 ## Doctor
 
-`spec11 doctor` checks the repo: specs found, test and source folders, git, whether the `codegraph` binary is on PATH and its index is initialized, readable and not older than the sources, and whether the skill and MCP entry are installed. It prints a hint per problem and exits 1 only when spec11 cannot work at all (no repo, unreadable `spec11.json`); no specs is a warning. It never indexes or installs anything on its own (when the `codegraph` binary is missing it prints the install commands). When the index is missing or stale, `spec11 doctor --fix` runs `codegraph init` / `codegraph sync` for you, and the Setup tab has the same buttons (asks to confirm); the dashboard's ↻ rescan also runs `codegraph sync` (also while an agent's codegraph MCP server runs: its file watcher can be off); the index check compares the index's last write with the newest source or test file; all are your call, nothing indexes automatically. The same list is the MCP tool `doctor` and the Setup tab.
+`spec17 doctor` checks the repo: specs found, test and source folders, git, whether the `codegraph` binary is on PATH and its index is initialized, readable and not older than the sources, and whether the skill and MCP entry are installed. It prints a hint per problem and exits 1 only when spec17 cannot work at all (no repo, unreadable `spec17.json`); no specs is a warning. It never indexes or installs anything on its own (when the `codegraph` binary is missing it prints the install commands). When the index is missing or stale, `spec17 doctor --fix` runs `codegraph init` / `codegraph sync` for you, and the Setup tab has the same buttons (asks to confirm); the dashboard's ↻ rescan also runs `codegraph sync` (also while an agent's codegraph MCP server runs: its file watcher can be off); the index check compares the index's last write with the newest source or test file; all are your call, nothing indexes automatically. The same list is the MCP tool `doctor` and the Setup tab.
 
 ## Install the skill and connect an MCP client
 
 ```sh
-spec11 install              # repo skill + HTTP entry in <repo>/.mcp.json
-spec11 install --global     # ~/.agents/skills/spec11/SKILL.md + HTTP entry in ~/.mcp.json
-spec11 install --codegraph  # only adds the codegraph MCP server to <repo>/.mcp.json (an existing entry is kept)
-spec11 uninstall --codegraph # only removes that entry (customised or not), nothing else
-spec11 uninstall            # remove the repo skill and HTTP MCP entry
-spec11 uninstall --global   # remove the global skill
-spec11 uninstall --only skill [--global] # remove the skill independently
-spec11 uninstall --only mcp [--global]   # remove the HTTP entry in <repo>/.mcp.json or ~/.mcp.json
+spec17 install              # repo skill + HTTP entry in <repo>/.mcp.json
+spec17 install --global     # ~/.agents/skills/spec17/SKILL.md + HTTP entry in ~/.mcp.json
+spec17 install --codegraph  # only adds the codegraph MCP server to <repo>/.mcp.json (an existing entry is kept)
+spec17 uninstall --codegraph # only removes that entry (customised or not), nothing else
+spec17 uninstall            # remove the repo skill and HTTP MCP entry
+spec17 uninstall --global   # remove the global skill
+spec17 uninstall --only skill [--global] # remove the skill independently
+spec17 uninstall --only mcp [--global]   # remove the HTTP entry in <repo>/.mcp.json or ~/.mcp.json
 ```
 
-The skill is built into the binary and tells the agent to use the MCP tools, with the CLI as a fallback. For HTTP, set `spec11 install --port N` to match the port of the running server. The default is `7411`.
+The skill is built into the binary and tells the agent to use the MCP tools, with the CLI as a fallback. For HTTP, set `spec17 install --port N` to match the port of the running server. The default is `7411`.
 
 Open **Setup** in the dashboard to install or remove each entry independently under **This repo** or **Global**. The page shows the configured HTTP URL and the full stdio launch command for entries it installs. Both are selectable. The project stdio launcher includes `--root` for that repo. The global launcher uses the client's working directory.
 
 | Entry | Key in `mcpServers` | How it connects |
 | --- | --- | --- |
-| HTTP MCP | `spec11` | Connects to a running spec11 server |
-| stdio MCP | `spec11-stdio` | Launches a spec11 process for the agent session |
+| HTTP MCP | `spec17` | Connects to a running spec17 server |
+| stdio MCP | `spec17-stdio` | Launches a spec17 process for the agent session |
 
-Both entries can coexist in `<repo>/.mcp.json` or `~/.mcp.json`. Setup preserves other servers and leaves invalid JSON untouched. It also displays Claude's user-scope entry from `~/.claude.json` as read-only. If Setup asks you to update spec11, restart the server with the updated binary to enable the transport controls.
+Both entries can coexist in `<repo>/.mcp.json` or `~/.mcp.json`. Setup preserves other servers and leaves invalid JSON untouched. It also displays Claude's user-scope entry from `~/.claude.json` as read-only. If Setup asks you to update spec17, restart the server with the updated binary to enable the transport controls.
 
 The MCP `install` and `uninstall` tools accept `only: "skill"` or `only: "mcp"`. With `only: "mcp"`, use `transport: "stdio"` or `"http"` (the default). Set `global: true` to use the home directory.
 
 ## Layout
 
 ```
-core/     spec11-core: scan, config, report, coverage, codegraph (the only SQL)
-server/   spec11 binary: CLI, axum API, MCP (rmcp), UI serving
+core/     spec17-core: scan, config, report, coverage, codegraph (the only SQL)
+server/   spec17 binary: CLI, axum API, MCP (rmcp), UI serving
 web/      Svelte 5 + Vite (no SvelteKit), builds to one dist/index.html
 skills/   the agent skill (SKILL.md), embedded in the binary
 bench/    bench.py: before/after timings (make bench)

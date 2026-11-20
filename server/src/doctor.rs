@@ -1,6 +1,6 @@
-//! `spec11 doctor`: is this repo set up for spec11, and is CodeGraph usable here? `run` only looks and suggests. The one thing that writes is `index`, which runs only when the user asks (`doctor --fix`, the Setup tab buttons, the dashboard's rescan).
+//! `spec17 doctor`: is this repo set up for spec17, and is CodeGraph usable here? `run` only looks and suggests. The one thing that writes is `index`, which runs only when the user asks (`doctor --fix`, the Setup tab buttons, the dashboard's rescan).
 use serde::Serialize;
-use spec11_core::{Analysis, codegraph::{Graph, GraphError}, scan::Project};
+use spec17_core::{Analysis, codegraph::{Graph, GraphError}, scan::Project};
 use crate::skill::McpState;
 use std::path::Path;
 use std::time::SystemTime;
@@ -8,7 +8,7 @@ use std::time::SystemTime;
 #[derive(Serialize, schemars::JsonSchema)]
 pub struct Check {
     pub name: &'static str,
-    /// `ok`, `warn` (works, but something is missing) or `fail` (spec11 cannot work here).
+    /// `ok`, `warn` (works, but something is missing) or `fail` (spec17 cannot work here).
     pub level: &'static str,
     pub detail: String,
     pub hint: Option<String>,
@@ -32,8 +32,8 @@ fn codegraph_version() -> Option<String> {
     Some(text.lines().next().unwrap_or("").to_string())
 }
 
-/// How to install CodeGraph (its docs: getting-started/installation); spec11 never runs these. The Setup tab shows the same commands.
-const INSTALL_HINT: &str = "install CodeGraph: `curl -fsSL https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.sh | sh` or `npm i -g @colbymchenry/codegraph` (Windows: `irm https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.ps1 | iex`), then `codegraph init` in the repo; https://colbymchenry.github.io/codegraph/getting-started/installation/; spec11 never installs it";
+/// How to install CodeGraph (its docs: getting-started/installation); spec17 never runs these. The Setup tab shows the same commands.
+const INSTALL_HINT: &str = "install CodeGraph: `curl -fsSL https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.sh | sh` or `npm i -g @colbymchenry/codegraph` (Windows: `irm https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.ps1 | iex`), then `codegraph init` in the repo; https://colbymchenry.github.io/codegraph/getting-started/installation/; spec17 never installs it";
 
 /// Build or refresh the CodeGraph index by running the `codegraph` binary: `init` when there is no index yet, `sync` when there is.
 /// Never called by `run` or on its own: indexing is the user's decision.
@@ -78,19 +78,19 @@ pub fn run(root: Option<&Path>, mcp_port: u16) -> Vec<Check> {
         Err(e) => return vec![c("repo", "fail", e, Some("run inside a git repo, or pass --root"))],
     };
     out.push(c("repo", "ok", p.root.display().to_string(), None));
-    let cfg_file = p.root.join("spec11.json");
-    out.push(c("config", "ok", if cfg_file.exists() { "spec11.json".to_string() } else { "no spec11.json: layout detected from the repo".to_string() }, None));
+    let cfg_file = p.root.join("spec17.json");
+    out.push(c("config", "ok", if cfg_file.exists() { "spec17.json".to_string() } else { "no spec17.json: layout detected from the repo".to_string() }, None));
 
     match Analysis::load(Some(&p.root)) {
         Ok(a) => {
             let r = a.report();
             // (SETUP-06) no specs is a warning: everything else still works
-            let (level, hint) = if r.requirements + r.refs == 0 { ("warn", Some("no requirements found: write lines like `- **ABC-12** MUST — text` or `- ABC-12: the system MUST …` in specs/01-name.md (folders specs/, spec/, docs/specs/, openspec/specs/) or SPEC.md, or link an ID to a doc (a markdown link whose text is the ID, e.g. to decisions/0003-x.md); set \"specs\" in spec11.json to point at them")) } else { ("ok", None) };
+            let (level, hint) = if r.requirements + r.refs == 0 { ("warn", Some("no requirements found: write lines like `- **ABC-12** MUST — text` or `- ABC-12: the system MUST …` in specs/01-name.md (folders specs/, spec/, docs/specs/, openspec/specs/) or SPEC.md, or link an ID to a doc (a markdown link whose text is the ID, e.g. to decisions/0003-x.md); set \"specs\" in spec17.json to point at them")) } else { ("ok", None) };
             let refs = if r.refs > 0 { format!(", {} reference docs", r.refs) } else { String::new() };
             let detail = if a.p.spec_files().is_empty() { "no specs found".to_string() } else { format!("{} requirements in {} spec files{refs}; scanned {}", r.requirements, r.spec_files, a.p.spec_paths().join(", ")) };
             out.push(c("specs", level, detail, hint));
             if !r.spec_issues.is_empty() {
-                out.push(c("spec issues", "warn", format!("{} (first: {})", r.spec_issues.len(), r.spec_issues[0]), Some("spec11 status --issues")));
+                out.push(c("spec issues", "warn", format!("{} (first: {})", r.spec_issues.len(), r.spec_issues[0]), Some("spec17 status --issues")));
             }
         }
         Err(e) => out.push(c("specs", "fail", e, None)),
@@ -101,9 +101,9 @@ pub fn run(root: Option<&Path>, mcp_port: u16) -> Vec<Check> {
         let n = files.len();
         let list = if dirs.is_empty() { "the repo".to_string() } else { dirs.join(", ") };
         if !missing.is_empty() {
-            out.push(c(name, "warn", format!("not found: {}", missing.iter().map(|d| d.as_str()).collect::<Vec<_>>().join(", ")), Some("set the folders in spec11.json (\"tests\", \"src\", \"ext\")")));
+            out.push(c(name, "warn", format!("not found: {}", missing.iter().map(|d| d.as_str()).collect::<Vec<_>>().join(", ")), Some("set the folders in spec17.json (\"tests\", \"src\", \"ext\")")));
         } else if n == 0 {
-            out.push(c(name, "warn", if p.cfg.ext.is_empty() { format!("no source files of a known language in {list}") } else { format!("no .{} files in {list}", p.cfg.ext.join("/.")) }, Some("check \"ext\" in spec11.json")));
+            out.push(c(name, "warn", if p.cfg.ext.is_empty() { format!("no source files of a known language in {list}") } else { format!("no .{} files in {list}", p.cfg.ext.join("/.")) }, Some("check \"ext\" in spec17.json")));
         } else {
             out.push(c(name, "ok", format!("{n} files in {list}"), None));
         }
@@ -116,12 +116,12 @@ pub fn run(root: Option<&Path>, mcp_port: u16) -> Vec<Check> {
     let bin = codegraph_version();
     out.push(match &bin {
         Some(v) => c("codegraph binary", "ok", if v.is_empty() { "on PATH".to_string() } else { v.clone() }, None),
-        None => c("codegraph binary", "warn", "not on PATH", Some(INSTALL_HINT)), // (SETUP-09) optional: spec11 works without it
+        None => c("codegraph binary", "warn", "not on PATH", Some(INSTALL_HINT)), // (SETUP-09) optional: spec17 works without it
     });
     let db = p.root.join(&p.cfg.codegraph);
     out.push(match Graph::open(&db) {
         Ok(None) => {
-            let hint = if bin.is_some() { "run `codegraph init` in the repo if you want it (indexing is your call: spec11 does it only when you ask, with `doctor --fix` or the dashboard's Setup)" } else { "needs the codegraph binary first" };
+            let hint = if bin.is_some() { "run `codegraph init` in the repo if you want it (indexing is your call: spec17 does it only when you ask, with `doctor --fix` or the dashboard's Setup)" } else { "needs the codegraph binary first" };
             Check { action: Some("init"), ..c("codegraph index", "warn", format!("{} not found: not initialized", p.cfg.codegraph), Some(hint)) }
         }
         Ok(Some(_)) => {
@@ -132,7 +132,7 @@ pub fn run(root: Option<&Path>, mcp_port: u16) -> Vec<Check> {
                 _ => c("codegraph index", "ok", format!("{} readable, schema supported, no source or test file is newer", p.cfg.codegraph), None),
             }
         }
-        Err(GraphError::SchemaDrift(m)) => c("codegraph index", "warn", format!("schema not supported by this spec11: {m}"), Some("update spec11 or CodeGraph; those checks show as \"not checked\"")),
+        Err(GraphError::SchemaDrift(m)) => c("codegraph index", "warn", format!("schema not supported by this spec17: {m}"), Some("update spec17 or CodeGraph; those checks show as \"not checked\"")),
         Err(e) => c("codegraph index", "warn", e.to_string(), Some("the index may be corrupt: `codegraph init` again")),
     });
 
@@ -142,11 +142,11 @@ pub fn run(root: Option<&Path>, mcp_port: u16) -> Vec<Check> {
             if todo.is_empty() {
                 out.push(c("agent setup", "ok", "skill and MCP entry installed", None));
             } else {
-                todo.iter().for_each(|t| out.push(c("agent setup", "warn", t.clone(), Some("spec11 install"))));
+                todo.iter().for_each(|t| out.push(c("agent setup", "warn", t.clone(), Some("spec17 install"))));
             }
             // (SETUP-10) CodeGraph is on this machine but the agent is not told about it
             if bin.is_some() && st.project.codegraph_mcp != McpState::Ok && st.global.codegraph_mcp != McpState::Ok {
-                out.push(c("agent setup", "warn", "no codegraph server in .mcp.json: the agent cannot use CodeGraph", Some("spec11 install --codegraph")));
+                out.push(c("agent setup", "warn", "no codegraph server in .mcp.json: the agent cannot use CodeGraph", Some("spec17 install --codegraph")));
             }
         }
         Err(e) => out.push(c("agent setup", "warn", e, None)),
@@ -155,7 +155,7 @@ pub fn run(root: Option<&Path>, mcp_port: u16) -> Vec<Check> {
 }
 
 pub fn text(checks: &[Check]) -> String {
-    let mut s = String::from("spec11 doctor\n");
+    let mut s = String::from("spec17 doctor\n");
     for k in checks {
         let tag = match k.level {
             "ok" => "ok  ",
@@ -182,7 +182,7 @@ mod tests {
     #[doc = "[SETUP-05]"]
     #[test]
     fn doctor_reports_each_part_of_the_setup() {
-        let d = std::env::temp_dir().join(format!("spec11-doctor-{}", std::process::id()));
+        let d = std::env::temp_dir().join(format!("spec17-doctor-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(d.join("specs")).unwrap();
         std::fs::create_dir_all(d.join("RunSolo/RunSolo")).unwrap(); // sources exist, tests do not
@@ -202,7 +202,7 @@ mod tests {
     #[doc = "[SETUP-07]"]
     #[test]
     fn indexing_runs_only_on_request_and_checks_state_first() {
-        let d = std::env::temp_dir().join(format!("spec11-doctor-idx-{}", std::process::id()));
+        let d = std::env::temp_dir().join(format!("spec17-doctor-idx-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(d.join("specs")).unwrap();
         assert!(index(Some(&d), "sync").unwrap_err().contains("use init first"));
@@ -216,7 +216,7 @@ mod tests {
     #[doc = "[SETUP-06]"]
     #[test]
     fn no_specs_is_a_warning_and_every_other_check_still_runs() {
-        let d = std::env::temp_dir().join(format!("spec11-doctor-bare-{}", std::process::id()));
+        let d = std::env::temp_dir().join(format!("spec17-doctor-bare-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(d.join("src")).unwrap();
         std::fs::write(d.join("src/a.py"), "def a():\n    pass\n").unwrap();
@@ -231,7 +231,7 @@ mod tests {
     #[doc = "[SETUP-08, SETUP-09]"]
     #[test]
     fn refresh_syncs_an_index_that_is_behind_and_the_check_sees_it() {
-        let d = std::env::temp_dir().join(format!("spec11-doctor-refresh-{}", std::process::id()));
+        let d = std::env::temp_dir().join(format!("spec17-doctor-refresh-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(d.join("src")).unwrap();
         std::fs::write(d.join("src/a.py"), "def a():\n    pass\n").unwrap();
@@ -252,7 +252,7 @@ mod tests {
     #[test]
     fn missing_codegraph_comes_with_install_instructions() {
         assert!(INSTALL_HINT.contains("install.sh") && INSTALL_HINT.contains("npm i -g @colbymchenry/codegraph") && INSTALL_HINT.contains("never installs"));
-        let d = std::env::temp_dir().join(format!("spec11-doctor-hint-{}", std::process::id()));
+        let d = std::env::temp_dir().join(format!("spec17-doctor-hint-{}", std::process::id()));
         std::fs::create_dir_all(d.join("specs")).unwrap();
         let k = run(Some(&d), 7411).into_iter().find(|k| k.name == "codegraph binary").unwrap();
         assert!(k.level == "ok" || k.hint.as_deref() == Some(INSTALL_HINT)); // the binary may or may not be on this machine
