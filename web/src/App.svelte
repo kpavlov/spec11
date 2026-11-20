@@ -13,6 +13,7 @@
   import Seg from "./Seg.svelte";
   import Pill from "./Pill.svelte";
   import IdLink from "./IdLink.svelte";
+  import RequirementLink from "./RequirementLink.svelte";
   import Section from "./Section.svelte";
   import PaneHead from "./PaneHead.svelte";
   import { requirementLevelTone, stateTone, edgeTone, levelTone, changeTone, type Tone } from "./tone";
@@ -151,6 +152,7 @@
   // bumped by every load: the views below refetch (keeping what they show until the new data lands)
   let gen = $state(0);
   let loadId = 0;
+  let requirementDetails = new Map<string, Promise<string>>();
   async function load() {
     error = "";
     const me = ++loadId;
@@ -158,6 +160,7 @@
     if (me !== loadId) return; // a newer load started meanwhile: its answer wins
     report = r.data;
     rows = s.data.rows;
+    requirementDetails = new Map();
     up = true;
     // the modules views are optional: a failed resource read leaves them empty instead of failing the load
     read("spec17://modules").then((m) => (modules = m)).catch(() => (modules = null));
@@ -402,7 +405,7 @@
   const symbolsOf = (m: any) => Object.values<number>(m.symbols).reduce((a, b) => a + b, 0);
   // The tests screen filters the detected cases; the requirement table uses the same cases for its links (WEB-39).
   const testOpts = $derived(["all", "tagged", "untagged"].map((k) => ({ key: k, label: k, count: tcounts[k] })));
-  const VIEWS = [{ key: "list", label: "📋 list" }, { key: "graph", label: "🕸️ graph" }];
+  const VIEWS = [{ key: "list", label: "list" }, { key: "graph", label: "graph" }];
   const detectedCases = $derived<any[]>((tests?.modules ?? []).flatMap((m: any) => m.files.flatMap((f: any) => f.tests.map((t: any) => ({ module: m.module, file: f.file, t })))));
   const testedIds = $derived(new Set<string>(detectedCases.flatMap((c) => c.t.ids)));
   const testRequirement = $derived(route.requirementId?.toUpperCase());
@@ -411,7 +414,7 @@
   const matched = $derived(allCases.filter((c) => (stateFilter === "all" || (stateFilter === "tagged") === c.t.ids.length > 0) && (!onlyChanged || fileOf.has(c.file)) && (!query || `${c.file} ${c.t.name} ${c.t.ids.join(" ")}`.toLowerCase().includes(query.toLowerCase()))));
   // list rows: a test is told apart by file and line, which is also how the URL selects it (`path` + `line`)
   const testRows = $derived(matched.map((c) => ({ ...c, key: `${c.file}:${c.t.line}` })));
-  const testCols = [{ key: "name", label: "test", cls: "wrap" }, { key: "ids", label: "requirements", cls: "nowrap" }, { key: "file", label: "location", cls: "mono muted wrap" }];
+  const testCols = [{ key: "name", label: "test", cls: "wrap" }, { key: "ids", label: "requirements", cls: "test-ids" }, { key: "file", label: "location", cls: "mono muted wrap" }];
   const testVal = (c: any, k: string) => (k === "file" ? `${c.file}:${String(c.t.line).padStart(6, "0")}` : k === "ids" ? c.t.ids.join(" ") : c.t.name);
   const selTest = $derived(route.tab === "tests" && route.path ? `${route.path}:${route.line}` : undefined);
   const byId = $derived(new Map(rows.map((r) => [r.id, r])));
@@ -433,6 +436,14 @@
   const tallyBy = (files: any[]) => CHANGES.map((c) => [c, files.filter((f) => f.change === c).length] as const).filter(([, n]) => n);
   const taggedN = $derived(tests ? tests.modules.reduce((n: number, m: any) => n + m.files.reduce((k: number, f: any) => k + f.tests.filter((t: any) => t.ids.length).length, 0), 0) : 0);
   const plain = (t: string) => t.replace(/[`*~]/g, "");
+  // (WEB-45) Share in-flight requests and discard them on a dashboard reload.
+  function requirementText(id: string): Promise<string> {
+    const row = byId.get(id);
+    if (row) return Promise.resolve(plain(row.text));
+    const cache = requirementDetails;
+    if (!cache.has(id)) cache.set(id, call("trace", { id }).then((r) => r.data?.spec?.text ? plain(r.data.spec.text) : "Not in any spec").catch(() => { cache.delete(id); return "Could not load requirement"; }));
+    return cache.get(id)!;
+  }
   const req = (id: string): Route => ({ tab: "requirements", id });
   const withId = (tab: Route["tab"], id: string): Route => ({ tab, id });
   // typing in the filter replaces the URL instead of stacking a history entry per keystroke
@@ -979,7 +990,7 @@ irm https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.ps1 | 
             {#snippet cell(c, k)}
               {#if k === "name"}<span class="mono" title={c.t.qualified}>{c.t.name}</span>{#if changeMark(c.file)}{" "}<Pill tone={changeTone(changeMark(c.file))} title="its file is {changeMark(c.file)} in the working tree">✎ {changeMark(c.file)}</Pill>{/if}
               {:else if k === "file"}<a href={u({ tab: "code", path: c.file, line: c.t.line })}>{c.file}:{c.t.line}</a>
-              {:else}{#each c.t.ids as id}{@render idlink(id, known.has(id) ? req(id) : { tab: "requirements", q: id })}{" "}{/each}{#if !c.t.ids.length}<span class="muted">untagged</span>{/if}{/if}
+              {:else}<div class="test-links">{#each c.t.ids as id}<RequirementLink {id} href={u(known.has(id) ? req(id) : { tab: "requirements", q: id })} getText={requirementText} />{/each}{#if !c.t.ids.length}<span class="muted">untagged</span>{/if}</div>{/if}
             {/snippet}
             {#snippet empty()}<p class="muted empty">No test matches. <a href="/tests">Clear filters</a></p>{/snippet}
           </DataTable>
@@ -1183,6 +1194,7 @@ irm https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.ps1 | 
   .note-line { font-size: var(--text-sm); margin: 0 0 12px; }
   b[data-tone] { color: var(--tone); }
   .ids { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 0; }
+  .test-links { display: flex; flex-wrap: wrap; gap: 4px; }
 
   h3.file, .preview-section { margin: 14px 0 4px; font-size: var(--text-body); }
   h2 { margin: 18px 0 6px; font-size: var(--text-section); }

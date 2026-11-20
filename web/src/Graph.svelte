@@ -20,6 +20,7 @@
   let mouse = { x: 0, y: 0 };
   let sim: Simulation<N, undefined> | undefined;
   let raf = 0;
+  let needsFit = false;
   const pos = new Map<string, { x: number; y: number }>(); // survives a reload, so the layout does not jump
 
   const symbols = (m: Mod) => Object.values(m.symbols).reduce((a, b) => a + b, 0);
@@ -33,14 +34,15 @@
     const max = Math.max(1, ...sizes);
     const rmax = Math.max(14, Math.min(64, 320 / Math.sqrt(modules.length))); // the biggest module; the rest by area
     const first = untrack(() => pos.size === 0);
-    const ns: N[] = modules.map((m, i) => ({ id: m.path, n: sizes[i], r: Math.max(4, rmax * Math.sqrt(sizes[i] / max)), tests: m.tests, deg: 0, hue: hueOf(m.path), x: 0, y: 0, ...pos.get(m.path) }));
+    const ns: N[] = modules.map((m, i) => ({ id: m.path, n: sizes[i], r: Math.max(4, rmax * Math.sqrt(sizes[i] / max)), tests: m.tests, deg: 0, hue: hueOf(m.path), x: NaN, y: NaN, ...pos.get(m.path) }));
     ns.sort((a, b) => b.r - a.r); // big first, so small nodes are drawn (and hit) on top
     const byId = new Map(ns.map((n) => [n.id, n]));
     const ls: L[] = modules.flatMap((m) => m.depends_on.filter((d) => byId.has(d.module)).map((d) => ({ source: m.path, target: d.module, edges: d.edges })));
     for (const l of ls) for (const e of [l.source, l.target]) byId.get(e as string)!.deg++;
     sim?.stop();
+    // (WEB-46) Connected hubs need more room; seed new nodes with d3's spread instead of piling them at the origin.
     sim = forceSimulation(ns)
-      .force("link", forceLink<N, L>(ls).id((n) => n.id).distance((l) => 50 + (l.source as N).r + (l.target as N).r).strength(0.5))
+      .force("link", forceLink<N, L>(ls).id((n) => n.id).distance((l) => 50 + (l.source as N).r + (l.target as N).r + 8 * Math.sqrt((l.source as N).deg + (l.target as N).deg)).strength(0.5))
       // like charges repel (more for a bigger module), gravity pulls everything to the middle, collision is a hard core: atoms never overlap
       .force("charge", forceManyBody<N>().strength((n) => -(80 + 0.5 * n.r * n.r)).distanceMin(20))
       .force("gravity-x", forceX(0).strength(0.12))
@@ -52,7 +54,7 @@
     links = ls;
     const publish = () => { ns.forEach((n) => pos.set(n.id, { x: n.x, y: n.y })); schedule(); };
     publish();
-    if (first) untrack(fit);
+    if (first && ns.length) { needsFit = true; untrack(fit); }
     sim.on("tick", publish);
     return () => { sim?.stop(); cancelAnimationFrame(raf); raf = 0; };
   });
@@ -60,6 +62,7 @@
   // a size or filter change repaints, and so does a theme change
   $effect(() => {
     void [w, h, q];
+    if (needsFit) fit();
     schedule();
   });
   $effect(() => {
@@ -76,7 +79,8 @@
   }
 
   function fit() {
-    if (!nodes.length) return;
+    if (!nodes.length || w <= 80 || h <= 140) return;
+    needsFit = false;
     let [x0, x1, y0, y1] = [Infinity, -Infinity, Infinity, -Infinity];
     for (const n of nodes) [x0, x1, y0, y1] = [Math.min(x0, n.x - n.r), Math.max(x1, n.x + n.r), Math.min(y0, n.y - n.r), Math.max(y1, n.y + n.r)];
     const k = Math.min(2, (w - 80) / Math.max(1, x1 - x0), (h - 140) / Math.max(1, y1 - y0));
@@ -84,7 +88,7 @@
     schedule();
   }
   function zoom(f: number, px = 0, py = 0) { // around a point relative to the centre
-    const k = Math.min(8, Math.max(0.1, view.k * f));
+    const k = Math.min(8, Math.max(0.01, view.k * f));
     view = { k, x: px - ((px - view.x) * k) / view.k, y: py - ((py - view.y) * k) / view.k };
     schedule();
   }
@@ -124,11 +128,11 @@
       const [ux, uy] = [dx / d, dy / d];
       const [px, py, g] = [uy * 3, -ux * 3, 2]; // a pair A→B, B→A runs side by side, not on top of each other
       const [sx, sy, ex, ey] = [a.x + ux * a.r + px, a.y + uy * a.r + py, b.x - ux * (b.r + g) + px, b.y - uy * (b.r + g) + py];
-      const lw = 0.75 + 0.4 * Math.log2(l.edges);
+      const lw = Math.min(2.5, 0.75 + 0.25 * Math.log2(Math.max(1, l.edges))) / view.k;
       ctx.globalAlpha = hover ? (on ? 0.95 : 0.06) : 0.6;
       ctx.strokeStyle = ctx.fillStyle = on ? accent : muted;
       ctx.lineWidth = lw;
-      const hl = 8 + lw * 2; // the head: fixed shape, the shaft stops at its base so nothing pokes out beside it
+      const hl = Math.min((5 + 2 * lw * view.k) / view.k, d / 3); // scale the head with the shaft, including on short links
       ctx.beginPath();
       ctx.moveTo(sx, sy);
       ctx.lineTo(ex - ux * hl * 0.8, ey - uy * hl * 0.8);
@@ -145,6 +149,7 @@
     ctx.textAlign = "center";
     ctx.font = `${labelSize / view.k}px ${mono}`;
     ctx.lineJoin = "round";
+    const labels: { x: number; y: number; w: number; h: number }[] = [];
     for (const n of nodes) {
       ctx.globalAlpha = lit(n) ? 1 : 0.18;
       ctx.beginPath();
@@ -158,9 +163,13 @@
       ctx.lineWidth = (n.tests > 0 ? 1.75 : 1) / Math.sqrt(view.k);
       ctx.stroke();
       if (n.r >= 14 || view.k > 1.3 || (q && lit(n)) || near?.has(n)) {
-        ctx.fillStyle = fg;
-        ctx.globalAlpha *= n === hover ? 1 : 0.85; // light grey on dark, dark grey on light
-        ctx.fillText(n.id, n.x, n.y + n.r + 20 / view.k);
+        const label = { x: n.x, y: n.y + n.r + 20 / view.k, w: ctx.measureText(n.id).width, h: labelSize / view.k };
+        if (near?.has(n) || (q && lit(n)) || !labels.some((p) => Math.abs(p.x - label.x) < (p.w + label.w) / 2 + 4 / view.k && Math.abs(p.y - label.y) < Math.max(p.h, label.h))) {
+          labels.push(label);
+          ctx.fillStyle = fg;
+          ctx.globalAlpha *= n === hover ? 1 : 0.85; // light grey on dark, dark grey on light
+          ctx.fillText(n.id, label.x, label.y);
+        }
       }
     }
 

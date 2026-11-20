@@ -93,6 +93,7 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 td a { text-decoration: none; }
 td a:hover { text-decoration: underline; }
 td.wrap { overflow-wrap: anywhere; }
+td.test-ids, th.test-ids { width: 12rem; min-width: 6rem; }
 kbd { font: var(--text-sm)/1 var(--mono); color: var(--muted); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 3px; padding: 1px 4px; margin-left: 3px; vertical-align: 1px; }
 .empty { padding: 24px 0; text-align: center; }
 /* RFC 2119 level chip in rendered Markdown. */
