@@ -27,13 +27,13 @@
 <style>
   .seg { display: inline-flex; flex-wrap: wrap; align-items: center; row-gap: 4px; }
   .name { color: var(--muted); font-size: var(--text-sm); margin-right: 8px; }
-  button { min-height: 28px; padding: 2px 10px; font-size: var(--text-sm); border-radius: 0; border: 1px solid var(--line); margin-left: -1px; white-space: nowrap; background: var(--card); }
+  button { min-height: 28px; padding: 2px var(--segment-padding-inline, 10px); font-size: var(--text-sm); border-radius: 0; border: 1px solid var(--line); margin-left: -1px; white-space: nowrap; background: var(--card); }
   .name + button { border-radius: var(--radius) 0 0 var(--radius); margin-left: 0; }
   button:last-child { border-radius: 0 var(--radius) var(--radius) 0; }
   /* the dot keeps its colour when the segment is selected */
-  button[aria-checked=true] { position: relative; z-index: 1; background: var(--tint-sel); border-color: var(--accent); color: var(--fg); font-weight: 600; }
+  button[aria-checked=true] { position: relative; z-index: 1; background: var(--tint-sel); border-color: var(--accent); color: var(--fg); font-weight: var(--weight-semibold); }
   button[aria-checked=true]:hover:not(:disabled) { background: var(--tint-sel-hover); color: var(--fg); }
-  button.zero { color: var(--muted); opacity: .6; }
-  b { font-weight: 600; font-variant-numeric: tabular-nums; opacity: .75; margin-left: 2px; }
+  button.zero { color: var(--muted); }
+  b { font-weight: var(--weight-medium); font-variant-numeric: tabular-nums; margin-left: 2px; }
   .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin: 0 6px 1px 0; background: var(--tone, var(--muted)); }
 </style>

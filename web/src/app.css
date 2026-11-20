@@ -1,22 +1,33 @@
 /* Theme: `auto` follows the OS; data-theme="light|dark" (set by the header switch) forces one. Every colour is a light-dark() pair. */
 :root {
   color-scheme: light dark;
-  --bg: light-dark(#f5f6f8, #101216);
-  --card: light-dark(#ffffff, #181b21);
-  --raised: light-dark(#eef0f4, #20242c);
+  --bg: light-dark(#f5f6f8, #232830);
+  --card: light-dark(#ffffff, #2a303a);
+  --tooltip-bg: light-dark(#efede7, #403e39);
+  --raised: light-dark(#eef0f4, #343c48);
   --fg: light-dark(#1a1d23, #e9ebef);
-  --muted: light-dark(#596273, #9ba4b4);
-  --line: light-dark(#dde1e8, #2a2f39);
+  --muted: light-dark(#596273, #b3bdcb);
+  --line: light-dark(#dde1e8, #495463);
   --accent: light-dark(#6d3bd2, #b69cff);
   --ok: light-dark(#13693d, #4ade80);
-  --warn: light-dark(#964400, #fbbf24);
-  --bad: light-dark(#b42318, #ff8a80);
+  --warn: light-dark(#80491e, #debb92);
+  --bad: light-dark(#903e45, #e3acb1);
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --radius: 4px;
   --shadow: none;
-  /* type scale (the 11–11.5px badges and 12.5–13.5px mono ids are set where they live) */
-  --text-xs: 12px;
-  --text-sm: 13px;
+  --text-body: 1rem;
+  --text-sm: .875rem;
+  --text-label: .9375rem;
+  --text-section: 1.125rem;
+  --text-title: 1.25rem;
+  --text-metric: 2.125rem;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 700;
+  --badge-padding: 2px 9px;
+  --badge-size: var(--text-sm);
+  --info: light-dark(#355676, #acc5dd);
+  --badge-radius: 999px;
   /* spacing: page gutter, gap between controls */
   --gutter: 20px;
   --gap: 10px;
@@ -30,6 +41,18 @@
   --tint-id: color-mix(in srgb, var(--accent) 10%, var(--card));
 }
 /* a tone (see tone.ts) is the one colour pills, dots, badges, row edges and sections take */
+:where(.pill) { --pill-ink: initial; --pill-fill: initial; }
+/* Fixed two-tone requirement colors keep their meaning on every surface. */
+[data-tone="plum"] { --tone: #a84289; --pill-ink: #732253; --pill-fill: #f0bee0; }
+[data-tone="blue"] { --tone: #347ac1; --pill-ink: #194879; --pill-fill: #b8d8f7; }
+[data-tone="celery"] { --tone: #658522; --pill-ink: #3c5714; --pill-fill: #d3e8a2; }
+[data-tone="cyan"] { --tone: #2185a6; --pill-ink: #154e65; --pill-fill: #aee0ef; }
+[data-tone="teal"] { --tone: #188477; --pill-ink: #104f47; --pill-fill: #a4e0ce; }
+[data-tone="orange"] { --tone: #b76d24; --pill-ink: #6e390e; --pill-fill: #f6d0a1; }
+[data-tone="red"] { --tone: #bc5158; --pill-ink: #772d36; --pill-fill: #f3bec3; }
+[data-tone="indigo"] { --tone: #7864ac; --pill-ink: #4b397c; --pill-fill: #d5c8ef; }
+[data-tone="brown"] { --tone: #966c45; --pill-ink: #573a21; --pill-fill: #e6cdae; }
+[data-tone="info"] { --tone: var(--info); }
 [data-tone="ok"] { --tone: var(--ok); }
 [data-tone="warn"] { --tone: var(--warn); }
 [data-tone="bad"] { --tone: var(--bad); }
@@ -40,12 +63,13 @@
 
 * { box-sizing: border-box; }
 html { -webkit-text-size-adjust: 100%; }
-body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; }
-code, pre, .mono { font-family: var(--mono); font-size: 14px; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: var(--text-body)/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; }
+code, pre, .mono { font-family: var(--mono); font-size: var(--text-sm); }
+:where(h1, h2, h3, h4) { line-height: 1.3; font-weight: var(--weight-semibold); }
 a { color: var(--accent); text-underline-offset: 2px; }
 button { font: inherit; color: var(--fg); background: var(--raised); border: 1px solid transparent; border-radius: var(--radius); padding: 5px 12px; cursor: pointer; }
 button:hover:not(:disabled) { background: var(--tint-btn); color: var(--accent); }
-button.primary, button.on { background: var(--accent); color: var(--card); }
+button.primary, button.on { background: var(--accent); color: var(--card); font-weight: var(--weight-semibold); }
 button.primary:hover:not(:disabled), button.on:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 85%, var(--fg)); color: var(--card); }
 input, select { font: inherit; color: inherit; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 6px 10px; }
 input::placeholder { color: var(--muted); }
@@ -57,8 +81,8 @@ input:focus-visible, select:focus-visible, button:focus-visible, a:focus-visible
 .muted { color: var(--muted); }
 .nowrap { white-space: nowrap; }
 table { width: 100%; border-collapse: collapse; }
-th { text-align: left; font-size: var(--text-xs); font-weight: 600; color: var(--muted); padding: 7px 10px; border-bottom: 1px solid var(--line); }
-th.mono { font-family: inherit; font-size: var(--text-xs); }
+th { text-align: left; font-size: var(--text-sm); font-weight: var(--weight-semibold); color: var(--muted); padding: 7px 10px; border-bottom: 1px solid var(--line); }
+th.mono { font-family: inherit; font-size: var(--text-sm); }
 th button.sort { all: unset; cursor: pointer; display: inline-flex; gap: 4px; align-items: baseline; }
 th button.sort:hover, th button.sort:focus-visible { color: var(--fg); }
 th button.sort:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -69,10 +93,7 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 td a { text-decoration: none; }
 td a:hover { text-decoration: underline; }
 td.wrap { overflow-wrap: anywhere; }
-kbd { font: 11px/1 var(--mono); color: var(--muted); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 3px; padding: 1px 4px; margin-left: 3px; vertical-align: 1px; }
+kbd { font: var(--text-sm)/1 var(--mono); color: var(--muted); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 3px; padding: 1px 4px; margin-left: 3px; vertical-align: 1px; }
 .empty { padding: 24px 0; text-align: center; }
-/* RFC 2119 level chip (also in rendered markdown): level is weight, not colour: red and amber belong to the state */
-.rfc { font-size: 11px; font-weight: 600; letter-spacing: .02em; padding: 0 6px; border-radius: 2px; white-space: nowrap; background: color-mix(in srgb, currentColor 12%, transparent); }
-.rfc.must { background: var(--fg); color: var(--card); }
-.rfc.should { background: none; box-shadow: inset 0 0 0 1px currentColor; }
-.rfc.may { color: var(--muted); }
+/* RFC 2119 level chip in rendered Markdown. */
+.rfc { text-transform: lowercase; display: inline-block; font-size: var(--badge-size); font-weight: var(--weight-medium); padding: var(--badge-padding); border-radius: var(--badge-radius); white-space: nowrap; color: var(--pill-ink); background: var(--pill-fill); }

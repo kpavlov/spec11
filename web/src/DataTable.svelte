@@ -6,7 +6,7 @@
   type Col = { key: string; label: string; cls?: string; sort?: boolean };
   // a keyboard stop: a row (by key) or a group header
   type Stop = { key?: string; group?: string };
-  let { rows, columns, rowKey, selected, onselect, cell, value, groupOf, tone, pale, keys = true, storageKey = "", cap = 500, headless = false, empty }: {
+  let { rows, columns, rowKey, selected, onselect, cell, value, groupOf, tone, keys = true, storageKey = "", cap = 500, headless = false, empty }: {
     rows: T[];
     columns: Col[];
     rowKey: (r: T) => string;
@@ -20,8 +20,6 @@
     groupOf?: (r: T) => string;
     // a Tone (tone.ts): colours the row's left edge
     tone?: (r: T) => string | undefined;
-    // rows shown faded (reviewed, say)
-    pale?: (r: T) => boolean;
     // ↑/↓/←/→ move the selection (off where selecting does not preview, so the arrows scroll the page)
     keys?: boolean;
     // where collapsed groups are remembered
@@ -66,7 +64,7 @@
 
   // ↑/↓ move through the stops, ←/→ collapse and expand the selected group (not while a field or a radio group has the keys)
   function onkey(e: KeyboardEvent) {
-    if (!keys || (e.target as HTMLElement).closest("input, select, textarea, .gutter, .seg") || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (!keys || (e.target !== document.body && !table?.contains(e.target as Node)) || (e.target as HTMLElement).closest("input, select, textarea, .gutter, .seg") || e.metaKey || e.ctrlKey || e.altKey) return;
     const grp = curGroup();
     if ((e.key === "ArrowDown" || e.key === "ArrowUp") && seq.length) {
       e.preventDefault();
@@ -129,7 +127,7 @@
         {#if isOpen(g.name)}
           {#each g.rows as r (rowKey(r))}
             <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
-            <tr class="row" class:sel={selected === rowKey(r)} class:pale={pale?.(r)} data-tone={tone?.(r)} onclick={(e) => { if ((e.target as HTMLElement).closest("a, input")) return; selGroup = null; onselect(rowKey(r), "click"); }}>
+            <tr class="row" class:sel={selected === rowKey(r)} data-tone={tone?.(r)} onclick={(e) => { if ((e.target as HTMLElement).closest("a, input, button")) return; selGroup = null; onselect(rowKey(r), "click"); }}>
               {#each columns as c}<td class={c.cls}>{@render cell(r, c.key)}</td>{/each}
             </tr>
           {/each}
@@ -145,12 +143,13 @@
   tr.row { cursor: pointer; }
   tr.row td:first-child { border-left: 3px solid transparent; }
   tr[data-tone] td:first-child { border-left-color: var(--tone); }
-  tr.pale td { opacity: 0.5; }
-  tr.sel, tr.row:hover { background: var(--tint-hover); }
+  tr.row:hover { background: var(--tint-hover); }
+  tr.row.sel { background: var(--tint-sel); }
+  tr.row.sel td:first-child { font-weight: var(--weight-semibold); }
   tr.grp td { padding: 0; background: var(--tint-group); }
   tr.grp button { all: unset; box-sizing: border-box; width: 100%; padding: 6px 10px; cursor: pointer; display: flex; gap: 8px; align-items: baseline; }
   tr.grp button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
   tr.grp .caret { width: 10px; color: var(--muted); }
   tr.grp .count { color: var(--muted); }
-  .cap { margin: 10px; font-size: var(--text-xs); color: var(--muted); }
+  .cap { margin: 10px; font-size: var(--text-sm); color: var(--muted); }
 </style>

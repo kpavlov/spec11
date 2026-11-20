@@ -5,13 +5,13 @@
 </script>
 
 <div class="head">
-  <b class="mono title">{title}</b>
+  <h2 class="mono title">{title}</h2>
   {@render children?.()}
   <a class="x" href={close} aria-label="close preview">✕</a>
 </div>
 
 <style>
-  .head { display: flex; align-items: center; gap: 8px; }
-  .title { overflow-wrap: anywhere; }
+  .head { display: flex; align-items: baseline; gap: 8px; }
+  .title { margin: 0; min-width: 0; font-size: var(--text-title); overflow-wrap: anywhere; }
   .x { margin-left: auto; text-decoration: none; padding: 0 8px; color: var(--muted); }
 </style>

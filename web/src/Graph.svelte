@@ -106,6 +106,7 @@
     const c = (v: string) => { canvas.style.color = `var(${v})`; return getComputedStyle(canvas).color; };
     const [fg, muted, accent, ok, card, line] = [c("--fg"), c("--muted"), c("--accent"), c("--ok"), c("--card"), c("--line")];
     const mono = css.getPropertyValue("--mono").trim() || "monospace";
+    const labelSize = parseFloat(css.fontSize);
     const near = neighbours();
     const needle = q.toLowerCase();
     const lit = (n: N) => (near ? near.has(n) : !q || n.id.toLowerCase().includes(needle));
@@ -142,7 +143,7 @@
     }
 
     ctx.textAlign = "center";
-    ctx.font = `${11 / view.k}px ${mono}`;
+    ctx.font = `${labelSize / view.k}px ${mono}`;
     ctx.lineJoin = "round";
     for (const n of nodes) {
       ctx.globalAlpha = lit(n) ? 1 : 0.18;
@@ -166,10 +167,10 @@
     if (hover) { // tooltip, in screen pixels
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.globalAlpha = 1;
-      ctx.font = `12px ${mono}`;
+      ctx.font = `${labelSize}px ${mono}`;
       ctx.textAlign = "left";
       const lines = [hover.id, `${hover.n} symbols · ${hover.tests} tests detected · ${hover.deg} links`];
-      const [bw, bh] = [Math.max(...lines.map((t) => ctx.measureText(t).width)) + 16, lines.length * 16 + 10];
+      const [bw, bh] = [Math.max(...lines.map((t) => ctx.measureText(t).width)) + 16, lines.length * (labelSize + 4) + 10];
       const [bx, by] = [Math.max(4, Math.min(mouse.x + 14, w - bw - 4)), Math.max(4, Math.min(mouse.y + 14, h - bh - 4))];
       ctx.fillStyle = card;
       ctx.strokeStyle = line;
@@ -179,7 +180,7 @@
       ctx.fill();
       ctx.stroke();
       ctx.fillStyle = fg;
-      lines.forEach((t, i) => ctx.fillText(t, bx + 8, by + 18 + i * 16));
+      lines.forEach((t, i) => ctx.fillText(t, bx + 8, by + labelSize + 4 + i * (labelSize + 4)));
     }
   }
 
@@ -251,9 +252,9 @@
 
 <style>
   .graph { position: relative; height: calc(100vh - 220px); min-height: 360px; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
-  canvas { display: block; cursor: grab; touch-action: none; user-select: none; }
+  canvas { font-size: var(--text-sm); display: block; cursor: grab; touch-action: none; user-select: none; }
   canvas:active { cursor: grabbing; }
-  .legend { position: absolute; left: 10px; bottom: 6px; right: 120px; margin: 0; font-size: 12px; pointer-events: none; }
+  .legend { position: absolute; left: 10px; bottom: 6px; right: 120px; margin: 0; font-size: var(--text-sm); pointer-events: none; }
   .zoom { position: absolute; right: 10px; bottom: 8px; display: flex; gap: 4px; }
   .zoom button { width: 28px; height: 28px; padding: 0; font-size: 15px; }
 </style>

@@ -7,5 +7,5 @@
 <span class="pill" data-tone={tone} {title}>{@render children()}</span>
 
 <style>
-  .pill { font-size: 11.5px; padding: 1px 8px; border-radius: 2px; margin-right: 4px; white-space: nowrap; color: var(--tone, inherit); background: color-mix(in srgb, currentColor 10%, transparent); }
+  .pill { display: inline-block; font-size: var(--badge-size); font-weight: var(--weight-medium); padding: var(--badge-padding); border-radius: var(--badge-radius); margin-right: 4px; white-space: nowrap; color: var(--pill-ink, var(--tone, inherit)); background: var(--pill-fill, color-mix(in srgb, currentColor 10%, var(--card))); }
 </style>

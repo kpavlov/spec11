@@ -33,7 +33,8 @@
 <style>
   .section { background: var(--card); border: 1px solid var(--line); border-left: 4px solid var(--line); border-radius: var(--radius); padding: 10px 14px; margin-bottom: var(--gap); }
   .section[data-tone] { border-left-color: var(--tone); background: color-mix(in srgb, var(--tone) 5%, var(--card)); }
-  summary { cursor: pointer; display: flex; align-items: center; gap: 8px; font-weight: 600; }
+  summary { cursor: pointer; display: flex; align-items: center; gap: 8px; }
+  summary > span { font-size: var(--text-section); line-height: 1.3; font-weight: var(--weight-semibold); }
   summary span { flex: 1; }
   .section > :global(:not(summary)) { margin-top: var(--gap); }
   .body { overflow: auto; resize: vertical; min-height: 3em; }
@@ -42,5 +43,5 @@
   .auto:hover, .auto:focus-visible { color: var(--fg); }
   .section :global(ul) { margin: 0; padding-left: 18px; }
   .section :global(li) { margin: 4px 0; }
-  .count { font-size: var(--text-xs); padding: 0 7px; border-radius: 2px; color: var(--card); background: var(--tone, var(--muted)); }
+  .count { font-size: var(--text-sm); padding: 0 7px; border-radius: 2px; color: var(--card); background: var(--tone, var(--muted)); }
 </style>

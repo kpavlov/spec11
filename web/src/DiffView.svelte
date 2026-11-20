@@ -42,10 +42,10 @@
 
 <style>
   .wrapctl { font-weight: normal; margin-left: 8px; }
-  .diff { overflow: auto; max-height: 70vh; max-width: 100%; padding: 8px 0; border: 1px solid var(--line); border-radius: var(--radius); background: var(--card); line-height: 1.45; font: 14px/1.45 var(--mono); }
+  .diff { overflow: auto; max-height: 70vh; max-width: 100%; padding: 8px 0; border: 1px solid var(--line); border-radius: var(--radius); background: var(--card); font: var(--text-label)/1.45 var(--mono); }
   .row { display: flex; width: max-content; min-width: 100%; }
   .wrap .row { width: auto; }
-  .gs { display: flex; flex: none; position: sticky; left: 0; background: var(--card); color: var(--muted); font-size: 0.85em; user-select: none; border-right: 1px solid var(--line); }
+  .gs { display: flex; flex: none; position: sticky; left: 0; background: var(--card); color: var(--muted); font-size: var(--text-sm); user-select: none; border-right: 1px solid var(--line); }
   .gs i { font-style: normal; width: 5ch; padding: 0 6px; text-align: right; }
   .c { padding: 0 12px; white-space: pre; }
   .wrap .c { white-space: pre-wrap; overflow-wrap: anywhere; min-width: 0; flex: 1; }
@@ -55,6 +55,6 @@
   .del .gs { background: color-mix(in srgb, var(--bad) 14%, var(--card)); }
   .hunk { color: var(--muted); background: color-mix(in srgb, var(--accent) 8%, transparent); }
   .hunk .gs { background: color-mix(in srgb, var(--accent) 8%, var(--card)); }
-  .touch { color: var(--accent); font-size: 0.9em; }
+  .touch { color: var(--accent); font-size: var(--text-sm); }
   .meta { color: var(--muted); }
 </style>

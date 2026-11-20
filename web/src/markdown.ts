@@ -1,3 +1,5 @@
+import { requirementLevelTone } from "./tone";
+
 // Small, safe markdown subset for spec files: everything is HTML-escaped first, then a fixed set of patterns is turned back into tags.
 // Requirement IDs (ABC-12) become <a data-id> so the viewer can open their trace.
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -15,7 +17,7 @@ export function inline(s: string): string {
     .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
     .replace(ID, '<a class="id" href="/requirements/$1" data-id="$1">$1</a>');
   // RFC 2119 level as a pill; skips tags so hrefs stay intact
-  t = t.replace(/(<[^>]+>)|\b(MUST|SHOULD|MAY)\b/g, (m, tag, w) => (tag ? m : `<span class="rfc ${w.toLowerCase()}">${w}</span>`));
+  t = t.replace(/(<[^>]+>)|\b(MUST|SHALL|SHOULD|MAY)\b/g, (m, tag, w) => (tag ? m : `<span class="rfc" data-tone="${requirementLevelTone[w]}">${w}</span>`));
   return t.replace(/\u0000(\d+)\u0000/g, (_, i) => `<code>${codes[+i]}</code>`);
 }
 

@@ -7,12 +7,15 @@
   import Split from "./Split.svelte";
   import SplitToggle from "./SplitToggle.svelte";
   import DataTable from "./DataTable.svelte";
+  import { MediaQuery } from "svelte/reactivity";
+  import RequirementBadges from "./RequirementBadges.svelte";
+  import Filters from "./Filters.svelte";
   import Seg from "./Seg.svelte";
   import Pill from "./Pill.svelte";
   import IdLink from "./IdLink.svelte";
   import Section from "./Section.svelte";
   import PaneHead from "./PaneHead.svelte";
-  import { stateTone, edgeTone, levelTone, changeTone, type Tone } from "./tone";
+  import { requirementLevelTone, stateTone, edgeTone, levelTone, changeTone, type Tone } from "./tone";
   import { preview } from "./layout.svelte";
   import { reviewed, loadReviewed, setReviewed } from "./reviewed.svelte";
   import DiffView from "./DiffView.svelte";
@@ -32,7 +35,7 @@
   const u = format;
 
   function navigate(r: Route, replace = false) {
-    route = r;
+    if (r !== route) route = r;
     if (embedded) return; // a host iframe has no URL of its own
     try { (replace ? window.history.replaceState : window.history.pushState).call(window.history, null, "", format(r)); } catch { /* sandboxed */ }
   }
@@ -63,7 +66,12 @@
   let dismissed = $state(stored("spec17.banner"));
   const dismiss = (m: string) => { dismissed = m; try { localStorage.setItem("spec17.banner", m); } catch { /* storage blocked */ } };
   // nav emoji; below 1350px only these show (the label is hidden, the title keeps the name)
-  const EMOJI: Record<string, string> = { dashboard: "📊", changes: "📝", requirements: "📋", modules: "📦", tests: "🧪", specs: "📄", overlap: "🔀", uncovered: "🚫" };
+  const compactNav = new MediaQuery("(max-width: 75rem)");
+  const mobileNav = new MediaQuery("(max-width: 48rem)");
+  const destinations = TABS.filter(t => t !== "setup");
+  const visibleTabs = $derived(destinations.filter((t, i) => t === route.tab || (!mobileNav.current && (!compactNav.current || i < 3))));
+  const moreTabs = $derived(destinations.filter(t => !visibleTabs.includes(t)));
+  const stateLabel = (state: string) => state === "tested" ? "tagged test" : state;
   const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
 
   // ---- theme: auto (OS) | light | dark, remembered per browser ----
@@ -87,16 +95,16 @@
       if (t.closest("input, select, textarea, .gutter, .seg") || e.metaKey || e.ctrlKey || e.altKey) { if (e.key === "Escape") (t as HTMLElement).blur(); return; }
       if (e.key === "/") {
         e.preventDefault();
-        if (route.tab !== "requirements") navigate({ tab: "requirements" });
+        if (route.tab !== "requirements" && route.tab !== "changes") navigate({ tab: "requirements" });
         queueMicrotask(() => document.querySelector<HTMLInputElement>("input[name=filter]")?.focus());
-      } else if (route.tab === "requirements" && /^[0-7sl]$/i.test(e.key)) {
+      } else if ((route.tab === "requirements" || route.tab === "changes") && /^[0-7sl]$/i.test(e.key)) {
         // filter shortcuts: 1-7 pick a state, S/L step through states/levels (⇧ goes back), 0 clears every filter
         const k = e.key.toLowerCase(), d = e.shiftKey ? -1 : 1;
         const step = (keys: string[], cur: string) => keys[(keys.indexOf(cur) + d + keys.length) % keys.length];
-        if (k === "0") filter({ state: undefined, level: undefined, q: undefined, changed: undefined, reviewed: undefined });
-        else if (k === "s") filter({ state: step(states, stateFilter) });
+        if (k === "0") filter(clearReqFilters);
+        else if (k === "s") filter({ state: step(stateKeys, stateFilter) });
         else if (k === "l") { const n = step(levelKeys, levelFilter || "all"); filter({ level: n === "all" ? undefined : n }); }
-        else if (+k <= states.length) filter({ state: states[+k - 1] });
+        else if (stateKeys.includes(states[+k - 1])) filter({ state: states[+k - 1] });
       } else if (e.key === "Escape" && route.id && (route.tab === "requirements" || route.tab === "overlap")) navigate({ ...route, id: undefined });
       else if (e.key === "Escape" && route.path && route.tab === "tests") navigate({ ...route, path: undefined, line: undefined });
     };
@@ -106,6 +114,8 @@
 
   // ---- data ----
   let setup = $state<{ status: any; suggestions: string[]; text: string; version?: string } | null>(null);
+  let globalScope = $state(false);
+  let checking = $state(false);
   let setupError = $state("");
   let busy = $state(false);
   let checks = $state<{ name: string; level: string; detail: string; hint: string | null }[]>([]);
@@ -168,6 +178,7 @@
 
   // (WEB-27) Setup needs only these two calls, never the scan; a failure is shown there with a retry, not left at "Checking…"
   async function loadSetup() {
+    checking = true;
     try {
       const [r, d] = await Promise.all([call("install_status"), call("doctor")]);
       setup = { ...r.data, text: r.text };
@@ -176,6 +187,8 @@
       setupError = "";
     } catch (e: any) {
       setupError = String(e.message ?? e);
+    } finally {
+      checking = false;
     }
   }
 
@@ -260,6 +273,7 @@
     ignore_whitespace: route.ws === "1", show_ignored: route.ignored === "1", show_all: route.all === "1",
   });
   const defaultScope = $derived(!scope.ref && !scope.commit && !scope.staged && scope.include_untracked && !scope.ignore_whitespace && !scope.show_ignored && !scope.show_all);
+  const view = $derived(defaultScope ? changes : custom);
   $effect(() => {
     if (route.tab !== "changes") return;
     void gen;
@@ -346,30 +360,38 @@
   const query = $derived(route.q ?? "");
   const levels = ["MUST", "SHOULD", "MAY"];
   const levelFilter = $derived(route.level ?? "");
+  const onChanges = $derived(route.tab === "changes");
+  const reqFilterRows = $derived<Row[]>(onChanges ? view?.requirements ?? [] : rows);
+  const clearReqFilters = { state: undefined, level: undefined, q: undefined, changed: undefined, reviewed: undefined };
+  let reqFiltersOpen = $state(false);
   // SHALL and reference docs have no chip of their own: they group under "other"
   const levelOf = (r: Row) => (levels.includes(r.level) ? r.level : "other");
   // the rows that pass every filter except the one named: what a chip of that filter would show
-  const facet = (skip?: "state" | "level") => rows.filter((r) => (skip === "state" || stateFilter === "all" || r.state === stateFilter) && (skip === "level" || !levelFilter || levelOf(r) === levelFilter) && (!onlyChanged || reqKinds.has(r.id)) && (!onlyUnreviewed || !isReviewed(r.id)) && (!query || `${r.id} ${r.text} ${r.file}`.toLowerCase().includes(query.toLowerCase())));
+  const facet = (skip?: "state" | "level") => reqFilterRows.filter((r) => (skip === "state" || stateFilter === "all" || r.state === stateFilter) && (skip === "level" || !levelFilter || levelOf(r) === levelFilter) && (onChanges || !onlyChanged || reqKinds.has(r.id)) && (!onlyUnreviewed || !isReviewed(r.id)) && (!query || `${r.id} ${r.text} ${r.file}`.toLowerCase().includes(query.toLowerCase())));
   const tally = (list: Row[], key: (r: Row) => string) => list.reduce<Record<string, number>>((m, r) => ((m[key(r)] = (m[key(r)] ?? 0) + 1), m), {});
   const shown = $derived(facet());
   const stateN = $derived.by(() => { const l = facet("state"); return { ...tally(l, (r) => r.state), all: l.length } as Record<string, number>; });
   const levelN = $derived.by(() => { const l = facet("level"); return { ...tally(l, levelOf), all: l.length } as Record<string, number>; });
-  const levelKeys = $derived(["all", ...levels, ...(levelN.other || levelFilter === "other" ? ["other"] : [])]);
-  const filtering = $derived(stateFilter !== "all" || !!levelFilter || !!query || onlyChanged || onlyUnreviewed);
+  const presentStates = $derived(new Set(reqFilterRows.map((r) => r.state)));
+  const presentLevels = $derived(new Set(reqFilterRows.map(levelOf)));
+  const stateKeys = $derived(states.filter((st) => st === "all" || st === stateFilter || presentStates.has(st)));
+  const levelKeys = $derived(["all", ...[...levels, "other"].filter((lv) => lv === levelFilter || presentLevels.has(lv))]);
+  const activeReqFilters = $derived([stateFilter !== "all", levelFilter, !onChanges && onlyChanged, onlyUnreviewed].filter(Boolean).length);
+  const filtering = $derived(!!activeReqFilters || !!query);
   // a "changed only" switch with its count; shown once something changed (or while it is on, so it can be turned off)
   const changedSeg = (n: number) => [{ key: "all", label: "all" }, { key: "changed", label: "changed", count: n }];
   const showChanged = $derived(!!changes?.files.length || onlyChanged);
   const pickReviewed = (k: string) => filter({ reviewed: k === "unreviewed" ? "0" : undefined });
   const pickChanged = (k: string) => filter({ changed: k === "changed" ? "1" : undefined });
-  const stateOpts = $derived(states.map((st, i) => ({ key: st, label: st, count: stateN[st] ?? 0, tone: st === "all" ? undefined : stateTone[st], title: `${STATE_HINT[st]} (${i + 1})` })));
-  const levelOpts = $derived(levelKeys.map((l) => ({ key: l, label: l, count: levelN[l] ?? 0 })));
+  const stateOpts = $derived(stateKeys.map((st) => ({ key: st, label: stateLabel(st), count: stateN[st] ?? 0, tone: st === "all" ? undefined : stateTone[st], title: `${STATE_HINT[st]} (${states.indexOf(st) + 1})` })));
+  const levelOpts = $derived(levelKeys.map((l) => ({ key: l, label: l.toLowerCase(), tone: requirementLevelTone[l.toUpperCase()], count: levelN[l] ?? 0 })));
   // the modules table sorts here; the requirement, test and spec lists sort inside DataTable
   let modSort = $state<Sort>({ key: "", dir: 1 });
   const reqVal = (r: Row, k: string) => (k === "file" ? `${r.file}:${String(r.line).padStart(6, "0")}` : (r as any)[k]);
   const modVal = (m: any, k: string) => (k === "languages" ? m.languages.join(", ") : k === "symbols" ? symbolsOf(m) : k === "depends" ? m.depends_on.length : (m[k] ?? ""));
   const prefixOf = (id: string) => id.replace(/-.*$/, "");
   // requirement table columns (the state colours the row edge)
-  const reqCols = [{ key: "id", label: "ID", cls: "mono nowrap" }, { key: "level", label: "level", cls: "nowrap" }, { key: "state", label: "state" }, { key: "text", label: "requirement" }, { key: "file", label: "location", cls: "mono muted nowrap" }];
+  const reqCols = [{ key: "id", label: "ID", cls: "mono nowrap" }, { key: "text", label: "requirement" }, { key: "file", label: "location", cls: "mono muted wrap" }];
   const invalidN = $derived(report ? Object.values(report.invalid_tests).reduce((n: number, v: any) => n + v.length, 0) : 0);
   const known = $derived(new Set(rows.map((r) => r.id)));
   const mods = $derived<any[]>(sorted((modules?.modules ?? []).filter((m: any) => (!onlyChanged || changedMods.has(m.path)) && (!query || m.path.toLowerCase().includes(query.toLowerCase()))), modSort, modVal));
@@ -389,15 +411,13 @@
   const matched = $derived(allCases.filter((c) => (stateFilter === "all" || (stateFilter === "tagged") === c.t.ids.length > 0) && (!onlyChanged || fileOf.has(c.file)) && (!query || `${c.file} ${c.t.name} ${c.t.ids.join(" ")}`.toLowerCase().includes(query.toLowerCase()))));
   // list rows: a test is told apart by file and line, which is also how the URL selects it (`path` + `line`)
   const testRows = $derived(matched.map((c) => ({ ...c, key: `${c.file}:${c.t.line}` })));
-  const testCols = [{ key: "name", label: "test", cls: "wrap" }, { key: "ids", label: "requirements", cls: "nowrap" }, { key: "file", label: "location", cls: "mono muted nowrap" }];
+  const testCols = [{ key: "name", label: "test", cls: "wrap" }, { key: "ids", label: "requirements", cls: "nowrap" }, { key: "file", label: "location", cls: "mono muted wrap" }];
   const testVal = (c: any, k: string) => (k === "file" ? `${c.file}:${String(c.t.line).padStart(6, "0")}` : k === "ids" ? c.t.ids.join(" ") : c.t.name);
   const selTest = $derived(route.tab === "tests" && route.path ? `${route.path}:${route.line}` : undefined);
   const byId = $derived(new Map(rows.map((r) => [r.id, r])));
   // the preview shows the lines of the selected test: a few before it and the start of its body
   const TEST_BEFORE = 3, TEST_AFTER = 24;
   const specRows = $derived((specFiles ?? []).filter((file) => !onlyChanged || fileOf.has(file)).map((file) => ({ file })));
-  // the Changes page: files grouped by state, and the counts that link to the filtered views
-  const view = $derived(defaultScope ? changes : custom);
   // (WEB-33) the short hash of the explained commit, for the section titles
   const at = $derived(scope.commit ? ` (${history?.commits.find((c: any) => c.sha === scope.commit || c.short === scope.commit)?.short ?? scope.commit.slice(0, 7)})` : "");
   const CHANGES = ["added", "modified", "renamed", "deleted"];
@@ -416,7 +436,7 @@
   const req = (id: string): Route => ({ tab: "requirements", id });
   const withId = (tab: Route["tab"], id: string): Route => ({ tab, id });
   // typing in the filter replaces the URL instead of stacking a history entry per keystroke
-  const filter = (patch: Partial<Route>) => navigate({ ...route, ...patch }, true);
+  const filter = (patch: Partial<Route>) => navigate(Object.assign(route, patch), true);
   // highlighted line HTML with known requirement IDs turned into links (only text between tags is touched)
   const linkIds = (html: string) => html.replace(/(<[^>]+>)|\b[A-Z]{2,5}-\d{1,4}\b/g, (m, tag) => (tag || !known.has(m) ? m : `<a class="id" href="${u(req(m))}">${m}</a>`));
   const lines = $derived(code ? highlightLines(code.path, code.text).map(linkIds) : []);
@@ -455,12 +475,32 @@
   const copyPath = (path: string) => navigator.clipboard.writeText(path).then(() => { copied = true; setTimeout(() => (copied = false), 1200); }).catch(() => {});
 </script>
 
+{#snippet requirementToolbar()}
+  <!-- (WEB-33, WEB-43) -->
+  <div class="bar req-toolbar">
+    <input name="filter" aria-label={onChanges ? "Filter affected requirements" : "Filter requirements"} placeholder="Filter requirements" title="Filter by ID, text or file (/)" value={query} oninput={(e) => filter({ q: e.currentTarget.value })} />
+    <button type="button" class="filter-toggle" aria-expanded={reqFiltersOpen} aria-controls="requirement-filter-options" onclick={() => (reqFiltersOpen = !reqFiltersOpen)}>
+      Filters{activeReqFilters ? ` (${activeReqFilters})` : ""}<span class="chevron" aria-hidden="true"></span>
+    </button>
+    <span class="found muted nowrap" aria-live="polite">{#if filtering}{shown.length} of {reqFilterRows.length}{/if}</span>
+    {#if filtering}<a class="clear-filters" href={u({ ...route, ...clearReqFilters })} aria-label="Clear requirement filters" title="Clear requirement filters (0)">Clear</a>{/if}
+    {#if !onChanges}<SplitToggle />{/if}
+  </div>
+  <div class="req-options" id="requirement-filter-options" hidden={!reqFiltersOpen}>
+    <Seg label="State" keycap="S" hint="Press 1–7 to pick a state, S for the next one, ⇧S for the previous one" options={stateOpts} value={stateFilter} onpick={(k) => filter({ state: k })} />
+    <Seg label="Level" keycap="L" hint="Press L for the next level, ⇧L for the previous one" options={levelOpts} value={levelFilter || "all"} onpick={(k) => filter({ level: k === "all" ? undefined : k })} />
+    {#if !onChanges && showChanged}<Seg label="Changes" hint="Only what the working tree changed against HEAD" options={changedSeg(reqKinds.size)} value={onlyChanged ? "changed" : "all"} onpick={pickChanged} />{/if}
+    {#if Object.keys(commits).length}<Seg label="Reviewed" hint="Hide the requirements you marked reviewed (and have not changed since)" options={[{ key: "all", label: "all" }, { key: "unreviewed", label: "unreviewed", count: reqFilterRows.filter((r) => !isReviewed(r.id)).length }]} value={onlyUnreviewed ? "unreviewed" : "all"} onpick={pickReviewed} />{/if}
+  </div>
+{/snippet}
+
 {#snippet reqCell(r: any, k: string)}
   {#if k === "id"}{#if commits[r.id]}<input type="checkbox" class="rv" aria-label="reviewed" title={reviewTip(r.id)} checked={isReviewed(r.id)} onchange={(e) => setReviewed(r.id, e.currentTarget.checked ? commits[r.id].sha : undefined)} />{:else if Object.keys(commits).length}<span class="rv muted" title="not committed yet: commit it to review it">·</span>{/if}{#if r.deleted || !known.has(r.id)}{r.id}{:else}<a href={u(route.tab === "requirements" ? { ...route, id: r.id } : req(r.id))}>{r.id}</a>{/if}
-  {:else if k === "level"}{#if /^(MUST|SHOULD|MAY)$/.test(r.level)}<span class="rfc {r.level.toLowerCase()}">{r.level}</span>{/if}
-  {:else if k === "state"}<Pill tone={r.deleted ? "bad" : stateTone[r.state]}>{r.state}</Pill>{#if r.done}<Pill tone="accent" title="check-marked: {r.verdict}">✓ {r.verdict}</Pill>{/if}
+    <RequirementBadges level={r.level} state={r.state} label={stateLabel(r.state)} hint={STATE_HINT[r.state]} deleted={r.deleted} />
+    {#if r.done}<Pill tone={stateTone.done} title="check-marked: {r.verdict}">✓ {r.verdict}</Pill>{/if}
   {:else if k === "text"}<div class="txt" title={plain(r.text)}>{@html inline(r.text)}</div>
     <div class="notes">
+      {#if isReviewed(r.id)}<Pill tone="muted">Reviewed</Pill>{/if}
       {#if !r.deleted && testedIds.has(r.id)}
         <a href={u({ tab: "tests", requirementId: r.id })} aria-label="View tagged tests for {r.id}">View tagged tests</a>
       {/if}
@@ -502,7 +542,7 @@
         <p class="muted empty">Select a requirement to preview it.</p>
       {:else}
       {@const sp = trace.data?.spec}
-      <PaneHead title={trace.data.id} close={u({ ...route, id: undefined })}>{#if sp}<Pill>{sp.level}</Pill>{/if}</PaneHead>
+      <PaneHead title={trace.data.id} close={u({ ...route, id: undefined })}>{#if sp}<Pill tone={requirementLevelTone[sp.level]}>{sp.level.toLowerCase()}</Pill>{/if}</PaneHead>
       {@const dfiles = reqFiles(trace.data, reqKinds.get(trace.data.id))}
       {#if dfiles.length}<p><ViewSwitch n={dfiles.length} /></p>{/if}
       {#if diffOn(dfiles.length > 0)}
@@ -515,15 +555,15 @@
         <Markdown source={sp.text} />
       {:else}<p class="muted">Not in any spec: cited only in tests or code.</p>{/if}
       {#if trace.data.tests?.length}
-        <h4>Tests ({trace.data.tests.length})</h4>
+        <h3 class="preview-section">Tests ({trace.data.tests.length})</h3>
         <ul class="refs">{#each trace.data.tests as t}<li><a class="mono nowrap" href={u({ tab: "code", path: t.file, line: t.line })}>{t.file}:{t.line}</a> {t.text} {@render who(blame[blameKey(t.file, t.line)])}</li>{/each}</ul>
       {/if}
       {#if trace.data.source_cites?.length}
-        <h4>Code citations ({trace.data.source_cites.length})</h4>
+        <h3 class="preview-section">Code citations ({trace.data.source_cites.length})</h3>
         <ul class="refs">{#each trace.data.source_cites as c}<li><a class="mono nowrap" href={u({ tab: "code", path: c.file, line: c.line })}>{c.file}:{c.line}</a> <code>{c.decl}</code></li>{/each}</ul>
       {/if}
       {#if trace.data.related?.length}
-        <h4>Related code ({trace.data.related_total})</h4>
+        <h3 class="preview-section">Related code ({trace.data.related_total})</h3>
         <ul class="refs">{#each trace.data.related as r}<li><a class="mono nowrap" href={u({ tab: "code", path: r.file })}>{r.file}</a> <span class="muted">{r.types.join(", ")}{r.cites ? " · cites it" : ""}</span></li>{/each}</ul>
       {/if}
       <details class="plain"><summary class="muted">plain text</summary><pre>{trace.text}</pre></details>
@@ -548,12 +588,12 @@
       <DiffView paths={[route.path]} {gen} />
     {:else}
     {#if c}
-      <h4>Requirements</h4>
+      <h3 class="preview-section">Requirements</h3>
       {#if c.t.ids.length}
         <ul class="refs">{#each c.t.ids as id}<li>{@render idlink(id, known.has(id) ? req(id) : { tab: "requirements", q: id })} <span class="muted">{byId.get(id) ? plain(byId.get(id)!.text).slice(0, 140) : "not in any spec"}</span></li>{/each}</ul>
       {:else}<p class="muted">Untagged: no requirement ID in its tag.</p>{/if}
     {/if}
-    <h4>Source</h4>
+    <h3 class="preview-section">Source</h3>
     {#if code?.path === route.path}
       <table class="code snip">
         <tbody>
@@ -576,11 +616,20 @@
   <span class="dot" data-tone={up === true ? "ok" : up === false ? "bad" : undefined} role="status" title={up === null ? "server: connecting" : up ? "server: connected" : "server: disconnected, retrying"}></span>
   <a class="root mono muted" href="/">{root}</a>
   <nav aria-label="views">
-    {#each TABS.filter((t) => t !== "setup") as t}
+    {#each visibleTabs as t}
       <a class="tab" class:on={route.tab === t} aria-current={route.tab === t ? "page" : undefined} href={u({ tab: t })} title={t} aria-label={t}>
-        <span aria-hidden="true">{EMOJI[t]}</span><span class="lbl">{t}</span>{#if t === "dashboard" && report?.total_problems}<span class="badge" data-tone="bad" title="{report.total_problems} problems">{report.total_problems}</span>{/if}{#if t === "changes" && directReqs.length}<span class="badge" data-tone="accent" title="{directReqs.length} requirements may be affected">{changes.requirements.length}</span>{/if}
+        {t}{#if t === "dashboard" && report?.total_problems}<span class="badge" data-tone="bad" title="{report.total_problems} problems">{report.total_problems}</span>{/if}{#if t === "changes" && directReqs.length}<span class="badge" data-tone="accent" title="{directReqs.length} requirements may be affected">{directReqs.length}</span>{/if}
       </a>
     {/each}
+    {#if moreTabs.length}
+      <div class="more-views">
+        <select aria-label="More views" value="" onchange={(e) => navigate({ tab: e.currentTarget.value as Route["tab"] })}>
+          <option value="" disabled>More</option>
+          {#each moreTabs as t}<option value={t}>{t}</option>{/each}
+        </select>
+        <span class="chevron" aria-hidden="true"></span>
+      </div>
+    {/if}
   </nav>
   <button class="icon" disabled={busy} onclick={rescan} title="Rescan the repo (syncs the CodeGraph index first)" aria-label="rescan">↻</button>
   <button class="icon" onclick={() => (theme = nextTheme.v)} title="Theme: {curTheme.name} (click for {nextTheme.name})" aria-label="Theme: {curTheme.name}, switch to {nextTheme.name}">{curTheme.icon}</button>
@@ -602,93 +651,108 @@
     {#if !setup}
       {#if setupError}<p class="error">Could not check the setup: {setupError} <button onclick={loadSetup}>Retry</button></p>{:else}<p class="muted">Checking…</p>{/if}
     {:else}
-      <!-- (WEB-42) -->
-      {#if setup.version}<p class="setup-value muted">spec17 <code>{setup.version}</code></p>{/if}
-      {#snippet mcpControls(transport: "stdio" | "http", state: string, path: string, global: boolean, details?: string | null)}
-        {@const label = transport === "stdio" ? "stdio MCP" : "HTTP MCP"}
-        {@const present = state === "ok" || state === "other"}
-        <p class="setup-actions">
-          <Pill tone={state === "ok" ? "ok" : state === "other" ? "warn" : "bad"}>{label} {state === "ok" ? "installed" : state === "other" ? "custom entry" : "missing"}</Pill>
-          {#if present}
-            <button disabled={busy} onclick={() => confirm(`Remove the ${label} entry from ${path}?`) && runSetup("uninstall", global, { only: "mcp", transport })}>Remove {label}</button>
-          {:else}
-            <button disabled={busy} onclick={() => runSetup("install", global, { only: "mcp", transport })}>Install {label}</button>
-          {/if}
-        </p>
-        {#if present && details}<p class="setup-value muted"><code>{details}</code></p>{/if}
-      {/snippet}
-      {#snippet row(title: string, where: any, global: boolean)}
-        <div class="card block setup">
-          <h3>{title}</h3>
-          <!-- (WEB-38, WEB-40) -->
-          <p class="setup-actions">
-            <Pill tone={where.skill === "current" ? "ok" : where.skill === "outdated" ? "warn" : "bad"}>skill {where.skill}</Pill>
-            <button disabled={busy || where.skill === "current"} onclick={() => runSetup("install", global, { only: "skill" })}>{where.skill === "outdated" ? "Update skill" : "Install skill"}</button>
-            <button disabled={busy || where.skill === "missing"} onclick={() => confirm(`Remove the spec17 skill at ${where.skill_path}?`) && runSetup("uninstall", global, { only: "skill" })}>Remove skill</button>
-          </p>
-          <p class="setup-value muted"><code>{where.skill_path}</code></p>
-          {#if where.mcp_stdio !== undefined}
-            <p class="setup-value setup-config muted"><code>{where.mcp_path}</code></p>
-            <!-- (WEB-41) -->
-            {@render mcpControls("stdio", where.mcp_stdio, where.mcp_path, global, launchCommand(where.mcp_details?.stdio))}
-            {@render mcpControls("http", global ? where.mcp_file : where.mcp, where.mcp_path, global, where.mcp_details?.http_url)}
-          {:else}
-            <p class="muted">Update spec17 and restart the server to manage MCP transports.</p>
-          {/if}
-          {#if global && where.mcp !== "missing"}
-            <p class="muted">Claude user MCP entry {where.mcp === "ok" ? "installed" : "customised"} · <code>~/.claude.json</code> (read-only)</p>
-          {/if}
-        </div>
-      {/snippet}
-      {#if noReqs}
-        <section class="card block">
-          <h3>No specs yet</h3>
-          <p>spec17 found no requirements in this repo and works without them: Modules and Tests still list its sources and tests. {setup.suggestions.length ? "Install the skill below, then ask" : "Ask"} your agent to draft <code>specs/01-name.md</code> with you (lines like <code>- **ABC-12** MUST — text</code>).</p>
-        </section>
-      {/if}
-      {@render row("This repo", setup.status.project, false)}
-      {@render row("Global", setup.status.global, true)}
-      <p class="muted">Stdio MCP starts a spec17 process for each session. HTTP MCP connects to a running <code>spec17</code> server.</p>
       {@const cgBin = checks.find((k) => k.name === "codegraph binary")}
       {@const cgIdx = checks.find((k) => k.name === "codegraph index")}
       {@const cgMcp = setup.status.project.codegraph_mcp === "ok" ? "this repo" : setup.status.global.codegraph_mcp === "ok" ? "global" : ""}
-      <div class="card block setup">
-        <h3>CodeGraph <small class="muted">optional: test-to-code links, overlap, uncovered code</small></h3>
-        <p><b>1. Install</b> <Pill tone={cgBin?.level === "ok" ? "ok" : "warn"}>{cgBin?.level === "ok" ? `installed ${cgBin.detail}` : "not on PATH"}</Pill></p>
+      {@const passed = checks.filter(k => k.level === "ok")}
+      {@const issues = checks.filter(k => k.level !== "ok")}
+      {@const where = globalScope ? setup.status.global : setup.status.project}
+      {@const scope = globalScope ? "Global" : "This repo"}
+      <!-- (WEB-44, WEB-42) -->
+      <div class="setup-page">
+      <section class="card setup">
+        <div class="setup-head">
+          <h2>Health</h2>
+          {#if setup.version}<code class="muted">spec17 {setup.version}</code>{/if}
+          <button class="end" disabled={checking || busy} onclick={loadSetup}>{checking ? "Checking…" : "Run checks"}</button>
+        </div>
+        {#if setupError}<p class="error" role="alert">Could not refresh checks: {setupError}</p>{/if}
+        {#snippet checkRow(k: (typeof checks)[number])}
+          <div class="check-row">
+            <Pill tone={levelTone(k.level)}>{k.level === "ok" ? "Passed" : k.level === "warn" ? "Warning" : "Failed"}</Pill>
+            <div><strong>{k.name}</strong> · {k.detail}{#if k.hint}<div class="muted">{k.hint}</div>{/if}</div>
+          </div>
+        {/snippet}
+        {#each issues as k}{@render checkRow(k)}{/each}
+        {#if passed.length}
+          <details><summary>{plural(passed.length, "check")} passed</summary>
+            {#each passed as k}{@render checkRow(k)}{/each}
+          </details>
+        {:else if !issues.length}<p class="muted">No check results available.</p>{/if}
+      </section>
+      <section class="card setup">
+        <div class="setup-head">
+          <h2>Agent setup</h2>
+          <Pill tone={setup.suggestions.length ? "warn" : "ok"}>{setup.suggestions.length ? "Needs attention" : "Ready"}</Pill>
+          <div class="end"><Seg label="Scope" options={[{key: "repo", label: "This repo"}, {key: "global", label: "Global"}]} value={globalScope ? "global" : "repo"} onpick={(k) => globalScope = k === "global"} /></div>
+        </div>
+        {#each setup.suggestions as suggestion}<p>{suggestion}</p>{/each}
+        <!-- (WEB-38, WEB-40, WEB-41) -->
+        {#snippet item(name: string, state: string, path: string, transport?: "stdio" | "http", connection?: string | null)}
+          {@const status = state === "current" || state === "ok" ? "Installed" : state === "missing" ? "Not configured" : state === "other" ? "Custom entry" : state}
+          {@const options = transport ? { only: "mcp" as const, transport } : { only: "skill" as const }}
+          <div class="setup-item">
+            <div>
+              <strong>{name}</strong> <Pill tone={status === "Installed" ? "ok" : status === "Not configured" ? "muted" : "warn"}>{status}</Pill>
+              {#if transport}<span class="muted transport-note">{transport === "stdio" ? "Starts a process per session" : "Connects to a running server"}</span>{/if}
+              <div><code>{path}</code></div>
+              {#if connection}<div><code>{connection}</code></div>{/if}
+            </div>
+            <div class="actions">
+              {#if state === "missing" || state === "outdated"}
+                <button disabled={busy} aria-label="{state === 'outdated' ? 'Update' : 'Install'} {name} ({scope})" onclick={() => runSetup("install", globalScope, options)}>{state === "outdated" ? "Update" : "Install"}</button>
+              {/if}
+              {#if state !== "missing"}
+                <button disabled={busy} aria-label="Remove {name} ({scope})" onclick={() => confirm(`Remove ${name} (${scope}) from ${path}?`) && runSetup("uninstall", globalScope, options)}>Remove</button>
+              {/if}
+            </div>
+          </div>
+        {/snippet}
+        {@render item("Agent skill", where.skill, where.skill_path)}
+        {#if where.mcp_stdio !== undefined}
+          {@render item("Stdio MCP", where.mcp_stdio, where.mcp_path, "stdio", launchCommand(where.mcp_details?.stdio))}
+          {@render item("HTTP MCP", globalScope ? where.mcp_file : where.mcp, where.mcp_path, "http", where.mcp_details?.http_url)}
+        {:else}<p>Update spec17 and restart the server to manage MCP transports.</p>{/if}
+        {#if globalScope && where.mcp !== "missing"}
+          <p class="muted">Claude user MCP entry {where.mcp === "ok" ? "installed" : "customised"} · <code>~/.claude.json</code> (read-only)</p>
+        {/if}
+      {#if noReqs}
+        <section>
+          <h3>No specs yet</h3>
+          <p>spec17 found no requirements in this repo and works without them: Modules and Tests still list its sources and tests. {setup.suggestions.length ? "Install the skill, then ask" : "Ask"} your agent to draft <code>specs/01-name.md</code> with you (lines like <code>- **ABC-12** MUST — text</code>).</p>
+        </section>
+      {/if}
+      </section>
+      <section class="card setup">
+        <div class="setup-head"><h2>CodeGraph</h2><Pill tone="muted">Optional</Pill>
+          {#if cgBin?.level === "ok"}
+            {#if indexAction === "init"}<button class="end" disabled={busy} onclick={() => runIndex("init")}>Create index</button>
+            {:else if cgIdx?.level === "ok" || indexAction === "sync"}<button class="end" disabled={busy} onclick={() => runIndex("sync")}>Sync index</button>{/if}
+          {/if}
+        </div>
+        {#if indexLog}<pre class="log" aria-live="polite">{indexLog}</pre>{/if}
+        <details open={cgBin?.level !== "ok" || cgIdx?.level !== "ok" || !cgMcp}>
+          <summary>{cgBin?.level === "ok" ? "Installed" : "Installation needed"} · {cgMcp ? `Connected (${cgMcp})` : "Agent disconnected"} · {cgIdx?.level === "ok" ? "Index current" : "Check index"}</summary>
+          <p class="muted">Enables test-to-code links, overlap and uncovered-code analysis.</p>
+          {#if cgBin}<p><strong>Installation</strong> · {cgBin.detail}</p>{/if}
         {#if cgBin && cgBin.level !== "ok"}
           <pre class="log">curl -fsSL https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.sh | sh
 npm i -g @colbymchenry/codegraph
 irm https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.ps1 | iex   # Windows PowerShell</pre>
-          <p class="muted">Pick one, then press ↻ below. <a href="https://colbymchenry.github.io/codegraph/getting-started/installation/" target="_blank" rel="noreferrer">Installation docs</a>. spec17 never installs it for you.</p>
+          <p class="muted">After installing, select Run checks in Health. <a href="https://colbymchenry.github.io/codegraph/getting-started/installation/" target="_blank" rel="noreferrer">Installation docs</a>. spec17 never installs it for you.</p>
         {/if}
         <p>
-          <b>2. Connect the agent</b> <Pill tone={cgMcp ? "ok" : "warn"}>{cgMcp ? `codegraph server set (${cgMcp})` : "codegraph server missing"}</Pill>
-          <button disabled={busy || setup.status.project.codegraph_mcp === "ok"} onclick={() => runSetup("install", false, { server: "codegraph" })} title="Adds the codegraph MCP server to .mcp.json (created if missing; an entry that is there is kept)">Add CodeGraph to .mcp.json</button>
-          <button disabled={busy || setup.status.project.codegraph_mcp !== "ok"} onclick={() => confirm("Remove the codegraph server from .mcp.json? Your agent loses CodeGraph until it is added again, and a customised entry is not restored.") && runSetup("uninstall", false, { server: "codegraph" })} title="Removes only the codegraph entry from .mcp.json; the skill and the spec17 entry stay">Remove</button>
+          <strong>Agent connection</strong> ·
+          {#if setup.status.project.codegraph_mcp === "ok"}
+            <button disabled={busy} onclick={() => confirm("Remove the CodeGraph server from this repo’s .mcp.json?") && runSetup("uninstall", false, { server: "codegraph" })}>Remove from this repo</button>
+          {:else}
+            <button disabled={busy} onclick={() => runSetup("install", false, { server: "codegraph" })}>Connect this repo</button>
+          {/if}
         </p>
-        <p><b>3. Index</b> {#if cgIdx}<Pill tone={levelTone(cgIdx.level)}>{cgIdx.level}</Pill> <span class="muted">{cgIdx.detail}</span>{/if}</p>
-        {#if cgBin?.level === "ok"}
-          <p>
-            {#if indexAction === "init"}<button class="primary" disabled={busy} onclick={() => runIndex("init")}>Create the index (codegraph init)</button>
-            {:else if cgIdx?.level === "ok" || indexAction === "sync"}<button disabled={busy} onclick={() => runIndex("sync")}>Sync now (codegraph sync)</button>{/if}
-          </p>
-        {/if}
+        {#if cgIdx}<p><strong>Index</strong> · {cgIdx.detail}</p>{/if}
+        </details>
+      </section>
       </div>
-      <h3>Checks <button onclick={loadSetup}>↻</button></h3>
-      <table>
-        <tbody>
-          {#each checks as k}
-            <tr>
-              <td class="nowrap"><Pill tone={levelTone(k.level)}>{k.level}</Pill></td>
-              <td class="nowrap">{k.name}</td>
-              <td>
-                {k.detail}{#if k.hint}<div class="muted">→ {k.hint}</div>{/if}
-              </td>
-            </tr>
-          {/each}
-        </tbody>
-      </table>
-      {#if indexLog}<pre class="log">{indexLog}</pre>{/if}
     {/if}
   {:else if !report}
     {#if error}<p class="muted">The scan failed (see above). <a href="/setup">Setup</a> shows what is missing.</p>{:else}<p class="muted">Scanning…</p>{/if}
@@ -701,8 +765,8 @@ irm https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.ps1 | 
       </section>
     {:else}
     <section class="hero card">
-      <div class="pct"><b>{report.tested_pct}%</b><span>of due requirements have a tagged test <small class="muted">({report.tested}/{report.due})</small></span></div>
-      <div class="meter" role="img" aria-label="{report.tested_pct}% tested"><i style="width:{report.tested_pct}%"></i></div>
+      <div class="pct"><b>{report.tested_pct}%</b><span>of due requirements have a tagged test <span class="muted metric-count">({report.tested}/{report.due})</span></span></div>
+      <div class="meter" role="img" aria-label="{report.tested_pct}% of due requirements have a tagged test"><i style="width:{report.tested_pct}%"></i></div>
       <p class="facts muted">
         <a href={u({ tab: "requirements" })}>{report.requirements} requirements</a> in {report.spec_files} specs
         {#if report.manual} · <a href={u({ tab: "requirements", state: "manual" })}>{report.manual} manual</a>{/if}
@@ -782,18 +846,10 @@ irm https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.ps1 | 
     <p class="muted empty">No requirements found. <a href="/setup">Setup</a> says what spec17 looks for.</p>
   {:else if route.tab === "requirements"}
     <div class="page">
-    <div class="bar">
-      <Seg label="State" keycap="S" hint="Press 1–7 to pick a state, S for the next one, ⇧S for the previous one" options={stateOpts} value={stateFilter} onpick={(k) => filter({ state: k })} />
-      <Seg label="Level" keycap="L" hint="Press L for the next level, ⇧L for the previous one" options={levelOpts} value={levelFilter || "all"} onpick={(k) => filter({ level: k === "all" ? undefined : k })} />
-      {#if showChanged}<Seg label="Changes" hint="Only what the working tree changed against HEAD" options={changedSeg(rows.filter((r) => reqKinds.has(r.id)).length)} value={onlyChanged ? "changed" : "all"} onpick={pickChanged} />{/if}
-      {#if Object.keys(commits).length}<Seg label="Reviewed" hint="Hide the requirements you marked reviewed (and have not changed since)" options={[{ key: "all", label: "all" }, { key: "unreviewed", label: "unreviewed", count: rows.filter((r) => !isReviewed(r.id)).length }]} value={onlyUnreviewed ? "unreviewed" : "all"} onpick={pickReviewed} />{/if}
-      <input name="filter" aria-label="filter" placeholder="Filter ID, text, file   ( / )" value={query} oninput={(e) => filter({ q: e.currentTarget.value })} />
-      <span class="found muted nowrap" aria-live="polite">{#if filtering}{shown.length} of {rows.length} <a href={u({ tab: "requirements" })} title="Clear every filter (0)">Clear filters <kbd>0</kbd></a>{/if}</span>
-      <SplitToggle />
-    </div>
+    {@render requirementToolbar()}
     <Split>
       {#snippet list()}
-        <DataTable rows={shown} columns={reqCols} cell={reqCell} rowKey={(r) => r.id} selected={route.id} onselect={(k, how) => navigate({ ...route, id: k }, how === "key")} value={reqVal} groupOf={(r) => prefixOf(r.id)} tone={(r) => edgeTone(r.state)} pale={(r) => isReviewed(r.id)} storageKey="spec17.collapsed">
+        <DataTable rows={shown} columns={reqCols} cell={reqCell} rowKey={(r) => r.id} selected={route.id} onselect={(k, how) => navigate({ ...route, id: k }, how === "key")} value={reqVal} groupOf={(r) => prefixOf(r.id)} tone={(r) => edgeTone(r.state)} storageKey="spec17.collapsed">
           {#snippet empty()}<p class="muted empty">No requirement matches. <a href={u({ tab: "requirements" })}>Clear filters</a></p>{/snippet}
         </DataTable>
       {/snippet}
@@ -853,11 +909,13 @@ irm https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.ps1 | 
   {:else if route.tab === "modules"}
     <div class="bar">
       <input name="filter" aria-label="filter modules" placeholder="Filter modules" value={query} oninput={(e) => filter({ q: e.currentTarget.value })} />
-      {#if showChanged}<Seg label="Changes" options={changedSeg(changedMods.size)} value={onlyChanged ? "changed" : "all"} onpick={pickChanged} />{/if}
+      <Filters active={Number(onlyChanged) + Number(showHidden && modView === "list")}>
+        {#if showChanged}<Seg label="Changes" options={changedSeg(changedMods.size)} value={onlyChanged ? "changed" : "all"} onpick={pickChanged} />{/if}
+        {#if modView === "list" && modules?.hidden?.length}
+          <label class="muted nowrap"><input type="checkbox" checked={showHidden} onchange={(e) => save("spec17.hidden", (showHidden = e.currentTarget.checked) ? "1" : "0")} /> show hidden ({modules.hidden.length})</label>
+        {/if}
+      </Filters>
       <span class="muted">{modules?.modules.length ?? 0} modules</span>
-      {#if modView === "list" && modules?.hidden?.length}
-        <label class="muted nowrap"><input type="checkbox" checked={showHidden} onchange={(e) => save("spec17.hidden", (showHidden = e.currentTarget.checked) ? "1" : "0")} /> show hidden ({modules.hidden.length})</label>
-      {/if}
       <Seg label="View" options={VIEWS} value={modView} onpick={(k) => save("spec17.modules", (modView = k))} />
     </div>
     {#if modules && !modules.index}<p class="note-line muted">{modules.note}</p>{/if}
@@ -898,13 +956,15 @@ irm https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.ps1 | 
   {:else if route.tab === "tests"}
     <div class="page">
     <div class="bar">
-      <Seg label="Tagged" options={testOpts} value={stateFilter} onpick={(k) => filter({ state: k })} />
-      {#if showChanged}<Seg label="Changes" options={changedSeg(allCases.filter((c) => fileOf.has(c.file)).length)} value={onlyChanged ? "changed" : "all"} onpick={pickChanged} />{/if}
-      <select aria-label="module" value={route.module ?? ""} onchange={(e) => filter({ module: e.currentTarget.value || undefined })}>
-        <option value="">all modules</option>
-        {#each modules?.modules ?? [] as m}<option value={m.path}>{m.path}</option>{/each}
-      </select>
       <input name="filter" aria-label="filter tests" placeholder="Filter test, file, requirement ID   ( / )" value={query} oninput={(e) => filter({ q: e.currentTarget.value })} />
+      <Filters active={[stateFilter !== "all", route.module, onlyChanged].filter(Boolean).length}>
+        <Seg label="Tagged" options={testOpts} value={stateFilter} onpick={(k) => filter({ state: k })} />
+        {#if showChanged}<Seg label="Changes" options={changedSeg(allCases.filter((c) => fileOf.has(c.file)).length)} value={onlyChanged ? "changed" : "all"} onpick={pickChanged} />{/if}
+        <select aria-label="module" value={route.module ?? ""} onchange={(e) => filter({ module: e.currentTarget.value || undefined })}>
+          <option value="">all modules</option>
+          {#each modules?.modules ?? [] as m}<option value={m.path}>{m.path}</option>{/each}
+        </select>
+      </Filters>
       {#if testRequirement}
         <a href={u({ ...route, requirementId: undefined })} aria-label="Clear requirement filter {testRequirement}">{testRequirement} ×</a>
       {/if}
@@ -983,13 +1043,16 @@ irm https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.ps1 | 
     {:else if view === null}<p class="muted empty">Not checked: this is not a git work tree, it has no commits yet, or git is not available.</p>
     {:else if !view.files.length}<p class="muted empty">{view.commit ? "This commit changed no scanned file." : `Nothing ${scope.staged ? "staged" : "changed"} against ${view.reference}.`}{#if !scope.show_all} Lockfiles, CI and build files are not scanned: <a href={u({ ...route, all: "1" })}>show unscanned files</a>.{/if}</p>
     {:else}
-      {@const direct = view.requirements.filter(isDirect)}
-      {@const indirect = view.requirements.filter((r: any) => !isDirect(r))}
+      {@const direct = shown.filter(isDirect)}
+      {@const indirect = shown.filter((r) => !isDirect(r))}
       {#snippet reqTable(rows: any[])}
-        <DataTable {rows} columns={reqCols} cell={reqCell} rowKey={(r) => r.id} onselect={(id, how) => how === "click" && id && known.has(id) && navigate(req(id))} value={reqVal} tone={(r: any) => (r.deleted ? "bad" : edgeTone(r.state))} pale={(r) => isReviewed(r.id)} keys={false} />
+        <DataTable {rows} columns={reqCols} cell={reqCell} rowKey={(r) => r.id} onselect={(id, how) => how === "click" && id && known.has(id) && navigate(req(id))} value={reqVal} tone={(r: any) => (r.deleted ? "red" : edgeTone(r.state))} keys={false} />
       {/snippet}
       <Section id="changes-requirements" title={`Requirements that may be affected${at}`} count={direct.length} tone={direct.length ? "accent" : undefined}>
-        {#if !direct.length}<p class="muted">No requirement's bullet, tagged test or cited code differs from {view.commit ? "its parent" : view.reference}.</p>
+        {#if reqFilterRows.length || filtering}{@render requirementToolbar()}{/if}
+        {#if filtering && !shown.length}<p class="muted">No affected requirement matches the filters.</p>
+        {:else if !direct.length && !filtering}<p class="muted">No requirement's bullet, tagged test or cited code differs from {view.commit ? "its parent" : view.reference}.</p>
+        {:else if !direct.length}<p class="muted">No directly affected requirement matches the filters.</p>
         {:else}{@render reqTable(direct)}{/if}
         {#if indirect.length}<details class="indirect"><summary class="muted">{indirect.length} more reached only through tests that run the changed code (not edited themselves)</summary>{@render reqTable(indirect)}</details>{/if}
         <p class="muted note">A changed file may affect a requirement; it does not say the requirement is done or its test passes. Evidence, not truth.</p>
@@ -1067,45 +1130,53 @@ irm https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.ps1 | 
 
 <style>
   .commits { max-height: 13rem; overflow: auto; }
-  tr.sel { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+  tr.sel { background: var(--tint-sel); }
   /* layout */
   header { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: var(--gap); padding: 10px var(--gutter); background: color-mix(in srgb, var(--bg) 92%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
   header > :not(.root):not(nav) { flex-shrink: 0; }
   .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--tone, var(--muted)); margin-left: -4px; }
-  h1 { margin: 0; font-size: 18px; letter-spacing: -0.01em; }
+  h1 { margin: 0; font-size: var(--text-section); font-weight: var(--weight-bold); letter-spacing: -0.01em; }
   nav { margin-left: auto; display: flex; gap: 6px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
   nav a { flex-shrink: 0; white-space: nowrap; }
   main { padding: var(--gutter); max-width: 100%; overflow-x: clip; }
-  footer { padding: 24px 16px; text-align: center; font-size: var(--text-xs); }
+  footer { padding: 24px 16px; text-align: center; font-size: var(--text-sm); }
   .grow { flex: 1; }
   .error { margin: 12px var(--gutter); padding: 10px 14px; border: 1px solid var(--bad); background: color-mix(in srgb, var(--bad) 10%, var(--card)); color: var(--bad); border-radius: var(--radius); }
   .banner { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0; padding: 8px var(--gutter); background: color-mix(in srgb, var(--warn) 13%, var(--bg)); border-bottom: 1px solid color-mix(in srgb, var(--warn) 35%, var(--line)); font-size: var(--text-sm); }
   button:disabled { opacity: 0.5; cursor: default; }
 
   /* header controls */
-  a.tab { color: var(--fg); background: var(--raised); text-decoration: none; border-radius: var(--radius); padding: 5px 12px; text-transform: capitalize; }
+  a.tab { color: var(--fg); background: var(--raised); text-decoration: none; border-radius: var(--radius); padding: 5px 12px; font-size: var(--text-label); text-transform: capitalize; }
   a.tab:hover { background: var(--tint-btn); color: var(--accent); }
-  a.tab.on { background: var(--tint-on); color: var(--accent); font-weight: 600; }
+  a.tab.on { background: var(--tint-on); color: var(--accent); font-weight: var(--weight-semibold); }
   h1 a, a.root { color: inherit; text-decoration: none; }
   a.root { color: var(--muted); max-width: 32ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
-  .badge { display: inline-block; min-width: 18px; margin-left: 6px; padding: 0 5px; border-radius: 2px; font-size: 11px; font-weight: 700; line-height: 18px; text-align: center; color: var(--card); background: var(--tone); }
+  .badge { display: inline-block; min-width: 18px; margin-left: 6px; padding: 0 5px; border-radius: 2px; font-size: var(--text-sm); font-weight: var(--weight-semibold); line-height: 1.3; text-align: center; color: var(--card); background: var(--tone); }
   a.tab.on .badge { outline: 1px solid var(--raised); }
   .icon { padding: 5px 9px; line-height: 1.2; }
   .diffrow > td { max-width: 0; }
   .hidediff { position: sticky; top: 0; float: right; z-index: 1; }
   a.tab.icon .badge { margin-left: 3px; }
-  .lbl { margin-left: 7px; }
-  /* narrow: icons only, except the current tab keeps its name */
-  @media (max-width: 1350px) { a.tab .lbl { display: none; } a.tab.on .lbl { display: inline; } a.tab { padding: 5px 9px; } }
-
+  .more-views { position: relative; }
+  .more-views select { width: 5rem; appearance: none; padding: 5px 24px 5px 10px; font-size: var(--text-label); cursor: pointer; }
+  .more-views .chevron { position: absolute; right: 11px; top: calc(50% - .3rem); pointer-events: none; color: var(--muted); }
+  .chevron { display: inline-block; width: .45rem; height: .45rem; border: solid currentColor; border-width: 0 1.5px 1.5px 0; transform: rotate(45deg); }
+  @media (max-width: 90rem) { a.root { flex: 0 1 auto; min-width: 0; } nav { flex-shrink: 0; } }
+  @media (max-width: 48rem) {
+    header { flex-wrap: wrap; gap: 4px; padding: 6px 8px; }
+    a.root { display: none; }
+    nav { flex-wrap: wrap; }
+    a.tab, .icon { padding: 4px 6px; }
+  }
 
   /* report */
   .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; box-shadow: var(--shadow); }
   .hero { margin-bottom: 14px; }
   .pct { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
-  .pct b { font-size: 34px; line-height: 1.1; letter-spacing: -0.02em; }
+  .pct b { font-size: var(--text-metric); font-weight: var(--weight-bold); line-height: 1.1; letter-spacing: -0.02em; }
+  .metric-count { font-size: var(--text-sm); }
   .meter { height: 8px; margin: 10px 0 8px; border-radius: 4px; background: var(--raised); overflow: hidden; }
-  .meter i { display: block; height: 100%; background: var(--ok); border-radius: 4px; }
+  .meter i { display: block; height: 100%; background: var(--accent); border-radius: 4px; }
   .facts { margin: 0; font-size: var(--text-sm); }
   tr.hidden-row { opacity: 0.6; }
   button.ignore { padding: 1px 8px; font-size: var(--text-sm); }
@@ -1113,8 +1184,9 @@ irm https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.ps1 | 
   b[data-tone] { color: var(--tone); }
   .ids { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 0; }
 
-  h4, h3.file { margin: 12px 0 4px; font-size: var(--text-sm); }
-  h2 { margin: 18px 0 6px; font-size: 16px; }
+  h3.file, .preview-section { margin: 14px 0 4px; font-size: var(--text-body); }
+  h2 { margin: 18px 0 6px; font-size: var(--text-section); }
+  h2.mono { font-size: var(--text-title); }
   details.plain { margin: 12px 0 0; padding: 6px 10px; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); }
   a.more { font-size: var(--text-sm); font-weight: 400; margin-left: 8px; }
   select { font: inherit; }
@@ -1126,38 +1198,44 @@ irm https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.ps1 | 
   .bar input[type=checkbox] { padding: 0; margin: 0; }
   .bar label { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; cursor: pointer; }
 
-  .found { font-size: var(--text-sm); }
-  .found a { margin-left: 6px; }
+  .req-toolbar { flex-wrap: nowrap; gap: 8px; }
+  .req-toolbar input:not([type=checkbox]) { min-width: 0; }
+  .req-toolbar .found:empty { display: none; }
+  .filter-toggle { display: inline-flex; align-items: center; gap: 8px; padding-inline: 8px; white-space: nowrap; }
+  .filter-toggle .chevron { margin-top: -.2rem; }
+  .filter-toggle[aria-expanded=true] .chevron { transform: rotate(225deg); margin-top: .2rem; }
+  .req-toolbar :is(.found, .clear-filters, .filter-toggle) { font-size: var(--text-sm); }
+  .req-options:not([hidden]) { display: flex; flex-wrap: wrap; gap: var(--gap); margin-bottom: 14px; }
+  @media (max-width: 48rem) { .req-options { --segment-padding-inline: 8px; } }
   /* list and preview are panes that scroll on their own: side by side (wide screens, default) or stacked (.h, and always on narrow screens) */
   aside.stale { opacity: .55; }
   .refs a, li a { text-decoration: none; }
   .refs a:hover, li a:hover { text-decoration: underline; }
   .page { display: flex; flex-direction: column; height: calc(100dvh - 100px); min-height: 440px; }
-  .notes { margin-top: 3px; line-height: 1.7; }
+  .notes { margin-top: 3px; font-size: var(--text-sm); line-height: 1.6; }
   .txt { display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   /* a trace panel outside a split (overlap) is a floating card; inside one, Split draws the card */
   aside.float { position: sticky; top: 64px; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 16px 14px; overflow: auto; max-height: calc(100vh - 80px); box-shadow: var(--shadow); }
   table.snip { margin-top: 4px; }
-  aside h4 { margin: 14px 0 4px; font-size: var(--text-sm); }
   .refs { margin: 0; padding-left: 16px; font-size: var(--text-sm); }
-  .note { font-size: var(--text-xs); margin: 10px 0 0; }
+  .note { font-size: var(--text-sm); margin: 10px 0 0; }
   details.indirect { margin-top: 10px; }
-  details.indirect summary { cursor: pointer; font-size: var(--text-xs); }
+  details.indirect summary { cursor: pointer; font-size: var(--text-sm); }
   pre { margin: 0; white-space: pre-wrap; word-break: break-word; }
 
   /* specs, code, setup */
   .crumb { margin: 0 0 8px; }
-  table.code { display: block; max-width: 100%; overflow-x: auto; font-family: var(--mono); font-size: 13.5px; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); }
+  table.code { display: block; max-width: 100%; overflow-x: auto; font-family: var(--mono); font-size: var(--text-sm); background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); }
   table.code td { border: none; padding: 0 10px; white-space: pre; }
   td.ln { text-align: right; width: 1%; user-select: none; }
   td.ln a { color: var(--muted); }
   tr.hl { background: color-mix(in srgb, var(--warn) 22%, transparent); }
   .rv { margin: 0 6px 0 0; vertical-align: middle; }
   span.rv { display: inline-block; width: 13px; text-align: center; }
-  td.src { overflow-x: auto; }
+  td.src { overflow-x: auto; font-size: var(--text-label); }
   table.code.wrap td.src { white-space: pre-wrap; overflow-wrap: anywhere; }
   .crumb { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-  .crumb .small { font-size: var(--text-xs); padding: 2px 8px; }
+  .crumb .small { font-size: var(--text-sm); padding: 2px 8px; }
   a.btn { background: var(--raised); color: var(--fg); border-radius: var(--radius); text-decoration: none; }
   a.btn:hover { background: var(--tint-btn); color: var(--accent); }
   /* highlight.js token colours (the markup comes from {@html}, hence :global) */
@@ -1169,10 +1247,19 @@ irm https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.ps1 | 
   :global(.hljs-type, .hljs-class .hljs-title) { color: light-dark(#0b7a75, #5eead4); }
   :global(.hljs-deletion) { color: var(--bad); }
   .block { margin-bottom: 10px; }
-  .setup h3 { margin: 0 0 6px; font-size: 15px; }
-  .setup p { margin: 6px 0; }
-  .setup-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--gap); }
-  .setup-value { overflow-wrap: anywhere; }
-  .setup p.setup-config { margin-top: var(--gap); padding-top: var(--gap); border-top: 1px solid var(--line); }
-  .log { margin-top: 12px; padding: 10px 14px; background: var(--raised); border-radius: var(--radius); font-family: var(--mono); font-size: 12.5px; }
+  .setup-page { display: grid; gap: var(--gap); max-width: 64rem; margin-inline: auto; }
+  .setup { min-width: 0; overflow-wrap: anywhere; }
+  .setup-head, .actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--gap); }
+  .setup-head h2 { margin: 0; }
+  .setup button { font-size: var(--text-label); }
+  .setup strong { font-weight: var(--weight-semibold); }
+  .setup-head .end { margin-inline-start: auto; }
+  .setup p, .setup details { margin: 6px 0; }
+  .setup summary { cursor: pointer; }
+  .setup-item, .check-row { display: grid; align-items: baseline; gap: var(--gap); padding-block: 8px; border-top: 1px solid var(--line); }
+  .setup-item { grid-template-columns: minmax(0, 1fr) auto; margin-top: 4px; }
+  .setup-item code, .transport-note, .check-row .muted { color: var(--muted); font-size: var(--text-sm); }
+  .check-row { grid-template-columns: auto minmax(0, 1fr); }
+  .setup .log { overflow-x: auto; }
+  .log { margin-top: 12px; padding: 10px 14px; background: var(--raised); border-radius: var(--radius); font-family: var(--mono); font-size: var(--text-sm); }
 </style>
