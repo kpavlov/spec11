@@ -3,6 +3,20 @@ on:
   # push:
     # branches: [main]
   pull_request:
+    # code, specs (the dogfood scan reads them) and build inputs only; not docs, README, Formula, bench
+    paths:
+      - core/**
+      - server/**
+      - web/**
+      - skills/**
+      - specs/**
+      - docs/static/tokens.css # symlinked into web/src
+      - Cargo.toml
+      - Cargo.lock
+      - Makefile
+      - spec17.json
+      - .spec17ignore
+      - .github/workflows/ci.yml
   workflow_dispatch:
 permissions:
   contents: read
@@ -11,7 +25,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: 
+        os:
           - ubuntu-latest
           ## - macos-latest
     runs-on: ${{ matrix.os }}
