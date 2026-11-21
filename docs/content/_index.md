@@ -22,6 +22,6 @@ Follow the [Quickstart](quickstart/) to scan a project, open the dashboard, or t
 
 The [CodeGraph index](usage/#codegraph) helps spec17 find related code. You can scan requirements and find tagged tests without it.
 
-![spec17 dashboard showing requirements, tagged test coverage, and recent changes](img/dashboard.png)
+![spec17 dashboard with test coverage, changes and the problems found](img/dashboard.png)
 
 See [Usage](usage/) for commands and dashboard options, [Specs and tests](specs/) for supported formats, and [Agents](agents/) to connect an AI coding assistant.

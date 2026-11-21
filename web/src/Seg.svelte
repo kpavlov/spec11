@@ -27,7 +27,7 @@
 <style>
   .seg { display: inline-flex; flex-wrap: wrap; align-items: center; row-gap: 4px; }
   .name { color: var(--muted); font-size: var(--text-sm); margin-right: 8px; }
-  button { min-height: 28px; padding: 2px var(--segment-padding-inline, 10px); font-size: var(--text-sm); border-radius: 0; border: 1px solid var(--line); margin-left: -1px; white-space: nowrap; background: var(--card); }
+  button { min-height: 28px; padding: 2px var(--segment-padding-inline, 10px); font-size: var(--text-sm); border-radius: 0; border: 1px solid var(--line-strong); margin-left: -1px; white-space: nowrap; background: var(--card); }
   .name + button { border-radius: var(--radius) 0 0 var(--radius); margin-left: 0; }
   button:last-child { border-radius: 0 var(--radius) var(--radius) 0; }
   /* the dot keeps its colour when the segment is selected */

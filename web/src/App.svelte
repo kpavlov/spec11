@@ -1256,11 +1256,11 @@ irm https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.ps1 | 
   a.btn:hover { background: var(--tint-btn); color: var(--accent); }
   /* highlight.js token colours (the markup comes from {@html}, hence :global) */
   :global(.hljs-comment, .hljs-quote) { color: var(--muted); font-style: italic; }
-  :global(.hljs-keyword, .hljs-selector-tag, .hljs-literal, .hljs-built_in, .hljs-doctag) { color: light-dark(#8a2be2, #c9a7ff); }
+  :global(.hljs-keyword, .hljs-selector-tag, .hljs-literal, .hljs-built_in, .hljs-doctag) { color: var(--accent); }
   :global(.hljs-string, .hljs-regexp, .hljs-addition) { color: var(--ok); }
   :global(.hljs-number, .hljs-symbol, .hljs-bullet, .hljs-meta) { color: var(--warn); }
-  :global(.hljs-title, .hljs-section, .hljs-attr, .hljs-attribute) { color: light-dark(#0b5cad, #7cb7ff); }
-  :global(.hljs-type, .hljs-class .hljs-title) { color: light-dark(#0b7a75, #5eead4); }
+  :global(.hljs-title, .hljs-section, .hljs-attr, .hljs-attribute) { color: var(--info); }
+  :global(.hljs-type, .hljs-class .hljs-title) { color: var(--accent-2); }
   :global(.hljs-deletion) { color: var(--bad); }
   .block { margin-bottom: 10px; }
   .setup-page { display: grid; gap: var(--gap); max-width: 64rem; margin-inline: auto; }

@@ -11,14 +11,26 @@
   --line: light-dark(#dde1e8, #495463);
   --accent: light-dark(#6d3bd2, #b69cff);
   --ok: light-dark(#13693d, #4ade80);
-  --warn: light-dark(#80491e, #debb92);
-  --bad: light-dark(#903e45, #e3acb1);
+  --line-strong: light-dark(#838da0, #7b8696); /* control borders: >= 3:1 (WCAG 1.4.11) */
+  --warn: light-dark(#8a5a00, #f0c674);
+  --bad: light-dark(#a3262e, #ff9a9a);
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --radius: 4px;
-  --accent-2: light-dark(#188477, #5fd0bf); /* teal: code, subheadings */
-  --accent-3: light-dark(#b76d24, #f0b070); /* amber: quotes, anchors */
+  --accent-2: light-dark(#0e6f65, #5fd0bf); /* teal: code, subheadings */
+  --accent-3: light-dark(#8f5314, #f0b070); /* amber: quotes, anchors */
   --info: light-dark(#355676, #acc5dd);
   --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+  /* fixed two-tone ramp (same in light and dark, so a requirement keeps its meaning on every surface): tone, pill ink, pill fill */
+  --plum: #a84289; --plum-ink: #732253; --plum-fill: #f0bee0;
+  --blue: #347ac1; --blue-ink: #194879; --blue-fill: #b8d8f7;
+  --celery: #658522; --celery-ink: #3c5714; --celery-fill: #d3e8a2;
+  --cyan: #2185a6; --cyan-ink: #154e65; --cyan-fill: #aee0ef;
+  --teal: #188477; --teal-ink: #104f47; --teal-fill: #a4e0ce;
+  --orange: #b76d24; --orange-ink: #6e390e; --orange-fill: #f6d0a1;
+  --red: #bc5158; --red-ink: #772d36; --red-fill: #f3bec3;
+  --indigo: #7864ac; --indigo-ink: #4b397c; --indigo-fill: #d5c8ef;
+  --brown: #966c45; --brown-ink: #573a21; --brown-fill: #e6cdae;
+  --shadow: 0 6px 20px rgb(0 0 0 / .15);
   /* accent tints: hover/selected rows, group headers, button hover, the current tab, a chosen segment, an id chip on hover */
   --tint-hover: color-mix(in srgb, var(--accent) 9%, transparent);
   --tint-group: color-mix(in srgb, var(--accent) 5%, transparent);
