@@ -27,13 +27,13 @@ spec17 report --json --root ../other # JSON for another repo
 
 `spec17` with no command is `spec17 serve`: it starts the server on `127.0.0.1:7411` for the repo in the current directory (or `--root`) and opens the dashboard. The server options belong to `serve`: `spec17 serve --port N` changes the port, `--no-open` skips the browser, and `--ui-port N` serves the dashboard on its own port while `--port` keeps only `/mcp`. The server binds to localhost only and rejects unknown `Host` and `Origin` values.
 
-The URL is the view, so back/forward, reload and shared links work: `/changes`, `/modules`, `/tests`, `/requirements/ID`, `/specs`, `/code`, `/overlap`, `/uncovered`, `/setup`.
+The URL is the view, so back/forward, reload and shared links work: `/changes`, `/modules`, `/tests`, `/requirements/ID`, `/requirements?view=docs`, `/code`, `/overlap`, `/uncovered`, `/settings`.
 
 ![Requirements view: API-02 selected, with its tagged test, code citation and a diff of its edited text](../img/requirements.png)
 
 ## CodeGraph
 
-An optional [CodeGraph](https://github.com/colbymchenry/codegraph) index (`.codegraph/codegraph.db`, opened read-only) adds test-to-code links, overlap and uncovered-code analysis. Without it `report` and the dashboard say "not checked" or "not available", and everything else works. The commands and tools that need the index (`spec17 overlap`, `uncovered`, `status --overlap`, `status --uncovered`, and the matching MCP tools) fail with "no .codegraph index here" instead: the CLI exits 1, the tools return an error. `spec17 doctor --fix` or the dashboard's Setup tab can create or refresh it, only when you ask.
+An optional [CodeGraph](https://github.com/colbymchenry/codegraph) index (`.codegraph/codegraph.db`, opened read-only) adds test-to-code links, overlap and uncovered-code analysis. Without it `report` and the dashboard say "not checked" or "not available", and everything else works. The commands and tools that need the index (`spec17 overlap`, `uncovered`, `status --overlap`, `status --uncovered`, and the matching MCP tools) fail with "no .codegraph index here" instead: the CLI exits 1, the tools return an error. `spec17 doctor --fix` or the dashboard's Settings tab can create or refresh it, only when you ask.
 
 ## Build from source
 

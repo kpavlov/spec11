@@ -2,11 +2,16 @@
   import { render } from "$lib/markdown";
   import { levelPills } from "$lib/requirements/levelPills";
 
-  let { source }: { source: string } = $props();
+  // `mark` tones each requirement ID link (a status dot), e.g. in a spec document
+  let { source, mark }: { source: string; mark?: (id: string) => string | undefined } = $props();
   const html = $derived(render(source));
+  const tones = (el: HTMLElement) => {
+    void html;
+    if (mark) for (const a of el.querySelectorAll<HTMLElement>("a[data-id]")) { const t = mark(a.dataset.id!); if (t) a.dataset.tone = t; else delete a.dataset.tone; }
+  };
 </script>
 
-<div class="md" {@attach levelPills(html)}>{@html html}</div>
+<div class="md" {@attach levelPills(html)} {@attach tones}>{@html html}</div>
 
 <style>
   .md { line-height: 1.55; overflow-wrap: anywhere; }
@@ -24,4 +29,5 @@
   .md :global(th), .md :global(td) { border: 1px solid var(--line); padding: 3px 8px; text-align: left; }
   .md :global(a) { color: var(--accent); }
   .md :global(a.id) { font-family: var(--mono); font-size: var(--text-sm); font-weight: var(--weight-semibold); white-space: nowrap; text-decoration: none; border-bottom: 1px dotted currentColor; }
+  .md :global(a.id[data-tone])::before { content: ""; display: inline-block; width: .5em; height: .5em; margin-right: .35em; border-radius: 50%; background: var(--tone); }
 </style>

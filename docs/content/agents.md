@@ -15,7 +15,7 @@ spec17 uninstall            # remove the repo skill and HTTP entry
 spec17 uninstall --global   # only the global skill; add --only mcp for the entry in ~/.mcp.json
 ```
 
-`.mcp.json` is merged, never rewritten: other servers stay and invalid JSON is left alone. The Setup tab of the dashboard installs or removes each entry separately, for this repo or globally, and can also add the stdio entry below.
+`.mcp.json` is merged, never rewritten: other servers stay and invalid JSON is left alone. The Settings tab of the dashboard installs or removes each entry separately, for this repo or globally, and can also add the stdio entry below.
 
 ## stdio or HTTP
 
@@ -48,7 +48,7 @@ stdio, so each agent session launches its own process and binds no port:
 {"mcpServers": {"spec17-stdio": {"type": "stdio", "command": "spec17", "args": ["--stdio-mcp", "--no-http-mcp", "--no-ui"]}}}
 ```
 
-Add `"--root", "/path/to/repo"` to `args` if the client starts spec17 outside the repo. The Setup tab and the `install` tool write this entry with the absolute path of the binary as `command`; a repo-scoped entry also sets `--root`, a global one does not.
+Add `"--root", "/path/to/repo"` to `args` if the client starts spec17 outside the repo. The Settings tab and the `install` tool write this entry with the absolute path of the binary as `command`; a repo-scoped entry also sets `--root`, a global one does not.
 
 ## Tools
 

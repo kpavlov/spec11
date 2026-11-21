@@ -177,7 +177,7 @@ The spec is what the user agreed to; the code is only evidence of what exists. K
 
 - **Before changing behaviour**, `trace` the requirement (or `changes` to see what is already touched) and write or edit its bullet first, then the tests, then the code with `(ID)` citations. A new requirement: draft the bullet, show it to the user, add it. A change to an existing one: show the old and the new wording and wait for the user's OK.
 - **After code or tests changed** (yours or the user's), `changes` lists the requirements the changed lines touch. For each, `trace` it and read the code. If the requirement no longer says what the code does, **do not edit it on your own**. Show the user the requirement text, what the code does now (`file:line`) and the wording you propose, and let them pick: update the requirement, or fix the code. Edit the spec only after they confirm. Never weaken MUST/SHOULD/MAY, add `(later)`, or delete a bullet to make a report green.
-- **No specs yet** (`doctor` warns "no specs found", `report` says so in a note instead of reporting success, the dashboard opens on Setup): offer to draft `specs/01-….md` from what the user tells you, show it, and write it after they confirm. Do not invent requirements from the code and write them unasked.
+- **No specs yet** (`doctor` warns "no specs found", `report` says so in a note instead of reporting success, the dashboard opens on Settings): offer to draft `specs/01-….md` from what the user tells you, show it, and write it after they confirm. Do not invent requirements from the code and write them unasked.
 
 ## Workflow
 
