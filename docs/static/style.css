@@ -8,13 +8,13 @@ header a { color: var(--muted); text-decoration: none; }
 header a:hover { color: var(--fg); }
 header .gh { display: inline-flex; align-items: center; gap: .65rem; }
 header .gh svg { fill: currentColor; }
-header button { font: inherit; color: var(--muted); background: none; border: 1px solid var(--line); border-radius: var(--radius); padding: .1rem .5rem; cursor: pointer; }
+header button { font: inherit; color: var(--muted); background: none; border: 1px solid var(--line-strong); border-radius: var(--radius); padding: .1rem .5rem; cursor: pointer; }
 header button:hover { color: var(--accent); border-color: var(--accent); }
 header .brand { color: var(--accent); font-weight: 700; }
 header .brand:hover { color: var(--accent-2); }
 .search { position: relative; flex: 1 1 100%; order: 3; }
-.search input { box-sizing: border-box; width: 100%; font: inherit; padding: .4rem .6rem; color: var(--fg); background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); }
-#results { position: absolute; z-index: 2; left: 0; right: 0; top: calc(100% + .25rem); max-height: 70vh; overflow-y: auto; margin: 0; padding: 0; list-style: none; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: 0 6px 20px rgb(0 0 0 / .15); }
+.search input { box-sizing: border-box; width: 100%; font: inherit; padding: .4rem .6rem; color: var(--fg); background: var(--card); border: 1px solid var(--line-strong); border-radius: var(--radius); }
+#results { position: absolute; z-index: 2; left: 0; right: 0; top: calc(100% + .25rem); max-height: 70vh; overflow-y: auto; margin: 0; padding: 0; list-style: none; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }
 #results li { position: relative; padding: .5rem .75rem; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
 #results li:last-child { border-bottom: 0; }
 #results a { color: var(--fg); font-weight: 600; }
@@ -44,11 +44,12 @@ pre { padding: .75rem 1rem; overflow-x: auto; }
 pre code { padding: 0; color: inherit; background: none; white-space: pre; }
 .codebox { position: relative; margin: 1em 0; }
 .codebox pre { margin: 0; }
-.copy { position: absolute; top: .4rem; right: .4rem; font: .75rem var(--sans); padding: .15rem .5rem; color: var(--muted); background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); cursor: pointer; opacity: 0; transition: opacity .15s; }
+.copy { position: absolute; top: .4rem; right: .4rem; font: .75rem var(--sans); padding: .15rem .5rem; color: var(--muted); background: var(--card); border: 1px solid var(--line-strong); border-radius: var(--radius); cursor: pointer; opacity: 0; transition: opacity .15s; }
 .codebox:hover .copy, .copy:focus-visible { opacity: 1; }
 .copy:hover { color: var(--fg); }
 @media (hover: none) { .copy { opacity: 1; } }
 td code { white-space: normal; } /* a narrow table cell wraps instead of hiding its column */
+@media (max-width: 40em) { code { white-space: normal; overflow-wrap: anywhere; } } /* a long inline command must not widen the page on a phone; pre code keeps its own rule */
 table { border-collapse: collapse; display: block; overflow-x: auto; }
 th, td { border: 1px solid var(--line); padding: .35rem .6rem; text-align: left; vertical-align: top; }
 th { background: var(--tint-sel); border-bottom: 2px solid var(--accent); }

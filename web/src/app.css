@@ -20,15 +20,15 @@
 /* a tone (see tone.ts) is the one colour pills, dots, badges, row edges and sections take */
 :where(.pill) { --pill-ink: initial; --pill-fill: initial; }
 /* Fixed two-tone requirement colors keep their meaning on every surface. */
-[data-tone="plum"] { --tone: #a84289; --pill-ink: #732253; --pill-fill: #f0bee0; }
-[data-tone="blue"] { --tone: #347ac1; --pill-ink: #194879; --pill-fill: #b8d8f7; }
-[data-tone="celery"] { --tone: #658522; --pill-ink: #3c5714; --pill-fill: #d3e8a2; }
-[data-tone="cyan"] { --tone: #2185a6; --pill-ink: #154e65; --pill-fill: #aee0ef; }
-[data-tone="teal"] { --tone: #188477; --pill-ink: #104f47; --pill-fill: #a4e0ce; }
-[data-tone="orange"] { --tone: #b76d24; --pill-ink: #6e390e; --pill-fill: #f6d0a1; }
-[data-tone="red"] { --tone: #bc5158; --pill-ink: #772d36; --pill-fill: #f3bec3; }
-[data-tone="indigo"] { --tone: #7864ac; --pill-ink: #4b397c; --pill-fill: #d5c8ef; }
-[data-tone="brown"] { --tone: #966c45; --pill-ink: #573a21; --pill-fill: #e6cdae; }
+[data-tone="plum"] { --tone: var(--plum); --pill-ink: var(--plum-ink); --pill-fill: var(--plum-fill); }
+[data-tone="blue"] { --tone: var(--blue); --pill-ink: var(--blue-ink); --pill-fill: var(--blue-fill); }
+[data-tone="celery"] { --tone: var(--celery); --pill-ink: var(--celery-ink); --pill-fill: var(--celery-fill); }
+[data-tone="cyan"] { --tone: var(--cyan); --pill-ink: var(--cyan-ink); --pill-fill: var(--cyan-fill); }
+[data-tone="teal"] { --tone: var(--teal); --pill-ink: var(--teal-ink); --pill-fill: var(--teal-fill); }
+[data-tone="orange"] { --tone: var(--orange); --pill-ink: var(--orange-ink); --pill-fill: var(--orange-fill); }
+[data-tone="red"] { --tone: var(--red); --pill-ink: var(--red-ink); --pill-fill: var(--red-fill); }
+[data-tone="indigo"] { --tone: var(--indigo); --pill-ink: var(--indigo-ink); --pill-fill: var(--indigo-fill); }
+[data-tone="brown"] { --tone: var(--brown); --pill-ink: var(--brown-ink); --pill-fill: var(--brown-fill); }
 [data-tone="info"] { --tone: var(--info); }
 [data-tone="ok"] { --tone: var(--ok); }
 [data-tone="warn"] { --tone: var(--warn); }
@@ -46,7 +46,7 @@ button { font: inherit; color: var(--fg); background: var(--raised); border: 1px
 button:hover:not(:disabled) { background: var(--tint-btn); color: var(--accent); }
 button.primary, button.on { background: var(--accent); color: var(--card); font-weight: var(--weight-semibold); }
 button.primary:hover:not(:disabled), button.on:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 85%, var(--fg)); color: var(--card); }
-input, select { font: inherit; color: inherit; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 6px 10px; }
+input, select { font: inherit; color: inherit; background: var(--card); border: 1px solid var(--line-strong); border-radius: var(--radius); padding: 6px 10px; }
 input::placeholder { color: var(--muted); }
 input:focus-visible, select:focus-visible, button:focus-visible, a:focus-visible, summary:focus-visible, tr:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 ::selection { background: color-mix(in srgb, var(--accent) 30%, transparent); }

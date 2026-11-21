@@ -2,14 +2,22 @@
   <title id="title">How you, an AI agent, spec17, and CodeGraph connect</title>
   <desc id="desc">You can use spec17 directly through the dashboard or terminal, or ask an AI agent that queries spec17 through MCP. spec17 reads project files and can read an optional CodeGraph index.</desc>
   <style>
-    :root { color-scheme: light dark; }
-    .background { fill: light-dark(#ffffff, #181922); }
-    .node { fill: light-dark(#f5f3ff, #28233b); stroke: light-dark(#6d3bd2, #b69cff); }
-    .input { fill: light-dark(#f1f7f6, #1e302e); stroke: light-dark(#287369, #76cbbd); }
-    .label { fill: light-dark(#434050, #dfdbea); font: 16px system-ui, sans-serif; }
-    .name { fill: light-dark(#191622, #f5f2fc); font: 600 21px system-ui, sans-serif; }
-    .arrow { fill: none; stroke: light-dark(#625879, #b9a9d5); stroke-width: 2; marker-end: url(#arrow); }
-    .tip { fill: light-dark(#625879, #b9a9d5); }
+    /* Self-contained: an image cannot read the page's CSS, so these are copies of the docs/static/tokens.css values (same names). Change the palette there, then here. */
+    :root {
+      color-scheme: light dark;
+      --card: light-dark(#ffffff, #2a303a);
+      --fg: light-dark(#1a1d23, #e9ebef);
+      --muted: light-dark(#596273, #b3bdcb);
+      --accent: light-dark(#6d3bd2, #b69cff);
+      --accent-2: light-dark(#0e6f65, #5fd0bf);
+    }
+    .background { fill: var(--card); }
+    .node { fill: color-mix(in srgb, var(--accent) 10%, var(--card)); stroke: var(--accent); }
+    .input { fill: color-mix(in srgb, var(--accent-2) 10%, var(--card)); stroke: var(--accent-2); }
+    .label { fill: var(--muted); font: 16px system-ui, sans-serif; }
+    .name { fill: var(--fg); font: 600 21px system-ui, sans-serif; }
+    .arrow { fill: none; stroke: var(--muted); stroke-width: 2; marker-end: url(#arrow); }
+    .tip { fill: var(--muted); }
   </style>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto">

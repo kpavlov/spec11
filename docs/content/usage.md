@@ -29,7 +29,7 @@ spec17 report --json --root ../other # JSON for another repo
 
 The URL is the view, so back/forward, reload and shared links work: `/changes`, `/modules`, `/tests`, `/requirements/ID`, `/specs`, `/code`, `/overlap`, `/uncovered`, `/setup`.
 
-![Requirements view: API-02 selected, with its tagged test, code citation and who last changed it](../img/requirements.png)
+![Requirements view: API-02 selected, with its tagged test, code citation and a diff of its edited text](../img/requirements.png)
 
 ## CodeGraph
 

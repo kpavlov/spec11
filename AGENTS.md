@@ -8,8 +8,8 @@ spec17: Rust workspace (`core`, `server`) + Svelte dashboard (`web`) + the agent
 - `make parity` (optional) compares with the old Python scripts if they are vendored in `ROOT/.agents/skills/spec-driven`; the scripts are no longer in this repo.
 - `cd web && pnpm run build && pnpm run check`
 - `make dev` / `make run`; override `ROOT`, `PORT`, `OPEN=0`
-- Colours, fonts and radius are shared: `docs/static/tokens.css` is the one copy (`light-dark()` pairs, `data-theme` override); `web/src/tokens.css` is a symlink to it (Hugo drops a static symlink that points outside `docs/`, so the real file lives there). Change the palette there, not in `web/src/app.css` or `docs/static/style.css`.
-- Docs screenshots: reference `img/name.png` in markdown; if `static/img/name-light.png` and `name-dark.png` both exist, `docs/layouts/_markup/render-image.html` emits both and `style.css` shows the one for the theme, else the file as written.
+- Colours, fonts and radius are shared: `docs/static/tokens.css` is the one copy (`light-dark()` pairs, `data-theme` override; tone ramp and shadow too; `docs/static/syntax.css` maps code colours onto them); `web/src/tokens.css` is a symlink to it (Hugo drops a static symlink that points outside `docs/`, so the real file lives there). Change the palette there, not in `web/src/app.css` or `docs/static/style.css`.
+- Docs screenshots: `make screenshots` (`scripts/screenshots.mjs`, needs Chrome) breaks `specs/02-server.md`, `server/src/main.rs` and `server/src/ops.rs` on purpose, captures every `docs/static/img/*.png` through headless Chrome, then `git checkout`s those files (it refuses to run if they have uncommitted changes); update its `breakThings` if those anchors move. Reference `img/name.png` in markdown; if `static/img/name-light.png` and `name-dark.png` both exist, `docs/layouts/_markup/render-image.html` emits both and `style.css` shows the one for the theme, else the file as written.
 - `make docs` builds the Hugo site (`docs/`, no theme, `layouts/all.html`) into `docs/public`; `.github/workflows/pages.yml` deploys it. Doc pages follow the same rules: evidence, not truth.
 
 ## Rules

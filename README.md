@@ -12,7 +12,7 @@ One Rust binary gives three interfaces over the same core: a CLI, an MCP server 
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/static/img/dashboard-dark.png">
-  <img alt="spec17 dashboard: 98% of due requirements have a tagged test, one changed spec, one requirement with no test or code" src="docs/static/img/dashboard-light.png">
+  <img alt="spec17 dashboard: 97% of due requirements have a tagged test, with unimplemented, unproven, invalid-test, spec-issue and dangling-citation problems listed" src="docs/static/img/dashboard-light.png">
 </picture>
 
 ## Quickstart
@@ -37,7 +37,10 @@ spec17
 
 To connect an agent, run `spec17 install` (repo skill + HTTP entry in `.mcp.json`) and keep `spec17` running.
 
-![Changes view: requirements a working-tree edit may affect, with spec edited and spec added badges](docs/static/img/changes.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/static/img/changes-dark.png">
+  <img alt="Changes view: requirements a working-tree edit may affect, with spec edited, spec added and src changed badges" src="docs/static/img/changes-light.png">
+</picture>
 
 ## Documentation
 

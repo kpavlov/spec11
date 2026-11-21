@@ -42,7 +42,7 @@ The dashboard opens at `http://127.0.0.1:7411/`. Select a requirement in **Requi
 
 The dashboard has no login and other users on the same computer can access it. On a shared computer, use `spec17 report` or follow the [stdio setup](../agents/#stdio-or-http) for an AI coding assistant.
 
-![Requirements view showing the tagged test and code reference for API-02](../img/requirements.png)
+![Requirements view showing the tagged test and code citation for API-02](../img/requirements.png)
 
 ## 4. Connect an AI coding assistant
 
