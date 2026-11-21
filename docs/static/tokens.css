@@ -1,0 +1,32 @@
+/* Design tokens shared by the dashboard and the docs site: web/src/tokens.css is a symlink to this file (Hugo does not copy a static symlink that points outside docs/, so the real file lives here).
+   Theme: `auto` follows the OS; data-theme="light|dark" on <html> forces one. Every colour is a light-dark() pair. */
+:root {
+  color-scheme: light dark;
+  --bg: light-dark(#f5f6f8, #232830);
+  --card: light-dark(#ffffff, #2a303a);
+  --tooltip-bg: light-dark(#efede7, #403e39);
+  --raised: light-dark(#eef0f4, #343c48);
+  --fg: light-dark(#1a1d23, #e9ebef);
+  --muted: light-dark(#596273, #b3bdcb);
+  --line: light-dark(#dde1e8, #495463);
+  --accent: light-dark(#6d3bd2, #b69cff);
+  --ok: light-dark(#13693d, #4ade80);
+  --warn: light-dark(#80491e, #debb92);
+  --bad: light-dark(#903e45, #e3acb1);
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --radius: 4px;
+  --accent-2: light-dark(#188477, #5fd0bf); /* teal: code, subheadings */
+  --accent-3: light-dark(#b76d24, #f0b070); /* amber: quotes, anchors */
+  --info: light-dark(#355676, #acc5dd);
+  --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+  /* accent tints: hover/selected rows, group headers, button hover, the current tab, a chosen segment, an id chip on hover */
+  --tint-hover: color-mix(in srgb, var(--accent) 9%, transparent);
+  --tint-group: color-mix(in srgb, var(--accent) 5%, transparent);
+  --tint-btn: color-mix(in srgb, var(--accent) 16%, var(--raised));
+  --tint-on: color-mix(in srgb, var(--accent) 26%, var(--raised));
+  --tint-sel: color-mix(in srgb, var(--accent) 18%, var(--card));
+  --tint-sel-hover: color-mix(in srgb, var(--accent) 24%, var(--card));
+  --tint-id: color-mix(in srgb, var(--accent) 10%, var(--card));
+}
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"] { color-scheme: dark; }

@@ -1,46 +1,66 @@
-:root { color-scheme: light; --fg: #1d2023; --bg: #fff; --muted: #5d6670; --line: #d9dde2; --code: #f2f4f6; --link: #0b5fd4; }
-body { margin: 0; font: 16px/1.6 system-ui, sans-serif; color: var(--fg); background: var(--bg); }
-a { color: var(--link); }
+/* colours, fonts and radius come from tokens.css (shared with the dashboard) */
+body { margin: 0; font: 17px/1.6 var(--sans); color: var(--fg); background: var(--bg); }
+a { color: var(--accent); }
+a:hover { color: var(--accent-2); }
 
-header { display: flex; flex-wrap: wrap; gap: .5rem 1rem; align-items: center; padding: .6rem 1rem; border-bottom: 1px solid var(--line); background: var(--bg); }
+header { border-top: 3px solid var(--accent); display: flex; flex-wrap: wrap; gap: .5rem 1rem; align-items: center; padding: .6rem 1rem; border-bottom: 1px solid var(--line); background: var(--card); }
 header a { color: var(--muted); text-decoration: none; }
 header a:hover { color: var(--fg); }
 header .gh { display: inline-flex; align-items: center; gap: .65rem; }
 header .gh svg { fill: currentColor; }
-header button { font: inherit; color: var(--muted); background: none; border: 1px solid var(--line); border-radius: 6px; padding: .1rem .5rem; cursor: pointer; }
-header button:hover { color: var(--fg); }
-header .brand { color: var(--fg); font-weight: 700; }
+header button { font: inherit; color: var(--muted); background: none; border: 1px solid var(--line); border-radius: var(--radius); padding: .1rem .5rem; cursor: pointer; }
+header button:hover { color: var(--accent); border-color: var(--accent); }
+header .brand { color: var(--accent); font-weight: 700; }
+header .brand:hover { color: var(--accent-2); }
 .search { position: relative; flex: 1 1 100%; order: 3; }
-.search input { box-sizing: border-box; width: 100%; font: inherit; padding: .4rem .6rem; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; }
-#results { position: absolute; z-index: 2; left: 0; right: 0; top: calc(100% + .25rem); max-height: 70vh; overflow-y: auto; margin: 0; padding: 0; list-style: none; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 6px 20px rgb(0 0 0 / .15); }
+.search input { box-sizing: border-box; width: 100%; font: inherit; padding: .4rem .6rem; color: var(--fg); background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); }
+#results { position: absolute; z-index: 2; left: 0; right: 0; top: calc(100% + .25rem); max-height: 70vh; overflow-y: auto; margin: 0; padding: 0; list-style: none; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: 0 6px 20px rgb(0 0 0 / .15); }
 #results li { position: relative; padding: .5rem .75rem; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
 #results li:last-child { border-bottom: 0; }
 #results a { color: var(--fg); font-weight: 600; }
 #results a::after { content: ''; position: absolute; inset: 0; }
-#results li:hover, #results li.active { background: var(--line); }
+#results li:hover, #results li.active { background: var(--tint-sel); }
 #results small { display: block; color: var(--muted); }
 header .brand { margin-right: auto; }
 
 .wrap { max-width: 66rem; margin: 0 auto; padding: 0 1rem; }
 nav ul { margin: 0; list-style: none; display: flex; flex-wrap: wrap; gap: .25rem 1rem; padding: .75rem 0; border-bottom: 1px solid var(--line); }
 nav a { color: var(--muted); text-decoration: none; }
-nav a:hover, nav a[aria-current] { color: var(--fg); }
-nav a[aria-current] { font-weight: 600; }
+nav a:hover { color: var(--accent); }
+nav a[aria-current] { color: var(--accent); font-weight: 600; }
 #TableOfContents { display: none; } /* the sidebar shows it from 48rem up */
 main { min-width: 0; padding: 1rem 0 4rem; }
 h1, h2, h3 { line-height: 1.25; scroll-margin-top: 4rem; }
-.anchor { margin-left: .3em; color: var(--muted); text-decoration: none; opacity: .4; }
+h1 { padding-bottom: .3rem; border-bottom: 2px solid var(--accent); }
+h2 { padding-bottom: .2rem; border-bottom: 1px solid var(--line); }
+h3 { color: var(--accent-2); }
+.anchor { margin-left: .3em; color: var(--accent-3); text-decoration: none; opacity: .4; }
 .pager { display: flex; justify-content: space-between; gap: 1rem; margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line); }
 .pager [rel=next] { margin-left: auto; text-align: right; }
 
-code, pre { font: .9em ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--code); border-radius: 4px; }
-code { padding: .1em .3em; white-space: nowrap; } /* never split a flag or path; wide tables scroll */
+code, pre { font: .9em var(--mono); background: var(--raised); border-radius: var(--radius); }
+code { padding: .1em .3em; color: var(--accent-2); white-space: nowrap; } /* never split a flag or path; wide tables scroll */
 pre { padding: .75rem 1rem; overflow-x: auto; }
-pre code { padding: 0; background: none; white-space: pre; }
+pre code { padding: 0; color: inherit; background: none; white-space: pre; }
+.codebox { position: relative; margin: 1em 0; }
+.codebox pre { margin: 0; }
+.copy { position: absolute; top: .4rem; right: .4rem; font: .75rem var(--sans); padding: .15rem .5rem; color: var(--muted); background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); cursor: pointer; opacity: 0; transition: opacity .15s; }
+.codebox:hover .copy, .copy:focus-visible { opacity: 1; }
+.copy:hover { color: var(--fg); }
+@media (hover: none) { .copy { opacity: 1; } }
 td code { white-space: normal; } /* a narrow table cell wraps instead of hiding its column */
 table { border-collapse: collapse; display: block; overflow-x: auto; }
 th, td { border: 1px solid var(--line); padding: .35rem .6rem; text-align: left; vertical-align: top; }
-blockquote { margin: 1rem 0; padding: .1rem 1rem; border-left: 3px solid var(--line); color: var(--muted); }
+th { background: var(--tint-sel); border-bottom: 2px solid var(--accent); }
+blockquote { margin: 1rem 0; padding: .1rem 1rem; border-left: 3px solid var(--accent-3); background: var(--tint-group); color: var(--muted); }
+
+/* GitHub-style alerts (layouts/_markup/render-blockquote.html): > [!WARNING] */
+.alert { --c: var(--info); margin: 1rem 0; padding: .1rem 1rem; border-left: 4px solid var(--c); background: color-mix(in srgb, var(--c) 8%, transparent); border-radius: 0 var(--radius) var(--radius) 0; }
+.alert-title { margin: .6rem 0 0; font-weight: 700; color: var(--c); }
+.alert-warning { --c: var(--accent-3); }
+.alert-caution { --c: var(--bad); }
+.alert-important { --c: var(--accent); }
+.alert-tip { --c: var(--ok); }
 
 @media (min-width: 48rem) {
   header { position: sticky; top: 0; z-index: 1; padding: .6rem 1.5rem; }
@@ -52,10 +72,21 @@ blockquote { margin: 1rem 0; padding: .1rem 1rem; border-left: 3px solid var(--l
   nav ul { display: block; border: 0; padding: 0; }
   nav li { padding: .15rem 0; }
   #TableOfContents { display: block; font-size: .9em; }
-  #TableOfContents ul { padding: .15rem 0 .15rem .9rem; border-left: 1px solid var(--line); margin-left: .25rem; }
+  #TableOfContents ul { padding: .15rem 0 .15rem .9rem; }
+  #TableOfContents > ul { border-left: 2px solid var(--accent-2); margin-left: .25rem; } /* one rule for the whole tree; nested lists only indent */
+  #TableOfContents a.active { color: var(--accent); font-weight: 600; }
   .anchor { opacity: 0; }
   h1:hover .anchor, h2:hover .anchor, h3:hover .anchor, .anchor:focus { opacity: 1; }
   main { padding-top: 1.25rem; }
 }
 
-main img { max-width: 100%; height: auto; border: 1px solid var(--line); border-radius: 6px; }
+main img { max-width: 100%; height: auto; border: 1px solid var(--line); border-radius: var(--radius); }
+
+/* themed screenshots (layouts/_markup/render-image.html): both are in the page, one is shown; data-theme (theme.js) beats the OS preference */
+.dark-only { display: none; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .light-only { display: none; }
+  :root:not([data-theme="light"]) .dark-only { display: revert; }
+}
+:root[data-theme="dark"] .light-only { display: none; }
+:root[data-theme="dark"] .dark-only { display: revert; }

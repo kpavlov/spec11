@@ -1,18 +1,27 @@
 ---
 title: spec17
-description: Deterministic spec-driven-development evidence for a repo. No LLM in the core.
+description: Find tagged tests and code references for project requirements.
 ---
 
-spec17 reads the requirement IDs in your specs and reports which ones have tests, code citations, spec problems, or overlap with other requirements. The output is the same for the same tree.
-
-> **Evidence, not truth.** A citation or test tag does not prove a requirement is implemented or that its test passes. The output is a candidate list for a human or an assessor to judge.
-
-One Rust binary gives three interfaces over the same core: a CLI, an MCP server (streamable HTTP or stdio) and a web dashboard.
-
-![spec17 dashboard: 98% of due requirements have a tagged test, one changed spec, one requirement with no test or code](img/dashboard-light.png)
+spec17 scans a project's requirements, tests, and source code. It shows which requirements have tagged tests or references in code, flags problems in the specifications, and can flag possible overlap between requirements. A tag or reference shows where a requirement is mentioned. spec17 does not run tests or verify that a requirement is met.
 
 ## Get started
 
-The [Quickstart](quickstart/) covers installing spec17 (Homebrew on Apple Silicon, or from source), scanning a repo, and a three-file example that shows a requirement, a test and a code citation meeting in the report.
+If you have [Homebrew](https://brew.sh/) on an Apple Silicon Mac or on Linux (arm64 or x86_64), run these commands in Terminal:
 
-No config is needed: spec folders, source and test folders and the language are detected. Then: [every command](usage/), [how requirements and tests are recognised](specs/), and [connecting an agent](agents/).
+```sh
+brew tap kpavlov/spec17 https://github.com/kpavlov/spec17
+brew install kpavlov/spec17/spec17
+```
+
+Follow the [Quickstart](quickstart/) to scan a project, open the dashboard, or try a sample project. It also covers building from source.
+
+## How it works
+
+![You can use spec17 directly from the dashboard or terminal, or ask an AI agent that connects through MCP. spec17 reads the project files and can also read an optional CodeGraph index.](img/overview.svg)
+
+The [CodeGraph index](usage/#codegraph) helps spec17 find related code. You can scan requirements and find tagged tests without it.
+
+![spec17 dashboard showing requirements, tagged test coverage, and recent changes](img/dashboard.png)
+
+See [Usage](usage/) for commands and dashboard options, [Specs and tests](specs/) for supported formats, and [Agents](agents/) to connect an AI coding assistant.

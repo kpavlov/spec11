@@ -1,19 +1,5 @@
-/* Theme: `auto` follows the OS; data-theme="light|dark" (set by the header switch) forces one. Every colour is a light-dark() pair. */
+@import "./tokens.css";
 :root {
-  color-scheme: light dark;
-  --bg: light-dark(#f5f6f8, #232830);
-  --card: light-dark(#ffffff, #2a303a);
-  --tooltip-bg: light-dark(#efede7, #403e39);
-  --raised: light-dark(#eef0f4, #343c48);
-  --fg: light-dark(#1a1d23, #e9ebef);
-  --muted: light-dark(#596273, #b3bdcb);
-  --line: light-dark(#dde1e8, #495463);
-  --accent: light-dark(#6d3bd2, #b69cff);
-  --ok: light-dark(#13693d, #4ade80);
-  --warn: light-dark(#80491e, #debb92);
-  --bad: light-dark(#903e45, #e3acb1);
-  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  --radius: 4px;
   --shadow: none;
   --text-body: 1rem;
   --text-sm: .875rem;
@@ -26,19 +12,10 @@
   --weight-bold: 700;
   --badge-padding: 2px 9px;
   --badge-size: var(--text-sm);
-  --info: light-dark(#355676, #acc5dd);
   --badge-radius: 999px;
   /* spacing: page gutter, gap between controls */
   --gutter: 20px;
   --gap: 10px;
-  /* accent tints: hover/selected rows, group headers, button hover, the current tab, a chosen segment, an id chip on hover */
-  --tint-hover: color-mix(in srgb, var(--accent) 9%, transparent);
-  --tint-group: color-mix(in srgb, var(--accent) 5%, transparent);
-  --tint-btn: color-mix(in srgb, var(--accent) 16%, var(--raised));
-  --tint-on: color-mix(in srgb, var(--accent) 26%, var(--raised));
-  --tint-sel: color-mix(in srgb, var(--accent) 18%, var(--card));
-  --tint-sel-hover: color-mix(in srgb, var(--accent) 24%, var(--card));
-  --tint-id: color-mix(in srgb, var(--accent) 10%, var(--card));
 }
 /* a tone (see tone.ts) is the one colour pills, dots, badges, row edges and sections take */
 :where(.pill) { --pill-ink: initial; --pill-fill: initial; }
@@ -58,12 +35,10 @@
 [data-tone="bad"] { --tone: var(--bad); }
 [data-tone="accent"] { --tone: var(--accent); }
 [data-tone="muted"] { --tone: var(--muted); }
-:root[data-theme="light"] { color-scheme: light; }
-:root[data-theme="dark"] { color-scheme: dark; }
 
 * { box-sizing: border-box; }
 html { -webkit-text-size-adjust: 100%; }
-body { margin: 0; background: var(--bg); color: var(--fg); font: var(--text-body)/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: var(--text-body)/1.55 var(--sans); }
 code, pre, .mono { font-family: var(--mono); font-size: var(--text-sm); }
 :where(h1, h2, h3, h4) { line-height: 1.3; font-weight: var(--weight-semibold); }
 a { color: var(--accent); text-underline-offset: 2px; }

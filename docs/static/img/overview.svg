@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="560" height="385" viewBox="0 0 560 385" role="img" aria-labelledby="title desc">
+  <title id="title">How you, an AI agent, spec17, and CodeGraph connect</title>
+  <desc id="desc">You can use spec17 directly through the dashboard or terminal, or ask an AI agent that queries spec17 through MCP. spec17 reads project files and can read an optional CodeGraph index.</desc>
+  <style>
+    :root { color-scheme: light dark; }
+    .background { fill: light-dark(#ffffff, #181922); }
+    .node { fill: light-dark(#f5f3ff, #28233b); stroke: light-dark(#6d3bd2, #b69cff); }
+    .input { fill: light-dark(#f1f7f6, #1e302e); stroke: light-dark(#287369, #76cbbd); }
+    .label { fill: light-dark(#434050, #dfdbea); font: 16px system-ui, sans-serif; }
+    .name { fill: light-dark(#191622, #f5f2fc); font: 600 21px system-ui, sans-serif; }
+    .arrow { fill: none; stroke: light-dark(#625879, #b9a9d5); stroke-width: 2; marker-end: url(#arrow); }
+    .tip { fill: light-dark(#625879, #b9a9d5); }
+  </style>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto">
+      <path class="tip" d="M0 0 10 5 0 10Z"/>
+    </marker>
+  </defs>
+  <rect class="background" width="560" height="385"/>
+  <g class="arrow">
+    <path d="M204 55 H356"/>
+    <path d="M114 84 V181 H188"/>
+    <path d="M446 84 V181 H372"/>
+    <path d="M280 219 V250 H144 V302"/>
+    <path d="M280 250 H416 V302" stroke-dasharray="5 4"/>
+  </g>
+  <g>
+    <rect class="node" x="24" y="26" width="180" height="58" rx="10"/>
+    <rect class="node" x="356" y="26" width="180" height="58" rx="10"/>
+    <rect class="node" x="188" y="143" width="184" height="76" rx="10"/>
+    <rect class="input" x="24" y="302" width="240" height="62" rx="10"/>
+    <rect class="input" x="296" y="302" width="240" height="62" rx="10"/>
+  </g>
+  <g text-anchor="middle">
+    <text class="name" x="114" y="62">You</text>
+    <text class="label" x="280" y="44">Ask a question</text>
+    <text class="name" x="446" y="62">AI agent</text>
+    <text class="label" x="126" y="116" text-anchor="start">Dashboard / CLI</text>
+    <text class="label" x="434" y="116" text-anchor="end">MCP</text>
+    <text class="name" x="280" y="176">spec17</text>
+    <text class="label" x="280" y="200">Reports evidence</text>
+    <text class="label" x="99" y="281">Reads</text>
+    <text class="label" x="480" y="281">Reads if present</text>
+    <text class="name" x="144" y="329">Project files</text>
+    <text class="label" x="144" y="351">Requirements, tests, code</text>
+    <text class="name" x="416" y="329">CodeGraph index</text>
+    <text class="label" x="416" y="351">Optional code relationships</text>
+  </g>
+</svg>
