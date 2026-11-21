@@ -702,7 +702,7 @@
           <div>
             <div class="eyebrow muted">Health{#if setup.version} · spec17 {setup.version}{/if}</div>
             <h2 id="health-title" role="status">{fails ? plural(fails, "check") + " failed" : issues.length ? plural(issues.length, "warning") : checks.length ? "All checks passed" : "No checks run yet"}</h2>
-            <div class="muted">{passed.length} of {checks.length} checks passed</div>
+            <div class="muted">{passed.length} of {checks.length} checks passed{#if issues.length} · {plural(issues.length, "issue")}{/if}</div>
           </div>
           <button class="end" disabled={checking || busy} onclick={loadSetup}>{checking ? "Checking…" : "Run checks"}</button>
         </div>
