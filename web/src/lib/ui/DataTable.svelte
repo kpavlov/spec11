@@ -1,7 +1,7 @@
 <script lang="ts" generics="T">
   import type { Snippet } from "svelte";
-  import { sorted, toggleSort, type Sort } from "./sort";
-  import { layout } from "./layout.svelte";
+  import { sorted, toggleSort, type Sort } from "$lib/sort";
+  import { layout } from "$lib/layout/layout.svelte";
 
   type Col = { key: string; label: string; cls?: string; sort?: boolean };
   // a keyboard stop: a row (by key) or a group header

@@ -1,29 +1,30 @@
 <script lang="ts">
   import { untrack } from "svelte";
-  import { call, embedded, onToolInput, read, watch } from "./transport";
-  import { TABS, format, parse, type Route } from "./router";
-  import Markdown from "./Markdown.svelte";
-  import Graph from "./Graph.svelte";
-  import Split from "./Split.svelte";
-  import SplitToggle from "./SplitToggle.svelte";
-  import DataTable from "./DataTable.svelte";
+  import { call, embedded, onToolInput, read, watch } from "$lib/transport";
+  import { TABS, format, parse, type Route } from "$lib/router";
+  import Markdown from "$lib/ui/Markdown.svelte";
+  import Graph from "$lib/views/Graph.svelte";
+  import Split from "$lib/layout/Split.svelte";
+  import SplitToggle from "$lib/layout/SplitToggle.svelte";
+  import DataTable from "$lib/ui/DataTable.svelte";
   import { MediaQuery } from "svelte/reactivity";
-  import RequirementBadges from "./RequirementBadges.svelte";
-  import Filters from "./Filters.svelte";
-  import Seg from "./Seg.svelte";
-  import Pill from "./Pill.svelte";
-  import IdLink from "./IdLink.svelte";
-  import RequirementLink from "./RequirementLink.svelte";
-  import Section from "./Section.svelte";
-  import PaneHead from "./PaneHead.svelte";
-  import { requirementLevelTone, stateTone, edgeTone, levelTone, changeTone, type Tone } from "./tone";
-  import { preview } from "./layout.svelte";
-  import { reviewed, loadReviewed, setReviewed } from "./reviewed.svelte";
-  import DiffView from "./DiffView.svelte";
-  import ViewSwitch from "./ViewSwitch.svelte";
-  import { sorted, toggleSort, type Sort } from "./sort";
-  import { inline } from "./markdown";
-  import { highlightLines } from "./highlight";
+  import { levelPills } from "$lib/requirements/levelPills";
+  import RequirementBadges from "$lib/requirements/RequirementBadges.svelte";
+  import Filters from "$lib/ui/Filters.svelte";
+  import Seg from "$lib/ui/Seg.svelte";
+  import Pill from "$lib/ui/Pill.svelte";
+  import IdLink from "$lib/ui/IdLink.svelte";
+  import RequirementLink from "$lib/requirements/RequirementLink.svelte";
+  import Section from "$lib/ui/Section.svelte";
+  import PaneHead from "$lib/ui/PaneHead.svelte";
+  import { requirementLevelTone, stateTone, edgeTone, levelTone, changeTone, stateLabel, STATE_HINT, type Tone } from "$lib/tone";
+  import { preview } from "$lib/layout/layout.svelte";
+  import { reviewed, loadReviewed, setReviewed } from "$lib/reviewed.svelte";
+  import DiffView from "$lib/views/DiffView.svelte";
+  import ViewSwitch from "$lib/layout/ViewSwitch.svelte";
+  import { sorted, toggleSort, type Sort } from "$lib/sort";
+  import { inline } from "$lib/markdown";
+  import { highlightLines } from "$lib/highlight";
 
   type Ref = { file: string; line: number; text: string };
   type Row = { id: string; state: string; file: string; line: number; level: string; text: string; mark: string; done: boolean; verdict: string; built: boolean; issues: string[]; tests: Ref[]; cites: Ref[]; graph: string[] };
@@ -72,7 +73,6 @@
   const destinations = TABS.filter(t => t !== "setup");
   const visibleTabs = $derived(destinations.filter((t, i) => t === route.tab || (!mobileNav.current && (!compactNav.current || i < 3))));
   const moreTabs = $derived(destinations.filter(t => !visibleTabs.includes(t)));
-  const stateLabel = (state: string) => state === "tested" ? "tagged test" : state;
   const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
 
   // ---- theme: auto (OS) | light | dark, remembered per browser ----
@@ -321,15 +321,6 @@
   const noReqs = $derived(report && report.requirements + report.refs === 0);
   const sum = (key: string) => (modules?.modules ?? []).reduce((n: number, m: any) => n + m[key], 0);
   const states = ["all", "none", "src-only", "tested", "manual", "later", "ref"];
-  const STATE_HINT: Record<string, string> = {
-    all: "Every requirement",
-    none: "No test tag and no source citation",
-    "src-only": "Cited in source, no test tag",
-    tested: "A test carries its [ID] tag (run the suite to know it passes)",
-    manual: "Checked by a person",
-    later: "Marked later or deferred",
-    ref: "Reference document, never due",
-  };
   // (WEB-22) what the working tree changed: files by path, the kinds a requirement is touched by, the modules holding changed files
   const fileOf = $derived(new Map<string, any>((changes?.files ?? []).map((f: any) => [f.path, f])));
   // (WEB-37) directly changed: its bullet, a tagged test or a cited unit differs from the base; one only reached through a test is indirect
@@ -508,9 +499,9 @@
 
 {#snippet reqCell(r: any, k: string)}
   {#if k === "id"}{#if commits[r.id]}<input type="checkbox" class="rv" aria-label="reviewed" title={reviewTip(r.id)} checked={isReviewed(r.id)} onchange={(e) => setReviewed(r.id, e.currentTarget.checked ? commits[r.id].sha : undefined)} />{:else if Object.keys(commits).length}<span class="rv muted" title="not committed yet: commit it to review it">·</span>{/if}{#if r.deleted || !known.has(r.id)}{r.id}{:else}<a href={u(route.tab === "requirements" ? { ...route, id: r.id } : req(r.id))}>{r.id}</a>{/if}
-    <RequirementBadges level={r.level} state={r.state} label={stateLabel(r.state)} hint={STATE_HINT[r.state]} deleted={r.deleted} />
+    <div class="badges"><RequirementBadges level={r.level} state={r.state} deleted={r.deleted} /></div>
     {#if r.done}<Pill tone={stateTone.done} title="check-marked: {r.verdict}">✓ {r.verdict}</Pill>{/if}
-  {:else if k === "text"}<div class="txt" title={plain(r.text)}>{@html inline(r.text)}</div>
+  {:else if k === "text"}<div class="txt" title={plain(r.text)} {@attach levelPills(r.text)}>{@html inline(r.text)}</div>
     <div class="notes">
       {#if isReviewed(r.id)}<Pill tone="muted">Reviewed</Pill>{/if}
       {#if !r.deleted && testedIds.has(r.id)}
@@ -530,6 +521,10 @@
   <IdLink href={u(to)}>{id}</IdLink>
 {/snippet}
 
+{#snippet reqRef(id: string, to: Route)}
+  {@render idlink(id, to)}{#if byId.get(id)}{" "}<RequirementBadges level={byId.get(id)!.level} state={byId.get(id)!.state} />{/if}
+{/snippet}
+
 {#snippet th(label: string, key: string, st: Sort, cls = "")}
   <th class={cls} aria-sort={st.key === key ? (st.dir === 1 ? "ascending" : "descending") : "none"}>
     <button type="button" class="sort" onclick={() => toggleSort(st, key)}>{label}<span class="arrow">{st.key === key ? (st.dir === 1 ? "▲" : "▼") : ""}</span></button>
@@ -541,7 +536,7 @@
     <h3 class="file mono nowrap"><a href={u({ tab: "code", path: f.file })}>{f.file}</a> <span class="muted">{f.tests.length}</span></h3>
     <ul class="refs">
       {#each f.tests as t}
-        <li><a class="mono" href={u({ tab: "code", path: f.file, line: t.line })} title={t.qualified}>{t.name}</a> {#each t.ids as id}{@render idlink(id, known.has(id) ? req(id) : { tab: "requirements", q: id })}{" "}{/each}{#if !t.ids.length}<span class="muted">untagged</span>{/if}</li>
+        <li><a class="mono" href={u({ tab: "code", path: f.file, line: t.line })} title={t.qualified}>{t.name}</a> {#each t.ids as id}{@render reqRef(id, known.has(id) ? req(id) : { tab: "requirements", q: id })}{" "}{/each}{#if !t.ids.length}<span class="muted">untagged</span>{/if}</li>
       {/each}
     </ul>
   {/each}
@@ -554,7 +549,7 @@
         <p class="muted empty">Select a requirement to preview it.</p>
       {:else}
       {@const sp = trace.data?.spec}
-      <PaneHead title={trace.data.id} close={u({ ...route, id: undefined })}>{#if sp}<Pill tone={requirementLevelTone[sp.level]}>{sp.level.toLowerCase()}</Pill>{/if}</PaneHead>
+      <PaneHead title={trace.data.id} close={u({ ...route, id: undefined })}><RequirementBadges level={sp?.level} state={byId.get(trace.data.id)?.state} /></PaneHead>
       {@const dfiles = reqFiles(trace.data, reqKinds.get(trace.data.id))}
       {#if dfiles.length}<p><ViewSwitch n={dfiles.length} /></p>{/if}
       {#if diffOn(dfiles.length > 0)}
@@ -602,7 +597,7 @@
     {#if c}
       <h3 class="preview-section">Requirements</h3>
       {#if c.t.ids.length}
-        <ul class="refs">{#each c.t.ids as id}<li>{@render idlink(id, known.has(id) ? req(id) : { tab: "requirements", q: id })} <span class="muted">{byId.get(id) ? plain(byId.get(id)!.text).slice(0, 140) : "not in any spec"}</span></li>{/each}</ul>
+        <ul class="refs">{#each c.t.ids as id}<li>{@render reqRef(id, known.has(id) ? req(id) : { tab: "requirements", q: id })} <span class="muted">{byId.get(id) ? plain(byId.get(id)!.text).slice(0, 140) : "not in any spec"}</span></li>{/each}</ul>
       {:else}<p class="muted">Untagged: no requirement ID in its tag.</p>{/if}
     {/if}
     <h3 class="preview-section">Source</h3>
@@ -835,7 +830,7 @@ irm https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.ps1 | 
 
     {#if report.unproven.length}
       <Section title="Check-marked done without proof" count={report.unproven.length} tone="warn">
-        <ul>{#each report.unproven as x}<li>{@render idlink(x.id, req(x.id))} <code>{x.verdict}</code> <a href={u({ tab: "specs", file: x.file, id: x.id })}>{x.file}:{x.line}</a> <span class="muted">{plain(x.text).slice(0, 80)}</span></li>{/each}</ul>
+        <ul>{#each report.unproven as x}<li>{@render reqRef(x.id, req(x.id))} <code>{x.verdict}</code> <a href={u({ tab: "specs", file: x.file, id: x.id })}>{x.file}:{x.line}</a> <span class="muted">{plain(x.text).slice(0, 80)}</span></li>{/each}</ul>
       </Section>
     {/if}
     {#if invalidN}
@@ -1111,7 +1106,7 @@ irm https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.ps1 | 
         <div class="card block">
           <div class="mono nowrap"><a href={u({ tab: "code", path: r.file, line: r.line })}>{r.file}:{r.line}</a> <b>{r.name}</b></div>
           {#each r.pairs as [a, b, linked]}
-            <div>{@render idlink(a, withId("overlap", a))} {linked ? "~ linked" : "? UNLINKED"} {@render idlink(b, withId("overlap", b))}</div>
+            <div>{@render reqRef(a, withId("overlap", a))} {linked ? "~ linked" : "? UNLINKED"} {@render reqRef(b, withId("overlap", b))}</div>
           {/each}
         </div>
       {/each}
@@ -1228,6 +1223,7 @@ irm https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.ps1 | 
   .refs a, li a { text-decoration: none; }
   .refs a:hover, li a:hover { text-decoration: underline; }
   .page { display: flex; flex-direction: column; height: calc(100dvh - 100px); min-height: 440px; }
+  .badges { margin-top: 3px; }
   .notes { margin-top: 3px; font-size: var(--text-sm); line-height: 1.6; }
   .txt { display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   /* a trace panel outside a split (overlap) is a floating card; inside one, Split draws the card */

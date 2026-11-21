@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
-  import type { Tone } from "./tone";
+  import type { Tone } from "$lib/tone";
   let { tone, title, children }: { tone?: Tone; title?: string; children: Snippet } = $props();
 </script>
 

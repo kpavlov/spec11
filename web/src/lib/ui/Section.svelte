@@ -1,7 +1,7 @@
 <script lang="ts">
   import { untrack, type Snippet } from "svelte";
-  import type { Tone } from "./tone";
-  import { loadSection, saveSection } from "./layout.svelte";
+  import type { Tone } from "$lib/tone";
+  import { loadSection, saveSection } from "$lib/layout/layout.svelte";
   // a collapsible block with a title and a count; its tone colours the left edge, the tint and the count.
   // With an `id` (WEB-34) it also remembers per browser whether it is open and the height dragged on its bottom edge.
   let { title, count, tone, open = true, id, children }: { title: string; count?: number; tone?: Tone; open?: boolean; id?: string; children: Snippet } = $props();
