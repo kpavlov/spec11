@@ -1,7 +1,7 @@
 <script lang="ts">
   import { untrack } from "svelte";
   import { call, embedded, onToolInput, read, watch } from "$lib/transport";
-  import { TABS, format, parse, type Route } from "$lib/router";
+  import { format, parse, type Route } from "$lib/router";
   import Markdown from "$lib/ui/Markdown.svelte";
   import Graph from "$lib/views/Graph.svelte";
   import Split from "$lib/layout/Split.svelte";
@@ -12,6 +12,8 @@
   import RequirementBadges from "$lib/requirements/RequirementBadges.svelte";
   import Filters from "$lib/ui/Filters.svelte";
   import Seg from "$lib/ui/Seg.svelte";
+  import FileTree from "$lib/ui/FileTree.svelte";
+  import Icon from "$lib/ui/Icon.svelte";
   import Pill from "$lib/ui/Pill.svelte";
   import IdLink from "$lib/ui/IdLink.svelte";
   import RequirementLink from "$lib/requirements/RequirementLink.svelte";
@@ -52,7 +54,7 @@
       const a = (e.target as HTMLElement).closest<HTMLAnchorElement>("a[href^='/']");
       if (!a || e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || (a.target && a.target !== "_self")) return;
       e.preventDefault();
-      navigate(parse(new URL(a.href)));
+      navigate(route.view === "docs" && a.dataset.id ? { ...route, id: a.dataset.id } : parse(new URL(a.href)));
     };
     window.addEventListener("popstate", onpop);
     document.addEventListener("click", onclick);
@@ -67,18 +69,22 @@
   const stored = (k: string) => { try { return localStorage.getItem(k) ?? ""; } catch { return ""; } };
   let dismissed = $state(stored("spec17.banner"));
   const dismiss = (m: string) => { dismissed = m; try { localStorage.setItem("spec17.banner", m); } catch { /* storage blocked */ } };
-  // nav emoji; below 1350px only these show (the label is hidden, the title keeps the name)
+  // sidebar: labels + icons, or an icon rail (remembered; narrow screens start as a rail, phones always are)
   const compactNav = new MediaQuery("(max-width: 75rem)");
   const mobileNav = new MediaQuery("(max-width: 48rem)");
-  const destinations = TABS.filter(t => t !== "setup");
-  const visibleTabs = $derived(destinations.filter((t, i) => t === route.tab || (!mobileNav.current && (!compactNav.current || i < 3))));
-  const moreTabs = $derived(destinations.filter(t => !visibleTabs.includes(t)));
+  let rail = $state(stored("spec17.nav") ? stored("spec17.nav") === "rail" : compactNav.current);
+  const toggleNav = () => { rail = !rail; try { localStorage.setItem("spec17.nav", rail ? "rail" : "full"); } catch { /* storage blocked */ } };
+  const NAV: { name: string; tabs: string[] }[] = [
+    { name: "Overview", tabs: ["dashboard", "changes"] },
+    { name: "Browse", tabs: ["requirements", "modules", "tests"] },
+    { name: "Gaps", tabs: ["overlap", "uncovered"] },
+  ];
   const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
 
   // ---- theme: auto (OS) | light | dark, remembered per browser ----
   type Theme = "auto" | "light" | "dark";
   // one button cycles system → light → dark; it shows the current state
-  const themes: { v: Theme; icon: string; name: string }[] = [{ v: "auto", icon: "◐", name: "system" }, { v: "light", icon: "☀", name: "light" }, { v: "dark", icon: "☾", name: "dark" }];
+  const themes: { v: Theme; icon: "system" | "sun" | "moon"; name: string }[] = [{ v: "auto", icon: "system", name: "system" }, { v: "light", icon: "sun", name: "light" }, { v: "dark", icon: "moon", name: "dark" }];
   const curTheme = $derived(themes.find((t) => t.v === theme)!);
   const nextTheme = $derived(themes[(themes.indexOf(curTheme) + 1) % themes.length]);
   const saved = (): Theme => { try { const t = localStorage.getItem("spec17.theme"); return t === "light" || t === "dark" ? t : "auto"; } catch { return "auto"; } };
@@ -120,11 +126,16 @@
   let setupError = $state("");
   let busy = $state(false);
   let checks = $state<{ name: string; level: string; detail: string; hint: string | null }[]>([]);
+  // the Settings button flags a failed check (red) or an unfinished install (amber)
+  const setupBadge = $derived(checks.some((k) => k.level === "fail") ? "bad" : checks.some((k) => k.level !== "ok") || setup?.suggestions.length ? "warn" : "");
   let indexAction = $state<"init" | "sync" | null>(null);
   let indexLog = $state("");
   let specFiles = $state<string[] | null>(null);
   let specLoaded = $state("");
   let specMd = $state("");
+  let treeOpen = $state(stored("spec17.tree") !== "0");
+  const toggleTree = () => { treeOpen = !treeOpen; try { localStorage.setItem("spec17.tree", treeOpen ? "1" : "0"); } catch { /* storage blocked */ } };
+  const inDocs = $derived(route.tab === "requirements" && route.view === "docs");
   let code = $state<{ path: string; text: string } | null>(null);
   let report = $state<any>(null);
   // the working tree against HEAD: undefined until loaded, null when it cannot be read (not a git work tree)
@@ -246,9 +257,9 @@
   });
 
   $effect(() => {
-    if (route.tab !== "specs") return;
+    if (!inDocs) return;
     if (specFiles === null) { call("file").then((r) => (specFiles = r.data.files)).catch((e) => (error = e.message)); return; }
-    const f = route.file ?? specFiles[0];
+    const f = docFile;
     if (f && f !== untrack(() => specLoaded)) call("file", { name: f }).then((r) => { specLoaded = f; specMd = r.data.markdown; document.querySelector(".split .preview")?.scrollTo(0, 0); }).catch((e) => (error = e.message));
   });
 
@@ -289,7 +300,7 @@
   $effect(() => {
     void [specMd, code, route.id, route.line];
     queueMicrotask(() => {
-      const el = route.tab === "code" ? document.getElementById(`L${route.line}`) : route.tab === "specs" && route.id ? document.querySelector(`article a[data-id="${route.id}"]`) : null;
+      const el = route.tab === "code" ? document.getElementById(`L${route.line}`) : inDocs && route.id ? document.querySelector(`article a[data-id="${route.id}"]`) : null;
       el?.scrollIntoView({ block: "center" });
     });
   });
@@ -297,7 +308,7 @@
   // (WEB-27) the first run lands on Setup: nothing to scan and nothing installed, or a failed check; never inside a host that picks the view
   Promise.allSettled([load(), loadSetup()]).then(() => {
     const first = report && report.requirements + report.refs === 0 && setup?.suggestions.length;
-    if (!embedded && route.tab === "dashboard" && (first || checks.some((k) => k.level === "fail"))) navigate({ tab: "setup" }, true);
+    if (!embedded && route.tab === "dashboard" && (first || checks.some((k) => k.level === "fail"))) navigate({ tab: "settings" }, true);
   });
   // the server pushes `resources/updated` when the repo changes; one notification per subscribed resource arrives for one change
   let reloadTimer: ReturnType<typeof setTimeout> | undefined;
@@ -409,9 +420,11 @@
   const testVal = (c: any, k: string) => (k === "file" ? `${c.file}:${String(c.t.line).padStart(6, "0")}` : k === "ids" ? c.t.ids.join(" ") : c.t.name);
   const selTest = $derived(route.tab === "tests" && route.path ? `${route.path}:${route.line}` : undefined);
   const byId = $derived(new Map(rows.map((r) => [r.id, r])));
+  // the open document: the one named, else the one that holds the selected requirement, else the first
+  const docFile = $derived(route.file ?? (route.id ? byId.get(route.id)?.file : undefined) ?? specFiles?.[0]);
   // the preview shows the lines of the selected test: a few before it and the start of its body
   const TEST_BEFORE = 3, TEST_AFTER = 24;
-  const specRows = $derived((specFiles ?? []).filter((file) => !onlyChanged || fileOf.has(file)).map((file) => ({ file })));
+  const docFiles = $derived((specFiles ?? []).filter((file) => !onlyChanged || fileOf.has(file) || file === docFile));
   // (WEB-33) the short hash of the explained commit, for the section titles
   const at = $derived(scope.commit ? ` (${history?.commits.find((c: any) => c.sha === scope.commit || c.short === scope.commit)?.short ?? scope.commit.slice(0, 7)})` : "");
   const CHANGES = ["added", "modified", "renamed", "deleted"];
@@ -436,6 +449,8 @@
     return cache.get(id)!;
   }
   const req = (id: string): Route => ({ tab: "requirements", id });
+  // a spec document (the Documents view of Requirements), optionally at one requirement
+  const doc = (file?: string, id?: string, changed?: string): Route => ({ tab: "requirements", view: "docs", file, id, changed });
   const docs = "https://spec17.dev";
   const withId = (tab: Route["tab"], id: string): Route => ({ tab, id });
   // typing in the filter replaces the URL instead of stacking a history entry per keystroke
@@ -478,9 +493,14 @@
   const copyPath = (path: string) => navigator.clipboard.writeText(path).then(() => { copied = true; setTimeout(() => (copied = false), 1200); }).catch(() => {});
 </script>
 
+{#snippet viewSeg()}
+  <Seg label="View" hint="The requirements as a list, or inside their spec documents" options={[{ key: "list", label: "list" }, { key: "docs", label: "documents" }]} value={inDocs ? "docs" : "list"} onpick={(k) => navigate({ ...route, view: k === "docs" ? "docs" : undefined, file: undefined })} />
+{/snippet}
+
 {#snippet requirementToolbar()}
   <!-- (WEB-33, WEB-43) -->
   <div class="bar req-toolbar">
+    {#if route.tab === "requirements"}{@render viewSeg()}{/if}
     <input name="filter" aria-label={onChanges ? "Filter affected requirements" : "Filter requirements"} placeholder="Filter requirements" title="Filter by ID, text or file (/)" value={query} oninput={(e) => filter({ q: e.currentTarget.value })} />
     <button type="button" class="filter-toggle" aria-expanded={reqFiltersOpen} aria-controls="requirement-filter-options" onclick={() => (reqFiltersOpen = !reqFiltersOpen)}>
       Filters{activeReqFilters ? ` (${activeReqFilters})` : ""}<span class="chevron" aria-hidden="true"></span>
@@ -509,7 +529,7 @@
       {/if}
       {#each noteGroups(r.notes ?? changeOf.get(r.id)?.notes ?? []) as [what, files]}<Pill tone={r.deleted ? "bad" : "accent"} title={files.join(", ")}>✎ {what}</Pill>{/each}
     </div>
-  {:else if r.line}<a href={u({ tab: "specs", file: r.file, id: r.id })}>{r.file}:{r.line}</a>{:else}{r.file}{/if}
+  {:else if r.line}<a href={u(doc(r.file, r.id))}>{r.file}:{r.line}</a>{:else}{r.file}{/if}
 {/snippet}
 
 {#snippet who(c: any, note = false)}
@@ -557,7 +577,7 @@
         <p class="muted note">What changed against HEAD in the files that spec, tag or cite this requirement. Evidence of edits, not that it is done.</p>
       {:else}
       {#if sp}
-        <p class="muted mono nowrap"><a href={u({ tab: "specs", file: sp.file, id: trace.data.id })}>{sp.file}:{sp.line}</a></p>
+        <p class="muted mono nowrap"><a href={u(doc(sp.file, trace.data.id))}>{sp.file}:{sp.line}</a></p>
         {@render who(commits[trace.data.id], true)}
         <Markdown source={sp.text} />
       {:else}<p class="muted">Not in any spec: cited only in tests or code.</p>{/if}
@@ -618,43 +638,50 @@
   {/if}
 {/snippet}
 
+{#snippet navLink(t: string)}
+  <a class="tab" class:on={route.tab === t} aria-current={route.tab === t ? "page" : undefined} href={u({ tab: t as Route["tab"] })} title={t} aria-label={t}>
+    <span class="ico"><Icon name={t as "dashboard"} /></span><span class="lbl">{t}</span>
+    {#if t === "dashboard" && report?.total_problems}<span class="badge" data-tone="bad" title="{report.total_problems} problems">{report.total_problems}</span>{/if}
+    {#if t === "changes" && directReqs.length}<span class="badge" data-tone="accent" title="{directReqs.length} requirements may be affected">{directReqs.length}</span>{/if}
+  </a>
+{/snippet}
+
 <header>
   <h1><a href="/">spec17</a></h1>
   <span class="dot" data-tone={up === true ? "ok" : up === false ? "bad" : undefined} role="status" title={up === null ? "server: connecting" : up ? "server: connected" : "server: disconnected, retrying"}></span>
   <a class="root mono muted" href="/">{root}</a>
-  <nav aria-label="views">
-    {#each visibleTabs as t}
-      <a class="tab" class:on={route.tab === t} aria-current={route.tab === t ? "page" : undefined} href={u({ tab: t })} title={t} aria-label={t}>
-        {t}{#if t === "dashboard" && report?.total_problems}<span class="badge" data-tone="bad" title="{report.total_problems} problems">{report.total_problems}</span>{/if}{#if t === "changes" && directReqs.length}<span class="badge" data-tone="accent" title="{directReqs.length} requirements may be affected">{directReqs.length}</span>{/if}
-      </a>
-    {/each}
-    {#if moreTabs.length}
-      <div class="more-views">
-        <select aria-label="More views" value="" onchange={(e) => navigate({ tab: e.currentTarget.value as Route["tab"] })}>
-          <option value="" disabled>More</option>
-          {#each moreTabs as t}<option value={t}>{t}</option>{/each}
-        </select>
-        <span class="chevron" aria-hidden="true"></span>
-      </div>
-    {/if}
-  </nav>
-  <button class="icon" disabled={busy} onclick={rescan} title="Rescan the repo (syncs the CodeGraph index first)" aria-label="rescan">↻</button>
-  <button class="icon" onclick={() => (theme = nextTheme.v)} title="Theme: {curTheme.name} (click for {nextTheme.name})" aria-label="Theme: {curTheme.name}, switch to {nextTheme.name}">{curTheme.icon}</button>
-  <a class="tab icon" class:on={route.tab === "setup"} aria-current={route.tab === "setup" ? "page" : undefined} href={u({ tab: "setup" })} title={setup?.suggestions.length ? "Setup (not fully set up)" : "Setup"} aria-label="Setup">⚙️{#if setup?.suggestions.length}<span class="badge" data-tone="warn" title="not fully set up">!</span>{/if}</a>
+  <span class="grow"></span>
+  <button class="icon" disabled={busy} onclick={rescan} title="Rescan the repo (syncs the CodeGraph index first)" aria-label="rescan"><Icon name="rescan" /></button>
+  <button class="icon" onclick={() => (theme = nextTheme.v)} title="Theme: {curTheme.name} (click for {nextTheme.name})" aria-label="Theme: {curTheme.name}, switch to {nextTheme.name}"><Icon name={curTheme.icon} /></button>
+  <a class="tab icon" class:on={route.tab === "settings"} aria-current={route.tab === "settings" ? "page" : undefined} href={u({ tab: "settings" })} title={setupBadge ? "Settings (needs attention)" : "Settings"} aria-label="Settings"><Icon name="settings" />{#if setupBadge}<span class="badge" data-tone={setupBadge} title="needs attention: open Settings">!</span>{/if}</a>
 </header>
 
+<div class="shell" class:rail={rail || mobileNav.current}>
+<nav aria-label="views">
+  {#each NAV as g}
+    <div class="group">
+      <span class="gname">{g.name}</span>
+      {#each g.tabs as t}{@render navLink(t)}{/each}
+    </div>
+  {/each}
+  <span class="grow"></span>
+  <div class="group">
+    <button class="collapse" onclick={toggleNav} aria-label={rail ? "Expand the sidebar" : "Collapse the sidebar"} title={rail ? "Expand the sidebar" : "Collapse the sidebar"}><span class="ico"><Icon name={rail ? "expand" : "collapse"} /></span><span class="lbl">Collapse</span></button>
+  </div>
+</nav>
+<div class="content">
 {#if error}<p class="error">{error}</p>{/if}
-{#if setup && setup.suggestions.length && route.tab !== "setup" && dismissed !== setup.suggestions[0]}
+{#if setup && setup.suggestions.length && route.tab !== "settings" && dismissed !== setup.suggestions[0]}
   <p class="banner">
     <span>spec17 is not fully set up for this repo: {setup.suggestions[0]}</span>
     <span class="grow"></span>
-    <a class="tab" href="/setup">Open Setup</a>
+    <a class="tab" href="/settings">Open Settings</a>
     <button aria-label="dismiss" title="Hide until the message changes" onclick={() => dismiss(setup!.suggestions[0])}>✕</button>
   </p>
 {/if}
 
 <main>
-  {#if route.tab === "setup"}
+  {#if route.tab === "settings"}
     {#if !setup}
       {#if setupError}<p class="error">Could not check the setup: {setupError} <button onclick={loadSetup}>Retry</button></p>{:else}<p class="muted">Checking…</p>{/if}
     {:else}
@@ -665,12 +692,18 @@
       {@const issues = checks.filter(k => k.level !== "ok")}
       {@const where = globalScope ? setup.status.global : setup.status.project}
       {@const scope = globalScope ? "Global" : "This repo"}
+      {@const fails = issues.filter((k) => k.level === "fail").length}
+      {@const tone = fails ? "bad" : issues.length ? "warn" : "ok"}
       <!-- (WEB-44, WEB-42) -->
       <div class="setup-page">
-      <section class="card setup">
-        <div class="setup-head">
-          <h2>Health</h2>
-          {#if setup.version}<code class="muted">spec17 {setup.version}</code>{/if}
+      <section class="card setup health" data-tone={tone} aria-labelledby="health-title">
+        <div class="health-head">
+          <span class="health-ico"><Icon name={fails ? "x-circle" : issues.length ? "alert" : "check-circle"} /></span>
+          <div>
+            <div class="eyebrow muted">Health{#if setup.version} · spec17 {setup.version}{/if}</div>
+            <h2 id="health-title" role="status">{fails ? plural(fails, "check") + " failed" : issues.length ? plural(issues.length, "warning") : checks.length ? "All checks passed" : "No checks run yet"}</h2>
+            <div class="muted">{passed.length} of {checks.length} checks passed</div>
+          </div>
           <button class="end" disabled={checking || busy} onclick={loadSetup}>{checking ? "Checking…" : "Run checks"}</button>
         </div>
         {#if setupError}<p class="error" role="alert">Could not refresh checks: {setupError}</p>{/if}
@@ -682,7 +715,7 @@
         {/snippet}
         {#each issues as k}{@render checkRow(k)}{/each}
         {#if passed.length}
-          <details><summary>{plural(passed.length, "check")} passed</summary>
+          <details><summary>{issues.length ? `${plural(passed.length, "check")} passed` : "Show the checks"}</summary>
             {#each passed as k}{@render checkRow(k)}{/each}
           </details>
         {:else if !issues.length}<p class="muted">No check results available.</p>{/if}
@@ -763,12 +796,12 @@ irm https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.ps1 | 
       </div>
     {/if}
   {:else if !report}
-    {#if error}<p class="muted">The scan failed (see above). <a href="/setup">Setup</a> shows what is missing.</p>{:else}<p class="muted">Scanning…</p>{/if}
+    {#if error}<p class="muted">The scan failed (see above). <a href="/settings">Settings</a> shows what is missing.</p>{:else}<p class="muted">Scanning…</p>{/if}
   {:else if route.tab === "dashboard"}
     {#if noReqs}
       <section class="hero card">
         <h2>No requirements yet</h2>
-        <p>spec17 found none. Write them as <code>- **ABC-12** MUST — text</code> in <code>specs/01-name.md</code> or <code>SPEC.md</code>, tag tests <code>[ABC-12]</code> and cite <code>// (ABC-12)</code> in code. <a href="/setup">Setup</a> installs the skill so your agent drafts them with you. <a href="{docs}/specs/#requirement-styles" target="_blank" rel="noopener noreferrer">Requirement formats</a>.</p>
+        <p>spec17 found none. Write them as <code>- **ABC-12** MUST — text</code> in <code>specs/01-name.md</code> or <code>SPEC.md</code>, tag tests <code>[ABC-12]</code> and cite <code>// (ABC-12)</code> in code. <a href="/settings">Settings</a> installs the skill so your agent drafts them with you. <a href="{docs}/specs/#requirement-styles" target="_blank" rel="noopener noreferrer">Requirement formats</a>.</p>
         {#if modules}<p class="facts muted"><a href={u({ tab: "modules" })}>{plural(sum("src_files"), "source file")}</a> · {plural(sum("test_files"), "test file")} · <a href={u({ tab: "tests" })}>{plural(sum("tests"), "test")} detected</a></p>{/if}
       </section>
     {:else}
@@ -830,7 +863,7 @@ irm https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.ps1 | 
 
     {#if report.unproven.length}
       <Section title="Check-marked done without proof" count={report.unproven.length} tone="warn">
-        <ul>{#each report.unproven as x}<li>{@render reqRef(x.id, req(x.id))} <code>{x.verdict}</code> <a href={u({ tab: "specs", file: x.file, id: x.id })}>{x.file}:{x.line}</a> <span class="muted">{plain(x.text).slice(0, 80)}</span></li>{/each}</ul>
+        <ul>{#each report.unproven as x}<li>{@render reqRef(x.id, req(x.id))} <code>{x.verdict}</code> <a href={u(doc(x.file, x.id))}>{x.file}:{x.line}</a> <span class="muted">{plain(x.text).slice(0, 80)}</span></li>{/each}</ul>
       </Section>
     {/if}
     {#if invalidN}
@@ -852,8 +885,37 @@ irm https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.ps1 | 
         <p class="mono">{#if report.dangling_tests.length}tests: {report.dangling_tests.join(", ")}<br />{/if}{#if report.dangling_sources.length}sources: {report.dangling_sources.join(", ")}{/if}</p>
       </Section>
     {/if}
+  {:else if inDocs}
+    {#if specFiles === null}<p class="muted">Loading…</p>
+    {:else if !specFiles.length}<p class="muted empty">No spec files found. <a href="/settings">Settings</a> says what spec17 looks for; <a href="{docs}/specs/#requirement-styles" target="_blank" rel="noopener noreferrer">the docs</a> show the formats.</p>
+    {:else}
+      {@const f = docFile!}
+      <div class="page">
+        <div class="bar">
+          {@render viewSeg()}
+          <button type="button" class="filter-toggle" aria-pressed={treeOpen} title="Show or hide the document tree" onclick={toggleTree}>Files</button>
+          {#if showChanged}<Seg label="Changes" options={changedSeg(specFiles.filter((x) => fileOf.has(x)).length)} value={onlyChanged ? "changed" : "all"} onpick={pickChanged} />{/if}
+          <span class="grow"></span>
+          <SplitToggle />
+        </div>
+        <div class="docs">
+          {#if treeOpen}<aside class="tree"><FileTree files={docFiles} selected={f} href={(d) => u(doc(d, undefined, route.changed))} mark={changeMark} /></aside>{/if}
+          <div class="docbody">
+            <Split name="docs" def={60}>
+              {#snippet list()}
+                <div class="doc">
+                  {#if fileOf.has(f)}<p><ViewSwitch /></p>{/if}
+                  {#if diffOn(fileOf.has(f))}<DiffView paths={[f]} {gen} />{:else}<article><Markdown source={specMd} mark={(id) => (known.has(id) ? edgeTone(byId.get(id)!.state) : undefined)} /></article>{/if}
+                </div>
+              {/snippet}
+              {#snippet preview()}{@render tracePanel()}{/snippet}
+            </Split>
+          </div>
+        </div>
+      </div>
+    {/if}
   {:else if route.tab === "requirements" && noReqs}
-    <p class="muted empty">No requirements found. <a href="/setup">Setup</a> says what spec17 looks for; <a href="{docs}/specs/#requirement-styles" target="_blank" rel="noopener noreferrer">the docs</a> show the formats.</p>
+    <p class="muted empty">No requirements found. <a href="/settings">Settings</a> says what spec17 looks for; <a href="{docs}/specs/#requirement-styles" target="_blank" rel="noopener noreferrer">the docs</a> show the formats.</p>
   {:else if route.tab === "requirements"}
     <div class="page">
     {@render requirementToolbar()}
@@ -998,26 +1060,6 @@ irm https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.ps1 | 
       </Split>
     {/if}
     </div>
-  {:else if route.tab === "specs"}
-    {#if specFiles === null}<p class="muted">Loading…</p>
-    {:else if !specFiles.length}<p class="muted empty">No spec files found. <a href="/setup">Setup</a> says what spec17 looks for; <a href="{docs}/specs/#requirement-styles" target="_blank" rel="noopener noreferrer">the docs</a> show the formats.</p>
-    {:else}
-      <div class="page">
-        {#if showChanged}<div class="bar"><Seg label="Changes" options={changedSeg(specFiles.filter((f) => fileOf.has(f)).length)} value={onlyChanged ? "changed" : "all"} onpick={pickChanged} /></div>{/if}
-        <Split name="specs" def={22}>
-          {#snippet list()}
-            <DataTable headless rows={specRows} columns={[{ key: "file", label: "spec" }]} rowKey={(r) => r.file} selected={route.file ?? specFiles![0]} onselect={(k, how) => k && navigate({ tab: "specs", file: k }, how === "key")}>
-              {#snippet cell(r)}<a href={u({ tab: "specs", file: r.file })}>{r.file.replace(/\.md$/, "")}</a>{#if changeMark(r.file)}{" "}<Pill tone={changeTone(changeMark(r.file))} title="{changeMark(r.file)} in the working tree">✎ {changeMark(r.file)}</Pill>{/if}{/snippet}
-            </DataTable>
-          {/snippet}
-          {#snippet preview()}
-            {@const f = route.file ?? specFiles![0]}
-            {#if fileOf.has(f)}<p><ViewSwitch /></p>{/if}
-            {#if diffOn(fileOf.has(f))}<DiffView paths={[f]} {gen} />{:else}<article><Markdown source={specMd} /></article>{/if}
-          {/snippet}
-        </Split>
-      </div>
-    {/if}
   {:else if route.tab === "changes"}
     <div class="bar">
       {#if history?.base && !history.on_base}
@@ -1078,7 +1120,7 @@ irm https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.ps1 | 
                 <td class="muted nowrap">{f.kind}</td>
                 <td class="mono">
                   {#if f.change === "deleted" || f.kind === "other"}{f.path}
-                  {:else if f.kind === "spec"}<a href={u({ tab: "specs", file: f.path })}>{f.path}</a>
+                  {:else if f.kind === "spec"}<a href={u(doc(f.path))}>{f.path}</a>
                   {:else}<a href={u({ tab: "code", path: f.path })}>{f.path}</a>{/if}
                   {#if f.old_path}<span class="muted"> ← {f.old_path}</span>{/if}
                 </td>
@@ -1092,7 +1134,7 @@ irm https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.ps1 | 
       <Section title="Tests, specs and modules">
         <p>
           <a href={u({ tab: "tests", changed: "1" })}>{plural(nOf("test"), "test file")}</a> ·
-          <a href={u({ tab: "specs", changed: "1" })}>{plural(nOf("spec"), "spec file")}</a> ·
+          <a href={u(doc(undefined, undefined, "1"))}>{plural(nOf("spec"), "spec file")}</a> ·
           <a href={u({ tab: "modules", changed: "1" })}>{plural(viewMods.size, "module")}</a>
           <span class="muted"> changed ({plural(nOf("src"), "source file")}, {plural(nOf("other"), "other file")} not scanned)</span>
         </p>
@@ -1137,25 +1179,55 @@ irm https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.ps1 | 
   Evidence, not truth: tags and citations do not prove a requirement is implemented or its test passes.
   <div>Copyright &copy; 2026 Konstantin Pavlov, <a href="https://itstaff.ee">Staff OÜ</a>. All rights reserved. · <a href={docs} target="_blank" rel="noopener noreferrer">Documentation</a> · <a href="https://github.com/kpavlov/spec17/issues" target="_blank" rel="noopener noreferrer">Feedback</a></div>
 </footer>
+</div>
+</div>
 
 <style>
   .commits { max-height: 13rem; overflow: auto; }
   tr.sel { background: var(--tint-sel); }
   /* layout */
-  header { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: var(--gap); padding: 10px var(--gutter); background: color-mix(in srgb, var(--bg) 92%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
-  header > :not(.root):not(nav) { flex-shrink: 0; }
+  header { --header-h: 53px; position: sticky; top: 0; z-index: 3; display: flex; align-items: center; gap: var(--gap); height: var(--header-h); padding: 0 var(--gutter); background: color-mix(in srgb, var(--bg) 92%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
+  header > :not(.root) { flex-shrink: 0; }
   .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--tone, var(--muted)); margin-left: -4px; }
   h1 { margin: 0; font-size: var(--text-section); font-weight: var(--weight-bold); letter-spacing: -0.01em; }
-  nav { margin-left: auto; display: flex; gap: 6px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
-  nav a { flex-shrink: 0; white-space: nowrap; }
+  /* sidebar: labels + icons, or an icon rail (.rail); a strip above the page on phones */
+  .shell { display: grid; grid-template-columns: 12.5rem minmax(0, 1fr); min-height: calc(100dvh - 53px); }
+  .shell.rail { grid-template-columns: 3.5rem minmax(0, 1fr); }
+  /* the footer sits at the bottom of a short page and below a long one */
+  .content { min-width: 0; display: flex; flex-direction: column; }
+  .content > main { flex: 1; }
+  nav { position: sticky; top: 53px; align-self: start; height: calc(100dvh - 53px); display: flex; flex-direction: column; gap: 2px; padding: 10px 8px; border-right: 1px solid var(--line); overflow-y: auto; scrollbar-width: none; }
+  nav .group { display: flex; flex-direction: column; gap: 2px; }
+  nav .group + .group, nav .grow + .group { border-top: 1px solid var(--line); margin-top: 6px; padding-top: 6px; }
+  nav .grow { flex: 1; }
+  nav .gname { padding: 6px 10px 2px; font-size: var(--text-sm); font-weight: var(--weight-semibold); color: var(--muted); }
+  nav a.tab, nav .collapse { display: flex; align-items: center; gap: 10px; position: relative; padding: 6px 10px; white-space: nowrap; background: transparent; color: var(--fg); border-radius: var(--radius); text-decoration: none; }
+  nav .collapse { color: var(--muted); font-size: var(--text-label); }
+  nav a.tab:hover, nav .collapse:hover:not(:disabled) { background: var(--tint-btn); color: var(--accent); }
+  nav a.tab.on { background: var(--tint-on); color: var(--accent); }
+  nav .ico { display: flex; flex-shrink: 0; }
+  nav .badge { margin-left: auto; }
+  .rail nav .gname, .rail nav .lbl { display: none; }
+  .rail nav { align-items: stretch; }
+  .rail nav a.tab, .rail nav .collapse { justify-content: center; padding: 7px 0; }
+  .rail nav .badge { position: absolute; top: 0; right: 2px; margin: 0; min-width: 14px; padding: 0 3px; font-size: .65rem; }
+  @media (max-width: 48rem) {
+    .shell, .shell.rail { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 1fr; }
+    nav, .rail nav { position: static; height: auto; flex-direction: row; align-items: center; padding: 4px 8px; border-right: 0; border-bottom: 1px solid var(--line); overflow-x: auto; }
+    nav .group, nav .group + .group, nav .grow + .group { flex-direction: row; border: 0; margin: 0; padding: 0; }
+    nav .grow, nav .collapse { display: none; }
+    nav a.tab, .rail nav a.tab { padding: 7px 10px; }
+    .content .page { height: calc(100dvh - 150px); }
+  }
   main { padding: var(--gutter); max-width: 100%; overflow-x: clip; }
-  footer { padding: 24px 16px; text-align: center; font-size: var(--text-sm); }
+  footer { padding: 14px 16px; text-align: center; font-size: .75rem; line-height: 1.4; color: color-mix(in srgb, var(--muted) 70%, var(--bg)); }
+  footer a { color: inherit; }
   .grow { flex: 1; }
   .error { margin: 12px var(--gutter); padding: 10px 14px; border: 1px solid var(--bad); background: color-mix(in srgb, var(--bad) 10%, var(--card)); color: var(--bad); border-radius: var(--radius); }
   .banner { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0; padding: 8px var(--gutter); background: color-mix(in srgb, var(--warn) 13%, var(--bg)); border-bottom: 1px solid color-mix(in srgb, var(--warn) 35%, var(--line)); font-size: var(--text-sm); }
   button:disabled { opacity: 0.5; cursor: default; }
 
-  /* header controls */
+  /* header controls (a.tab is also the banner button) */
   a.tab { color: var(--fg); background: var(--raised); text-decoration: none; border-radius: var(--radius); padding: 5px 12px; font-size: var(--text-label); text-transform: capitalize; }
   a.tab:hover { background: var(--tint-btn); color: var(--accent); }
   a.tab.on { background: var(--tint-on); color: var(--accent); font-weight: var(--weight-semibold); }
@@ -1163,20 +1235,17 @@ irm https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.ps1 | 
   a.root { color: var(--muted); max-width: 32ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
   .badge { display: inline-block; min-width: 18px; margin-left: 6px; padding: 0 5px; border-radius: 2px; font-size: var(--text-sm); font-weight: var(--weight-semibold); line-height: 1.3; text-align: center; color: var(--card); background: var(--tone); }
   a.tab.on .badge { outline: 1px solid var(--raised); }
-  .icon { padding: 5px 9px; line-height: 1.2; }
+  .icon { display: inline-flex; align-items: center; position: relative; padding: 6px 9px; line-height: 1.2; }
+  a.tab.icon { padding: 6px 9px; }
+  a.tab.icon .badge { position: absolute; top: -4px; right: -4px; margin: 0; min-width: 14px; padding: 0 3px; font-size: .65rem; }
   .diffrow > td { max-width: 0; }
   .hidediff { position: sticky; top: 0; float: right; z-index: 1; }
-  a.tab.icon .badge { margin-left: 3px; }
-  .more-views { position: relative; }
-  .more-views select { width: 5rem; appearance: none; padding: 5px 24px 5px 10px; font-size: var(--text-label); cursor: pointer; }
-  .more-views .chevron { position: absolute; right: 11px; top: calc(50% - .3rem); pointer-events: none; color: var(--muted); }
   .chevron { display: inline-block; width: .45rem; height: .45rem; border: solid currentColor; border-width: 0 1.5px 1.5px 0; transform: rotate(45deg); }
-  @media (max-width: 90rem) { a.root { flex: 0 1 auto; min-width: 0; } nav { flex-shrink: 0; } }
+  @media (max-width: 90rem) { a.root { flex: 0 1 auto; min-width: 0; } }
   @media (max-width: 48rem) {
-    header { flex-wrap: wrap; gap: 4px; padding: 6px 8px; }
+    header { padding: 0 8px; }
     a.root { display: none; }
-    nav { flex-wrap: wrap; }
-    a.tab, .icon { padding: 4px 6px; }
+    .icon { padding: 4px 6px; }
   }
 
   /* report */
@@ -1223,6 +1292,12 @@ irm https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.ps1 | 
   .refs a, li a { text-decoration: none; }
   .refs a:hover, li a:hover { text-decoration: underline; }
   .page { display: flex; flex-direction: column; height: calc(100dvh - 100px); min-height: 440px; }
+  .doc { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 16px 14px; box-shadow: var(--shadow); }
+  .docs { display: flex; flex: 1; min-height: 0; gap: var(--gap); }
+  .tree { flex: 0 0 15rem; min-height: 0; padding: 10px; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }
+  .docbody { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .filter-toggle[aria-pressed=true] { background: var(--tint-on); color: var(--accent); }
+  @media (max-width: 62rem) { .docs { flex-direction: column; } .tree { flex-basis: auto; max-height: 12rem; } }
   .badges { margin-top: 3px; }
   .notes { margin-top: 3px; font-size: var(--text-sm); line-height: 1.6; }
   .txt { display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
@@ -1263,6 +1338,13 @@ irm https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.ps1 | 
   .setup { min-width: 0; overflow-wrap: anywhere; }
   .setup-head, .actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--gap); }
   .setup-head h2 { margin: 0; }
+  /* Health: the verdict first, tinted by its tone (green when every check passed) */
+  .health { border-color: color-mix(in srgb, var(--tone) 45%, var(--line)); background: color-mix(in srgb, var(--tone) 9%, var(--card)); }
+  .health-head { display: flex; align-items: center; flex-wrap: wrap; gap: 14px; }
+  .health-head h2 { margin: 0; font-size: var(--text-title); color: var(--tone); }
+  .health-head .end { margin-inline-start: auto; }
+  .health-ico { display: flex; font-size: 2rem; color: var(--tone); }
+  .eyebrow { font-size: var(--text-sm); }
   .setup button { font-size: var(--text-label); }
   .setup strong { font-weight: var(--weight-semibold); }
   .setup-head .end { margin-inline-start: auto; }

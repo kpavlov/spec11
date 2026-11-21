@@ -93,7 +93,7 @@ async function shoot(b, base, { url, theme, file, full }) {
   for (let i = 0; i < 100 && !(await b.evaluate(`location.pathname + location.search === ${JSON.stringify(url)} && document.readyState === "complete" && !!document.querySelector("main")`)); i++) await sleep(100);
   await sleep(1500); // the views fill from /mcp after load
   // Not part of the picture: the setup banner and the "!" on the gear are only there because the port is not the one in .mcp.json.
-  await b.evaluate(`document.querySelector('[title="Hide until the message changes"]')?.click(); [...document.querySelectorAll('a[href="/setup"] *')].find((e) => e.textContent.trim() === "!")?.remove()`);
+  await b.evaluate(`document.querySelector('[title="Hide until the message changes"]')?.click(); [...document.querySelectorAll('a[href="/settings"] *')].find((e) => e.textContent.trim() === "!")?.remove()`);
   await sleep(300);
   const height = full ? await b.evaluate("document.documentElement.scrollHeight") : 900;
   const { data } = await b.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: !!full, clip: { x: 0, y: 0, width, height, scale: 1 } });
@@ -106,6 +106,7 @@ const SHOTS = [
     { url: "/", theme, file: `dashboard-${theme}.png`, full: true },
     { url: "/changes", theme, file: `changes-${theme}.png` },
     { url: "/requirements/API-02", theme, file: `requirements-${theme}.png` },
+    { url: "/settings", theme, file: `settings-${theme}.png`, full: true },
   ]),
 ];
 

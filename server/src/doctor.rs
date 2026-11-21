@@ -1,4 +1,4 @@
-//! `spec17 doctor`: is this repo set up for spec17, and is CodeGraph usable here? `run` only looks and suggests. The one thing that writes is `index`, which runs only when the user asks (`doctor --fix`, the Setup tab buttons, the dashboard's rescan).
+//! `spec17 doctor`: is this repo set up for spec17, and is CodeGraph usable here? `run` only looks and suggests. The one thing that writes is `index`, which runs only when the user asks (`doctor --fix`, the Settings tab buttons, the dashboard's rescan).
 use serde::Serialize;
 use spec17_core::{Analysis, codegraph::{Graph, GraphError}, scan::Project};
 use crate::skill::McpState;
@@ -32,7 +32,7 @@ fn codegraph_version() -> Option<String> {
     Some(text.lines().next().unwrap_or("").to_string())
 }
 
-/// How to install CodeGraph (its docs: getting-started/installation); spec17 never runs these. The Setup tab shows the same commands.
+/// How to install CodeGraph (its docs: getting-started/installation); spec17 never runs these. The Settings tab shows the same commands.
 const INSTALL_HINT: &str = "install CodeGraph: `curl -fsSL https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.sh | sh` or `npm i -g @colbymchenry/codegraph` (Windows: `irm https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.ps1 | iex`), then `codegraph init` in the repo; https://colbymchenry.github.io/codegraph/getting-started/installation/; spec17 never installs it";
 
 /// Build or refresh the CodeGraph index by running the `codegraph` binary: `init` when there is no index yet, `sync` when there is.
@@ -121,7 +121,7 @@ pub fn run(root: Option<&Path>, mcp_port: u16) -> Vec<Check> {
     let db = p.root.join(&p.cfg.codegraph);
     out.push(match Graph::open(&db) {
         Ok(None) => {
-            let hint = if bin.is_some() { "run `codegraph init` in the repo if you want it (indexing is your call: spec17 does it only when you ask, with `doctor --fix` or the dashboard's Setup)" } else { "needs the codegraph binary first" };
+            let hint = if bin.is_some() { "run `codegraph init` in the repo if you want it (indexing is your call: spec17 does it only when you ask, with `doctor --fix` or the dashboard's Settings)" } else { "needs the codegraph binary first" };
             Check { action: Some("init"), ..c("codegraph index", "warn", format!("{} not found: not initialized", p.cfg.codegraph), Some(hint)) }
         }
         Ok(Some(_)) => {
