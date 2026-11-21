@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy, tick } from "svelte";
-  import IdLink from "./IdLink.svelte";
+  import IdLink from "$lib/ui/IdLink.svelte";
 
   let { id, href, getText }: { id: string; href: string; getText: (id: string) => Promise<string> } = $props();
   const tipId = $props.id();

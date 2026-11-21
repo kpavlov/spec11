@@ -1,8 +1,8 @@
 <script lang="ts">
-  import { call } from "./transport";
-  import Pill from "./Pill.svelte";
-  import { changeTone } from "./tone";
-  import { diffWrap, setDiffWrap } from "./layout.svelte";
+  import { call } from "$lib/transport";
+  import Pill from "$lib/ui/Pill.svelte";
+  import { changeTone } from "$lib/tone";
+  import { diffWrap, setDiffWrap } from "$lib/layout/layout.svelte";
 
   // the unified diff against HEAD of each path (the `diff` tool), refetched when `gen` moves (the repo changed)
   let { paths, gen, href, scope = {} }: { paths: string[]; gen: number; href?: (path: string) => string; scope?: Record<string, unknown> } = $props();

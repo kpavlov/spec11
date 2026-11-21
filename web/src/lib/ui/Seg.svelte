@@ -1,6 +1,6 @@
 <script lang="ts">
   import { tick } from "svelte";
-  import type { Tone } from "./tone";
+  import type { Tone } from "$lib/tone";
 
   type Opt = { key: string; label: string; count?: number; tone?: Tone; title?: string };
   // a labelled segmented control: one choice, joined buttons; ←/→ move and select, focus follows

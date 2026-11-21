@@ -1,7 +1,7 @@
 <script lang="ts">
   import { tick } from "svelte";
   import Pill from "./Pill.svelte";
-  import type { Tone } from "./tone";
+  import type { Tone } from "$lib/tone";
 
   let { label, title, tone }: { label: string; title: string; tone?: Tone } = $props();
   const id = $props.id();

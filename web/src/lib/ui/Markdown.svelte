@@ -1,11 +1,12 @@
 <script lang="ts">
-  import { render } from "./markdown";
+  import { render } from "$lib/markdown";
+  import { levelPills } from "$lib/requirements/levelPills";
 
   let { source }: { source: string } = $props();
   const html = $derived(render(source));
 </script>
 
-<div class="md">{@html html}</div>
+<div class="md" {@attach levelPills(html)}>{@html html}</div>
 
 <style>
   .md { line-height: 1.55; overflow-wrap: anywhere; }

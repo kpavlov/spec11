@@ -1,5 +1,5 @@
 <script lang="ts">
-  import Seg from "./Seg.svelte";
+  import Seg from "$lib/ui/Seg.svelte";
   import { preview, setView } from "./layout.svelte";
   // actual / diff for the preview of a changed item; the choice is remembered (layout.svelte.ts)
   let { n = 1 }: { n?: number } = $props();
