@@ -16,10 +16,22 @@ on:
       - Makefile
       - spec17.json
       - .spec17ignore
-      - .github/workflows/ci.yml
+      - .github/workflows/build.yml
   workflow_dispatch:
+    inputs:
+      dist:
+        description: Also build and upload the release tarball (make dist)
+        type: boolean
+        default: false
 permissions:
   contents: read
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_PROFILE_TEST_DEBUG: 0
+  SKIP_WEB_BUILD: 1 # the dashboard is built once below; build.rs would rebuild it for every release compile
 jobs:
   build:
     strategy:
@@ -29,6 +41,7 @@ jobs:
           - ubuntu-latest
           ## - macos-latest
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6 # the version comes from `packageManager` in web/package.json
@@ -41,12 +54,17 @@ jobs:
           cache-dependency-path: web/pnpm-lock.yaml
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cd web && pnpm install --frozen-lockfile && pnpm run check
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cd web && pnpm install --frozen-lockfile && pnpm run check && pnpm run build
       - run: cargo test --workspace --locked
-      # release build embeds web/dist (build.rs runs pnpm); the release-only embedded-UI test runs here too
+      # release build embeds web/dist (built above); the release-only embedded-UI test runs here too
       - run: cargo test --release --workspace --locked
+      # tarball only on a manual run with the `dist` flag: skips a second LTO build (prerelease.yml builds the real ones)
       - run: make dist
+        if: inputs.dist
       - uses: actions/upload-artifact@v7
+        if: inputs.dist
         with:
           name: spec17-${{ matrix.os }}
           path: dist/*.tar.gz
