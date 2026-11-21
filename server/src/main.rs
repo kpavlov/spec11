@@ -349,7 +349,7 @@ fn serve(root: Option<PathBuf>, port: u16, ui_port: Option<u16>, no_open: bool, 
             }
             if !no_http_mcp {
                 eprintln!("  mcp       http://127.0.0.1:{port}/mcp");
-                let setup_ui = if no_ui { "" } else { "  (or use Setup in the dashboard)" };
+                let setup_ui = if no_ui { "" } else { "  (or use Settings in the dashboard)" };
                 match skill::status(Some(&root), port) {
                     Ok(st) => skill::suggestions(&st).iter().for_each(|t| eprintln!("  setup     {t}{setup_ui}")),
                     Err(e) => eprintln!("  setup     could not check the install: {e}"),
