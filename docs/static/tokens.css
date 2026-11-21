@@ -39,6 +39,13 @@
   --tint-sel: color-mix(in srgb, var(--accent) 18%, var(--card));
   --tint-sel-hover: color-mix(in srgb, var(--accent) 24%, var(--card));
   --tint-id: color-mix(in srgb, var(--accent) 10%, var(--card));
+  /* controls: buttons (fill, hover) and text inputs, so the dashboard and the docs match */
+  --btn-bg: var(--raised);
+  --btn-bg-hover: var(--tint-btn);
+  --btn-fg-hover: var(--accent);
+  --btn-pad: 5px 12px;
+  --input-pad: 6px 10px;
+  --focus-ring: 2px solid var(--accent);
 }
 :root[data-theme="light"] { color-scheme: light; }
 :root[data-theme="dark"] { color-scheme: dark; }

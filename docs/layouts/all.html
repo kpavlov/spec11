@@ -38,7 +38,23 @@
       </ul>
     </nav>
     <main>
-      {{ if not .IsHome }}<h1>{{ .Title }}</h1>{{ end }}
+      {{ if not .IsHome }}
+      <div class="page-head">
+        <h1>{{ .Title }}</h1>
+        {{- with .OutputFormats.Get "markdown" }}
+        <div class="page-actions">
+          <button class="copy-page" type="button" data-markdown="{{ .RelPermalink }}" hidden>Copy page</button>
+          <details>
+            <summary aria-label="More page actions"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.2 6.2 8 10l3.8-3.8.9.9L8 11.8 3.3 7.1z"/></svg></summary>
+            <div class="menu">
+              <button class="copy-page" type="button" data-markdown="{{ .RelPermalink }}" hidden><strong>Copy page</strong><span>Copy page as Markdown for LLMs</span></button>
+              <a href="{{ .RelPermalink }}"><strong>View as Markdown</strong><span>View this page as plain text</span></a>
+            </div>
+          </details>
+        </div>
+        {{- end }}
+      </div>
+      {{ end }}
       {{ .Content }}
       {{ $i := 0 }}{{ range $k, $p := $all }}{{ if eq $p $cur }}{{ $i = $k }}{{ end }}{{ end }}
       <div class="pager">

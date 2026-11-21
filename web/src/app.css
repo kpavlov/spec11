@@ -42,13 +42,13 @@ body { margin: 0; background: var(--bg); color: var(--fg); font: var(--text-body
 code, pre, .mono { font-family: var(--mono); font-size: var(--text-sm); }
 :where(h1, h2, h3, h4) { line-height: 1.3; font-weight: var(--weight-semibold); }
 a { color: var(--accent); text-underline-offset: 2px; }
-button { font: inherit; color: var(--fg); background: var(--raised); border: 1px solid transparent; border-radius: var(--radius); padding: 5px 12px; cursor: pointer; }
-button:hover:not(:disabled) { background: var(--tint-btn); color: var(--accent); }
+button { font: inherit; color: var(--fg); background: var(--btn-bg); border: 1px solid transparent; border-radius: var(--radius); padding: var(--btn-pad); cursor: pointer; }
+button:hover:not(:disabled) { background: var(--btn-bg-hover); color: var(--btn-fg-hover); }
 button.primary, button.on { background: var(--accent); color: var(--card); font-weight: var(--weight-semibold); }
 button.primary:hover:not(:disabled), button.on:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 85%, var(--fg)); color: var(--card); }
-input, select { font: inherit; color: inherit; background: var(--card); border: 1px solid var(--line-strong); border-radius: var(--radius); padding: 6px 10px; }
+input, select { font: inherit; color: inherit; background: var(--card); border: 1px solid var(--line-strong); border-radius: var(--radius); padding: var(--input-pad); }
 input::placeholder { color: var(--muted); }
-input:focus-visible, select:focus-visible, button:focus-visible, a:focus-visible, summary:focus-visible, tr:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+input:focus-visible, select:focus-visible, button:focus-visible, a:focus-visible, summary:focus-visible, tr:focus-visible { outline: var(--focus-ring); outline-offset: 2px; }
 ::selection { background: color-mix(in srgb, var(--accent) 30%, transparent); }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; scroll-behavior: auto !important; } }
 

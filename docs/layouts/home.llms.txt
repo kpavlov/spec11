@@ -1,0 +1,10 @@
+# {{ site.Title }}
+
+> {{ site.Home.Description }}
+
+Each link serves the page as plain Markdown. All pages in one file: {{ "llms-full.txt" | absURL }}
+
+## Docs
+{{ range site.RegularPages.ByWeight }}{{ $m := .OutputFormats.Get "markdown" }}
+- [{{ .Title }}]({{ $m.Permalink }}){{ with .Description }}: {{ . | replaceRE `\s*\n\s*` " " }}{{ end }}
+{{- end }}
