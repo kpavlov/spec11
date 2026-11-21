@@ -11,5 +11,24 @@ disableKinds = ["section", "taxonomy", "term", "rss"]
 [markup.goldmark.renderer]
   unsafe = true # raw HTML in markdown (our own content only)
 
+[outputFormats.llms]
+  baseName = "llms"
+  mediaType = "text/plain"
+  isPlainText = true
+  notAlternative = true
+
+[outputFormats.llmsfull]
+  baseName = "llms-full"
+  mediaType = "text/plain"
+  isPlainText = true
+  notAlternative = true
+
+[outputFormats.markdown] # per-page Markdown for agents: /quickstart/ -> /quickstart.md
+  mediaType = "text/markdown"
+  isPlainText = true
+  notAlternative = true
+  ugly = true
+
 [outputs]
-  home = ["html", "json"] # json: index.json for search.js
+  home = ["html", "json", "llms", "llmsfull"] # json: index.json for search.js
+  page = ["html", "markdown"]

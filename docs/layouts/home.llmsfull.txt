@@ -1,0 +1,14 @@
+# {{ site.Title }}
+
+> {{ site.Home.Description }}
+
+{{ site.Home.RawContent }}
+{{ range site.RegularPages.ByWeight }}
+---
+
+# {{ .Title }}
+
+Source: {{ (.OutputFormats.Get "markdown").Permalink }}
+
+{{ .RawContent }}
+{{ end }}
