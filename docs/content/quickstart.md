@@ -6,22 +6,24 @@ description: Install spec17, scan a repo, and see one requirement, one test and 
 
 ## 1. Install
 
-On an Apple Silicon Mac, install the prebuilt development version from the Homebrew tap:
+Install the latest release from the Homebrew tap. It is prebuilt for macOS on Apple Silicon and for Linux on arm64 and x86_64:
 
 ```sh
 brew tap kpavlov/spec17 https://github.com/kpavlov/spec17
-brew install kpavlov/spec17/spec17-dev
+brew install kpavlov/spec17/spec17
 spec17 --version
 ```
 
-Anywhere else, build from source. You need Rust, Node and pnpm; the binary needs none of them at run time:
+Update later with `brew update && brew upgrade spec17`.
+
+For the rolling development build (Apple Silicon only), install `kpavlov/spec17/spec17-dev` instead. The two formulas both install a `spec17` binary, so uninstall one before the other. `brew install --HEAD kpavlov/spec17/spec17` builds the default branch from source and needs Rust, Node and pnpm.
+
+On an Intel Mac or anywhere else without a prebuilt archive, build from source. You need Rust, Node and pnpm; the binary needs none of them at run time:
 
 ```sh
 git clone https://github.com/kpavlov/spec17 && cd spec17
 make install        # spec17 goes to ~/.cargo/bin, which must be on your PATH
 ```
-
-The stable formula, `kpavlov/spec17/spec17`, has nothing to install until the first tagged release. Until then `brew install --HEAD kpavlov/spec17/spec17` builds the default branch from source and needs the same three tools.
 
 ## 2. Scan your repo
 

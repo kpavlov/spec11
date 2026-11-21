@@ -15,14 +15,15 @@ One Rust binary gives three interfaces over the same core: a CLI, an MCP server 
 
 ## Quickstart
 
-Add the Homebrew tap and install the prebuilt development version on Apple Silicon.
+Add the Homebrew tap and install the latest release (prebuilt for Apple Silicon macOS and for Linux on arm64 and x86_64).
 
 ```sh
 brew tap kpavlov/spec17 https://github.com/kpavlov/spec17
-brew install kpavlov/spec17/spec17-dev
+brew install kpavlov/spec17/spec17
+spec17 --version
 ```
 
-For a tagged release, use `brew install kpavlov/spec17/spec17`.
+For the rolling development build (Apple Silicon only), use `kpavlov/spec17/spec17-dev` instead; the two conflict, so uninstall one before the other.
 
 From the project you want to scan, run `spec17 report` for a terminal summary or `spec17` to open the dashboard.
 
@@ -57,7 +58,7 @@ make test                     # cargo tests
 make parity                   # Rust output == the old Python scripts' output (needs them vendored in ROOT)
 make bench                    # time the scan at main vs HEAD (see Benchmark)
 make docs                     # build the Hugo site in docs/ into docs/public (Hugo >= 0.146)
-make site                     # Hugo dev server with live reload on :1313
+make site                     # Hugo dev server with live reload on :1313, opens the browser (OPEN=0: not)
 make dev ROOT=/path/to/repo PORT=7500 OPEN=0
 ```
 

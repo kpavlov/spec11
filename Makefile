@@ -31,7 +31,7 @@ help:
 	@echo "make report   print the text report for $(ROOT)"
 	@echo "make test     cargo tests; make parity compares with the old Python scripts if vendored in $(ROOT)"
 	@echo "make bench    time spec17 on a generated repo at REVS (default: main HEAD; . = working tree), SCALE=1 RUNS=10 JSON=1"
-	@echo "make docs    build the Hugo site in docs/ into docs/public (needs Hugo >= 0.146); make site serves it with live reload on :1313"
+	@echo "make docs    build the Hugo site in docs/ into docs/public (needs Hugo >= 0.146); make site serves it with live reload on :1313 and opens it (reusing a Chrome tab on the site; OPEN=0: don't open)"
 	@echo "make upgrade   bump web (pnpm, to latest) and Rust (cargo update; cargo upgrade --incompatible if cargo-edit is installed) dependencies"
 	@echo "override: make dev ROOT=/path/to/repo PORT=7500 OPEN=0   (OPEN=0: don't open the browser)"
 
@@ -150,8 +150,32 @@ report:
 docs:
 	hugo --source docs --gc --minify --panicOnWarning
 
+# Opens the site once it answers. On macOS with Chrome running, an existing tab on the site is reused (focused; Hugo live reload refreshes it), else a new tab.
+# The script returns "new" when no tab matched.
+# ponytail: only Chrome tabs are reused; other browsers get a new tab. OPEN=0 skips the browser.
+SITE_URL := http://localhost:1313/
+define FOCUS_TAB
+tell application "Google Chrome"
+	repeat with w in windows
+		set i to 0
+		repeat with t in tabs of w
+			set i to i + 1
+			if URL of t starts with "$(SITE_URL)" then
+				set active tab index of w to i
+				set index of w to 1
+				activate
+				return
+			end if
+		end repeat
+	end repeat
+end tell
+return "new"
+endef
+export FOCUS_TAB
 site:
-	hugo server --source docs
+	if [ "$(OPEN)" = 1 ]; then (until curl -sf -o /dev/null $(SITE_URL); do sleep 0.5; done; \
+		if [ "$(OS)" = darwin ] && pgrep -qx "Google Chrome"; then [ "$$(osascript -e "$$FOCUS_TAB")" != new ] || $(OPENER) $(SITE_URL); else $(OPENER) $(SITE_URL); fi) & fi; \
+	hugo server --source docs --port 1313
 
 test:
 	cargo test --workspace
