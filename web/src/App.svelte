@@ -102,7 +102,7 @@
       if (t.closest("input, select, textarea, .gutter, .seg") || e.metaKey || e.ctrlKey || e.altKey) { if (e.key === "Escape") (t as HTMLElement).blur(); return; }
       if (e.key === "/") {
         e.preventDefault();
-        if (route.tab !== "requirements" && route.tab !== "changes") navigate({ tab: "requirements" });
+        if (inDocs || (route.tab !== "requirements" && route.tab !== "changes")) navigate({ tab: "requirements" });
         queueMicrotask(() => document.querySelector<HTMLInputElement>("input[name=filter]")?.focus());
       } else if ((route.tab === "requirements" || route.tab === "changes") && /^[0-7sl]$/i.test(e.key)) {
         // filter shortcuts: 1-7 pick a state, S/L step through states/levels (⇧ goes back), 0 clears every filter
@@ -256,11 +256,13 @@
     call("trace", { id }).then((r) => { if (route.id === id) { trace = r; document.querySelector(".split .preview")?.scrollTo(0, 0); } }).catch((e) => { trace = null; error = e.message; });
   });
 
+  // each selection takes a token (also when the file is already loaded), so a slower earlier response cannot replace it
+  let docReq = 0;
   $effect(() => {
     if (!inDocs) return;
     if (specFiles === null) { call("file").then((r) => (specFiles = r.data.files)).catch((e) => (error = e.message)); return; }
-    const f = docFile;
-    if (f && f !== untrack(() => specLoaded)) call("file", { name: f }).then((r) => { specLoaded = f; specMd = r.data.markdown; document.querySelector(".split .preview")?.scrollTo(0, 0); }).catch((e) => (error = e.message));
+    const f = docFile, n = ++docReq;
+    if (f && f !== untrack(() => specLoaded)) call("file", { name: f }).then((r) => { if (n !== docReq) return; specLoaded = f; specMd = r.data.markdown; document.querySelector(".split .preview")?.scrollTo(0, 0); }).catch((e) => { if (n === docReq) error = e.message; });
   });
 
   $effect(() => {

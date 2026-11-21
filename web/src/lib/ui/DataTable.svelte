@@ -43,16 +43,29 @@
 
   // collapsed groups are remembered per browser and root (IndexedDB); everything starts expanded
   let collapsed = $state<string[]>([]);
+  // toggles made before the saved groups have loaded (group → open): they win over the saved state, which is written once it is in
+  const touched = new Map<string, boolean>();
+  let loaded = false;
   const dbKey = () => `${db.root}\n${storageKey}`;
+  const save = () => run("collapsed", "readwrite", (st) => st.put($state.snapshot(collapsed), dbKey())).catch(() => { /* storage blocked */ });
   $effect(() => {
     if (!storageKey || db.root === null) return;
-    run<string[] | undefined>("collapsed", "readonly", (st) => st.get(dbKey())).then((v) => { collapsed = [...new Set([...(v ?? []), ...collapsed])]; }).catch(() => { /* storage blocked */ });
+    loaded = false;
+    run<string[] | undefined>("collapsed", "readonly", (st) => st.get(dbKey()))
+      .then((v) => {
+        const shut = new Set((v ?? []).filter((g) => !touched.has(g)));
+        for (const [g, open] of touched) if (!open) shut.add(g);
+        collapsed = [...shut];
+      })
+      .catch(() => { /* storage blocked */ })
+      .finally(() => { const dirty = touched.size > 0; touched.clear(); loaded = true; if (dirty) save(); });
   });
   const isOpen = (p: string) => !grouped || !collapsed.includes(p);
   const setOpen = (p: string, open: boolean) => {
     if (open === isOpen(p)) return;
     collapsed = open ? collapsed.filter((x) => x !== p) : [...collapsed, p];
-    if (storageKey && db.root !== null) run("collapsed", "readwrite", (st) => st.put($state.snapshot(collapsed), dbKey())).catch(() => { /* storage blocked */ });
+    if (!storageKey) return;
+    if (loaded) save(); else touched.set(p, open);
   };
 
   // the selection is a row (`selected`) or a group header (`selGroup`, only while no row is selected)
