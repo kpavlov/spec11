@@ -10,7 +10,9 @@ export type Tab = (typeof TABS)[number] | "code";
 export type Route = { tab: Tab; id?: string; file?: string; path?: string; line?: number; view?: string; state?: string; level?: string; q?: string; module?: string; requirementId?: string; changed?: string; reviewed?: string; staged?: string; untracked?: string; ref?: string; commit?: string; ws?: string; ignored?: string; all?: string };
 
 export function parse(url: URL): Route {
-  const [first, second] = url.pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  const [raw, second] = url.pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  // old links: /setup is now /settings, /specs the documents view of /requirements
+  const first = raw === "setup" ? "settings" : raw === "specs" ? "requirements" : raw;
   const tab = ([...TABS, "code"] as string[]).includes(first) ? (first as Tab) : "dashboard";
   const p = url.searchParams;
   const line = Number(p.get("line"));
@@ -20,7 +22,7 @@ export function parse(url: URL): Route {
     file: p.get("file") ?? undefined,
     path: p.get("path") ?? undefined,
     line: line > 0 ? line : undefined,
-    view: p.get("view") ?? undefined,
+    view: p.get("view") ?? (raw === "specs" ? "docs" : undefined),
     state: p.get("state") ?? undefined,
     level: p.get("level") ?? undefined,
     q: p.get("q") ?? undefined,
