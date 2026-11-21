@@ -3,5 +3,17 @@
   "extends": [
     "config:recommended"
   ],
-  "minimumReleaseAge": "2 days"
+  "minimumReleaseAge": "2 days",
+  "packageRules": [
+    {
+      "matchUpdateTypes": ["patch"],
+      "automerge": true,
+      "ignoreTests": false
+    },
+    {
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["minor", "patch", "digest", "pin"],
+      "automerge": true
+    }
+  ]
 }

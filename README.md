@@ -2,6 +2,8 @@
 
 https://spec17.dev
 
+[![build](https://github.com/kpavlov/spec17/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/kpavlov/spec17/actions/workflows/build.yml)
+
 Deterministic spec-driven-development evidence for a repo: which requirement IDs in `specs/*.md` have tests, code citations, spec problems, or overlap with other requirements. No LLM in the core.
 
 > **Evidence, not truth.** A citation or test tag does not prove a requirement is implemented or that its test passes. Output is a candidate list for a human or an assessor to judge.
