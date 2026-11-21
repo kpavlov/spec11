@@ -3,7 +3,7 @@ title: Agents
 weight: 30
 ---
 
-An agent reads spec17's evidence through MCP. The skill built into the binary tells it to use the MCP tools, with the CLI as a fallback.
+An AI coding assistant can query spec17 through the Model Context Protocol (MCP). The bundled skill tells the assistant which tools to use and how to fall back to the command line.
 
 ## Install the skill and an MCP entry
 
@@ -16,6 +16,23 @@ spec17 uninstall --global   # only the global skill; add --only mcp for the entr
 ```
 
 `.mcp.json` is merged, never rewritten: other servers stay and invalid JSON is left alone. The Setup tab of the dashboard installs or removes each entry separately, for this repo or globally, and can also add the stdio entry below.
+
+## stdio or HTTP
+
+- **stdio** — The client starts its own spec17 process for one project. Use `--no-http-mcp --no-ui` to disable the HTTP server and dashboard.
+- **HTTP** — Run `spec17` and leave it running. By default, the dashboard is at `http://127.0.0.1:7411/` and the MCP endpoint is at `http://127.0.0.1:7411/mcp`.
+
+> [!WARNING]
+> **Use stdio on shared computers.** The HTTP server accepts connections from the same computer without a login. Other local users and processes can read project data and call tools that modify files. Those tools run with the permissions of the user who started spec17.
+
+An HTTP server serves the project it opened at startup. Check the project path in the dashboard header. To serve multiple projects, give each its own port and run each server in a separate terminal. Use the same port for `install` and `serve`:
+
+```sh
+spec17 --root ~/code/app-a install --port 7411
+spec17 --root ~/code/app-a serve --port 7411
+```
+
+Repeat for the second project with its own folder and a different port, such as `7412`.
 
 ## Connect a client
 

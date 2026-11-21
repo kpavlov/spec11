@@ -1,5 +1,4 @@
-/* Dark theme: the stylesheet is on for a dark OS (media attribute) or the dark choice; theme.js sets that attribute. */
-:root { color-scheme: dark; --fg: #e6e8ea; --bg: #14171a; --muted: #99a1a9; --line: #2b3137; --code: #1d2227; --link: #7db3ff; }
+/* Dark syntax colours: the stylesheet is on for a dark OS (media attribute) or the dark choice; theme.js sets that attribute. Page colours are tokens.css. */
 /* Keyword */ .chroma .k { color:#ff7b72 }
 /* KeywordConstant */ .chroma .kc { color:#79c0ff }
 /* KeywordDeclaration */ .chroma .kd { color:#ff7b72 }

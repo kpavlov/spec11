@@ -8,11 +8,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ if .IsHome }}{{ site.Title }}: spec-driven-development evidence{{ else }}{{ .Title }} · {{ site.Title }}{{ end }}</title>
   <meta name="description" content="{{ .Description | default site.Params.description }}">
+  <link rel="stylesheet" href="{{ "tokens.css" | relURL }}">
   <link rel="stylesheet" href="{{ "style.css" | relURL }}">
   <link rel="stylesheet" href="{{ "syntax.css" | relURL }}">
   <link rel="stylesheet" href="{{ "dark.css" | relURL }}" id="dark" media="(prefers-color-scheme: dark)">
   <script src="{{ "theme.js" | relURL }}"></script>
   <script src="{{ "search.js" | relURL }}" defer></script>
+  <script src="{{ "toc.js" | relURL }}" defer></script>
+  <script src="{{ "copy.js" | relURL }}" defer></script>
 </head>
 <body>
   <header>

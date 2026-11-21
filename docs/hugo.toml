@@ -8,5 +8,8 @@ disableKinds = ["section", "taxonomy", "term", "rss"]
 [markup.highlight]
   noClasses = false # CSS classes, coloured by static/syntax.css (light and dark)
 
+[markup.goldmark.renderer]
+  unsafe = true # raw HTML in markdown (our own content only)
+
 [outputs]
   home = ["html", "json"] # json: index.json for search.js

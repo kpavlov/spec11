@@ -1,12 +1,14 @@
 ---
 title: Quickstart
 weight: 5
-description: Install spec17, scan a repo, and see one requirement, one test and one citation meet.
+description: Install spec17 and see which requirements in a project have tagged tests or links to code.
 ---
 
-## 1. Install
+Use spec17 to see which requirements in a project have tagged tests or references in code. You need a local copy of the project. If you don't have one, [try the example](#try-an-example).
 
-Install the latest release from the Homebrew tap. It is prebuilt for macOS on Apple Silicon and for Linux on arm64 and x86_64:
+## 1. Install spec17
+
+Install with [Homebrew](https://brew.sh/). Prebuilt releases are available for Apple Silicon Macs and for Linux on arm64 and x86_64.
 
 ```sh
 brew tap kpavlov/spec17 https://github.com/kpavlov/spec17
@@ -14,78 +16,71 @@ brew install kpavlov/spec17/spec17
 spec17 --version
 ```
 
-Update later with `brew update && brew upgrade spec17`.
+The last command should print a version number. For Intel Macs and other systems without a prebuilt release, see [Build from source](#build-from-source).
 
-For the rolling development build (Apple Silicon only), install `kpavlov/spec17/spec17-dev` instead. The two formulas both install a `spec17` binary, so uninstall one before the other. `brew install --HEAD kpavlov/spec17/spec17` builds the default branch from source and needs Rust, Node and pnpm.
+## 2. Scan a project
 
-On an Intel Mac or anywhere else without a prebuilt archive, build from source. You need Rust, Node and pnpm; the binary needs none of them at run time:
-
-```sh
-git clone https://github.com/kpavlov/spec17 && cd spec17
-make install        # spec17 goes to ~/.cargo/bin, which must be on your PATH
-```
-
-## 2. Scan your repo
-
-From the repo you want to look at:
+From the project root, run:
 
 ```sh
-cd /path/to/your/repo
-spec17 doctor    # what spec17 found, and what is missing
-spec17 report    # coverage, problems, where to look next
+spec17 report
 ```
 
-No config is needed: the specs folder, the source and test folders and the language are detected. `doctor` warns about optional things (a CodeGraph index, the agent skill and MCP entries, a Git work tree) and still works without them. A repo with no requirement lines opens with zero requirements; `doctor` tells you where spec17 looked.
+The report shows which requirements have tagged tests or references in code and which have neither. A tag shows that a test refers to a requirement. spec17 does not run the test or verify that the requirement is met.
 
-## 3. Try it on a scratch repo
+If the report shows zero requirements, run `spec17 doctor` to see where spec17 looked. Check that you opened the right folder and that the project uses a [supported requirement format](../specs/#requirement-styles).
 
-Three conventions connect a requirement to a test and to code. Make a folder with one file of each:
+## 3. Open the dashboard
+
+From the project root, run:
 
 ```sh
-mkdir -p greeter/specs greeter/src greeter/tests && cd greeter
+spec17
 ```
 
-`specs/greeter.md`: a requirement is an ID and a level (`MUST`, `SHOULD`, `MAY`). A trailing `(later)` marks one that is not due yet.
+The dashboard opens at `http://127.0.0.1:7411/`. Select a requirement in **Requirements** to see its references. Stop the server with Ctrl+C.
 
-```md
+The dashboard has no login and other users on the same computer can access it. On a shared computer, use `spec17 report` or follow the [stdio setup](../agents/#stdio-or-http) for an AI coding assistant.
+
+![Requirements view showing the tagged test and code reference for API-02](../img/requirements.png)
+
+## 4. Connect an AI coding assistant
+
+If your assistant supports MCP and reads `.mcp.json`, run `spec17 install` from the project folder. This adds the spec17 skill and a connection to the local server. Start the server with `spec17` if it isn't already running, then start or restart the assistant in the same project.
+
+Ask “Which requirements have no tagged test?” For other clients, setup options and troubleshooting, see [Agents](../agents/).
+
+## 5. Try an example
+
+This example creates a temporary project with requirements, source code, and a tagged test. You don't need Python to scan the files.
+
+```sh
+cd "$(mktemp -d)" && mkdir -p specs src tests && {
+cat > specs/greeter.md <<'EXAMPLE'
 # Greeter
 
 - **GRT-01** MUST — greet a person by name.
 - **GRT-02** SHOULD — greet the world when no name is given.
-- **GRT-03** MAY — support a shout flag. (later)
-```
-
-`src/greeter.py`: code cites an ID in a line comment.
-
-```python
+EXAMPLE
+cat > src/greeter.py <<'EXAMPLE'
 def greet(name=None):
     # (GRT-01) greet by name
     return f"Hello, {name or 'world'}!"
-```
-
-`tests/test_greeter.py`: a test is tagged with the ID in square brackets, here in its docstring.
-
-```python
+EXAMPLE
+cat > tests/test_greeter.py <<'EXAMPLE'
 from src.greeter import greet
 
 def test_greets_by_name():
     """[GRT-01] greets by name"""
     assert greet("Ada") == "Hello, Ada!"
+EXAMPLE
+spec17 report
+}
 ```
 
-Now ask what spec17 sees. Example output:
+The report shows one of two requirements with a tagged test. Run `spec17 trace GRT-01` to see the test and code reference:
 
-```sh
-$ spec17 status
-specs/greeter                1/2 tested | none: GRT-02 | later: 1
-TOTAL 1/2 tested (50%) | src-only 0 | none 1 | manual 0 | later 1 (0 with tests/code)
-next: --missing lists them; spec17 trace <ID> shows tests, citations and related code
-
-$ spec17 status --missing
-GRT-02 none     specs/greeter.md:4  greet the world when no name is given.
-TOTAL 1/2 tested (50%) | src-only 0 | none 1 | manual 0 | later 1 (0 with tests/code)
-
-$ spec17 trace GRT-01
+```text
 GRT-01 MUST specs/greeter.md:3
   greet a person by name.
 tests:
@@ -97,31 +92,28 @@ related code (types the tests name; * = also cites the ID):
 next: codegraph explore "greet"
 ```
 
-`GRT-01` has a tagged test and a citation. `GRT-02` has neither, so it is listed as missing. `GRT-03` is `later` and not counted as due. spec17 only reads the files: it does not run the test, so a tag is evidence that a test claims the requirement, not that the requirement is met or the test passes. Add a `[GRT-02]` test and run `spec17 status` again to see it move.
+Run `spec17 status --missing` to see `GRT-02`, which has neither:
 
-Other styles of requirement line, such as tables, headings, OpenSpec and Spec Kit, are listed in [Specs and tests](../specs/#requirement-styles).
-
-## 4. Open the dashboard
-
-```sh
-spec17
+```text
+GRT-02 none     specs/greeter.md:4  greet the world when no name is given.
+TOTAL 1/2 tested (50%) | src-only 0 | none 1 | manual 0 | later 0 (0 with tests/code)
 ```
 
-This starts the server on `127.0.0.1:7411` and opens the dashboard in your browser; stop it with Ctrl-C. To pick another port or skip the browser: `spec17 serve --port 7500 --no-open`.
 
-![Changes view: requirements a working-tree edit may affect, with spec edited and spec added badges](../img/changes.png)
+## Other installation options
 
-## 5. Connect an agent (optional)
+Update an existing Homebrew installation with `brew update && brew upgrade spec17`.
+
+For the rolling development build on Apple Silicon, install `kpavlov/spec17/spec17-dev`. Both formulas install a command named `spec17`, so uninstall one before installing the other.
+
+## Build from source
+
+You need Git, Make, Rust, Node.js, and pnpm to build spec17.
 
 ```sh
-spec17 install    # repo skill + HTTP entry in .mcp.json
-spec17            # keep the server running for the agent
+git clone https://github.com/kpavlov/spec17
+cd spec17
+make install
 ```
 
-The agent then reads the same evidence through MCP. Details, a stdio setup that needs no running server, and the tool list are in [Agents](../agents/).
-
-## Next
-
-- [Usage](../usage/): every command, the dashboard, CodeGraph.
-- [Specs and tests](../specs/): requirement styles, states, configuration.
-- [Agents](../agents/): skill, MCP clients, tools.
+The command is installed in `~/.cargo/bin`. Add that directory to your `PATH` if Terminal can't find `spec17`. If you already have Homebrew, `brew install --HEAD kpavlov/spec17/spec17` builds the default branch.
