@@ -2,6 +2,7 @@
   import type { Snippet } from "svelte";
   import { sorted, toggleSort, type Sort } from "$lib/sort";
   import { layout } from "$lib/layout/layout.svelte";
+  import { db, run } from "$lib/db.svelte";
 
   type Col = { key: string; label: string; cls?: string; sort?: boolean };
   // a keyboard stop: a row (by key) or a group header
@@ -40,13 +41,18 @@
   });
   const grouped = $derived(!!groupOf && groups.length > 1);
 
-  // collapsed groups are remembered per browser; everything starts expanded
-  let collapsed = $state<string[]>((() => { try { return JSON.parse(localStorage.getItem(storageKey) ?? "[]"); } catch { return []; } })());
+  // collapsed groups are remembered per browser and root (IndexedDB); everything starts expanded
+  let collapsed = $state<string[]>([]);
+  const dbKey = () => `${db.root}\n${storageKey}`;
+  $effect(() => {
+    if (!storageKey || db.root === null) return;
+    run<string[] | undefined>("collapsed", "readonly", (st) => st.get(dbKey())).then((v) => { collapsed = [...new Set([...(v ?? []), ...collapsed])]; }).catch(() => { /* storage blocked */ });
+  });
   const isOpen = (p: string) => !grouped || !collapsed.includes(p);
   const setOpen = (p: string, open: boolean) => {
     if (open === isOpen(p)) return;
     collapsed = open ? collapsed.filter((x) => x !== p) : [...collapsed, p];
-    if (storageKey) try { localStorage.setItem(storageKey, JSON.stringify(collapsed)); } catch { /* storage blocked */ }
+    if (storageKey && db.root !== null) run("collapsed", "readwrite", (st) => st.put($state.snapshot(collapsed), dbKey())).catch(() => { /* storage blocked */ });
   };
 
   // the selection is a row (`selected`) or a group header (`selGroup`, only while no row is selected)
